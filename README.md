@@ -1,6 +1,6 @@
 # paper-docx
 
-`paper-docx` is The LLM Data Company's hard fork of
+`paper-docx` is Paper Instruments' hard fork of
 [`python-docx`](https://github.com/python-openxml/python-docx), based on the
 upstream `v1.2.0` release.
 
