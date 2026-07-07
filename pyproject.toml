@@ -3,8 +3,13 @@ requires = ["setuptools>=61.0.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "python-docx"
-authors = [{name = "Steve Canny", email = "stcanny@gmail.com"}]
+name = "paper-docx"
+version = "0.1.0"
+authors = [
+    {name = "Steve Canny", email = "stcanny@gmail.com"},
+    {name = "The LLM Data Company"},
+]
+maintainers = [{name = "The LLM Data Company"}]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
@@ -26,7 +31,6 @@ dependencies = [
     "typing_extensions>=4.9.0",
 ]
 description = "Create, read, and update Microsoft Word .docx files."
-dynamic = ["version"]
 keywords = ["docx", "office", "openxml", "word"]
 license = { text = "MIT" }
 readme = "README.md"
@@ -49,10 +53,11 @@ dev = [
 ]
 
 [project.urls]
-Changelog = "https://github.com/python-openxml/python-docx/blob/master/HISTORY.rst"
-Documentation = "https://python-docx.readthedocs.org/en/latest/"
-Homepage = "https://github.com/python-openxml/python-docx"
-Repository = "https://github.com/python-openxml/python-docx"
+Changelog = "https://github.com/The-LLM-Data-Company/paper-docx/blob/main/HISTORY.rst"
+Documentation = "https://github.com/The-LLM-Data-Company/paper-docx"
+Homepage = "https://github.com/The-LLM-Data-Company/paper-docx"
+Issues = "https://github.com/The-LLM-Data-Company/paper-docx/issues"
+Repository = "https://github.com/The-LLM-Data-Company/paper-docx"
 
 [tool.pyright]
 include = ["src/docx", "tests"]
@@ -121,7 +126,4 @@ select = [
 [tool.ruff.lint.isort]
 known-first-party = ["docx"]
 known-local-folder = ["helpers"]
-
-[tool.setuptools.dynamic]
-version = {attr = "docx.__version__"}
 

@@ -14,6 +14,7 @@ if TYPE_CHECKING:
     from docx.opc.part import Part
 
 __version__ = "1.2.0"
+__paper_version__ = "0.1.0"
 
 
 __all__ = ["Document"]
