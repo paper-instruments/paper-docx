@@ -492,6 +492,119 @@ override path. Uniform across modes in v0.11 (readOnly/forms/comments/
 trackedChanges all refuse — conservative, documented). Upstream APIs are
 untouched (strict superset). There is NO protection-stripping verb.
 
+```python
+# docx.package (kernel re-export; impl in docx/_compare.py) — Phase 4
+def compare(original, revised, *, author: str, date: datetime | None = None,
+            granularity: str = "word",           # "word" | "block"
+            materialize: str | None = None,      # None | "accept" | "reject"
+            ) -> CompareResult                   # .document/.findings/.to_dict()
+```
+The algebra is pinned by tests: `accept_all(compare(A,B))` == B and
+`reject_all` == A in visible text across every story; `compare(A,A)` emits
+zero revisions; identical inputs (fixed `date`) → byte-identical output.
+Inputs with pending revisions refuse unless `materialize` resolves working
+copies (files untouched). Declared limits: ins/del only (no move/rPrChange
+synthesis); formatting-only, image/object, hyperlink, content-control,
+section-break and comment differences are REPORT-ONLY findings; block
+add/remove outside the main body, changed merged-cell rows, sdt/fldSimple
+paragraphs in deletions, story-part set mismatch, and stories over the
+documented block budget refuse (typed).
+
+## 11. v0.11 Phase 5 — cross-document composition (PR-gated design)
+
+This section IS the design gate the plan requires before implementation —
+review it as the proposal. New module `docx.composition`:
+
+```python
+def insert_blocks_from(
+    document, source,                 # destination Document, source Document
+    start_anchor, *,                  # AnchorLike into the SOURCE body
+    anchor,                           # AnchorLike into the DESTINATION body
+    end_anchor=None, count=1,         # range selection, blocks.py semantics
+    styles: str = "match_by_name",    # | "import_renamed"
+) -> CompositionReport
+
+def append_document(
+    document, source, *,
+    section: str = "new_page",        # | "continuous"
+    styles: str = "match_by_name",
+) -> CompositionReport
+```
+
+**Style reconciliation (the hard core).** Styles referenced by the copied
+range (pStyle/rStyle/tblStyle + transitive basedOn/link/next chains):
+`match_by_name` — a destination style with the same NAME wins (ids remapped;
+content adopts the house look); missing names import their definitions.
+`import_renamed` — same name + equivalent definition reuses; colliding-but-
+different definitions clone under fresh ids and a deterministic
+" (imported)" name suffix (content keeps its source look). The report
+carries the full style map.
+
+**Numbering.** Every `numId` referenced in the range gets a FRESH
+destination id with deep-copied num + abstractNum definitions — copied
+lists always RESTART (the pinned continue-vs-restart choice; continuing a
+destination list is a future mode).
+
+**Relationships/media.** Images copied as new parts with fresh rIds
+(`r:embed` remapped); external hyperlinks recreated; embedded OLE objects →
+typed refusal (declared). **Bookmarks** rename on collision (deterministic
+suffix), ids reallocated, and REF/PAGEREF instructions INSIDE the range
+remap to the new names; references leaving the range are report-only
+findings.
+
+**Source revisions/comments in the range → typed refusal** directing the
+caller to `finalize()`/`scrub()` the source first (carry-through is not
+cheap and is deferred). **Append semantics:** v0.11 keeps destination
+headers/footers; `section="new_page"` prefixes the appended content with a
+page break, `"continuous"` appends flush — no new `w:sectPr` is authored
+(keep-source-headers is a declared future mode).
+
+**Report-matches-diff.** `CompositionReport` declares every part the
+operation may touch (document.xml, styles.xml, numbering.xml, rels,
+[Content_Types].xml, media/*) plus the maps above and findings;
+`.to_dict()` goldenable. The harness assertion is report-matches-diff,
+not small-diff. Acceptance is job-shaped: the proposal-assembly eval in
+tests/paper (base + clause docs + CV section with tables/images/lists/
+headings → reopens clean, LO smoke, lists number, bounded style count).
+
+## 12. v0.11 Phases 6-7 — bookmarks, field authoring, format resolver
+
+```python
+# docx.bookmarks — Phase 6
+def list_bookmarks(document) -> list[BookmarkInfo]     # name/id/story/text
+def create_bookmark(document, span, name) -> BookmarkInfo
+    # wraps EXACTLY the span (edge runs split); Word-legal unique names;
+    # globally unique ids
+def delete_bookmark(document, name) -> None
+    # markers only, text stays; refuses while a REF/PAGEREF references it
+
+# docx.fields — author-and-delegate: placeholder results + updateFields
+# flag, NEVER computed values (pagination is a renderer's job)
+def add_page_number_field(paragraph) -> None           # PAGE
+def add_page_count_field(paragraph) -> None            # NUMPAGES
+def add_date_field(paragraph, *, date_format=None) -> None
+def add_reference_field(paragraph, *, bookmark, kind="text") -> None
+    # kind: "text" (REF) | "page" (PAGEREF) | "number" (REF \r)
+def insert_toc_after(document, anchor, *, levels=(1, 3)) -> None
+    # complex begin/separate/end form, dirty-flagged
+```
+Self-consistency is pinned: the v0.1 `in_field` guard refuses spans landing
+in fields THIS module authors, same as Word's.
+
+```python
+# docx.formatting — Phase 7, read-only + provenance-bearing
+def format_of(target) -> EffectiveFormat        # Run | Paragraph | Span
+def surrounding_format(document, anchor) -> EffectiveFormat
+```
+Resolution: docDefaults → paragraph-style chain (basedOn, root→leaf) →
+character-style chain → direct, with §17.7.3 toggle XOR (direct is
+absolute; style layers XOR their TRUE occurrences — nested bold cancels,
+pinned by test). Every value is a `ResolvedValue(value, source, chain)`;
+span disagreement reports "mixed"; the declared-unresolvable list
+(table-style conditional formatting, numbering-mark properties, EA/CS
+variants) rides every result. `surrounding_format` is the Phase 5/6
+match-the-neighbors helper.
+
 ## Module map (all new files unless marked additive)
 
 | Path | Contents |

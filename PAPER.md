@@ -112,8 +112,10 @@ listed here.
   accept/reject with stored-property restore; `w:trPr` row markers
   reclassified from insertion/deletion (which resolved only the marker —
   the ghost-row false state) to `row_insertion`/`row_deletion` with whole-row
-  semantics and an empty-table refusal (batch-validated upfront for
-  atomicity). Reject of a deletion now also restores `w:delInstrText` →
+  semantics; resolving away a table's last row removes the table itself
+  (Word's fully-deleted-table semantic), leaving an empty paragraph when
+  the table was its container's only block. Reject of a deletion now also
+  restores `w:delInstrText` →
   `w:instrText`. The exotic remainder is enumerated and refused BY NAME:
   `table_property_change` (tblPrChange/tblPrExChange/tblGridChange/
   trPrChange/tcPrChange), `cell_revision` (cellIns/cellDel/cellMerge),
@@ -149,6 +151,53 @@ listed here.
   in-memory, never persisted). Protection is reported, never removed; no
   stripping verb exists; upstream APIs untouched. The scrubbed gauntlet is
   LO-smoke verified.
+- **Phase 4 — compare engine.** New surface: `docx.package.compare` (impl
+  `docx/_compare.py`) generating a native tracked-changes redline from two
+  documents: block alignment (SequenceMatcher + order-preserving best-ratio
+  region pairing), word-level edits through the v0.1 span machinery
+  (minimal del/ins with affix trimming), whole-block insert/delete via the
+  blocks-op mark mechanics, table row alignment emitting Phase 1 row
+  markup with cell-wise recursion. Algebra pinned by tests: accept == B,
+  reject == A across every story; compare(A,A) == zero; deterministic
+  byte-identical output; LO-smoke verified. Pending-revision inputs refuse
+  unless materialized on working copies. Report-only findings for
+  formatting-only/image/hyperlink/control/section/comment differences;
+  typed refusals for the declared limits (no move synthesis, no block
+  add/remove outside the body, merged-cell changes, block budget).
+  Supporting semantic fix ledgered here: resolving away a table's LAST row
+  now removes the table itself (Word's fully-deleted-table semantic)
+  instead of refusing.
+- **Phase 5 — cross-document composition** (design gate: API-PROPOSAL §11).
+  New module `docx.composition`: `insert_blocks_from` + `append_document`
+  with style reconciliation (`match_by_name` — destination wins;
+  `import_renamed` — colliding-but-different definitions clone under fresh
+  ids/names; basedOn/link/next chains import transitively), numbering
+  remap to fresh restarted definitions, image parts copied with fresh
+  rIds, external hyperlinks recreated, bookmarks renamed on collision with
+  in-range REF/PAGEREF remap, sdt ids reallocated, `_GoBack` dropped.
+  Typed refusals: revision markup or comments in the range (finalize/scrub
+  the source first), OLE objects, note references, altChunks, protected
+  destinations. Returns `CompositionReport` with declared changed parts
+  (report-matches-diff) and maps. Standing proposal-assembly job eval in
+  tests/paper/test_jobs.py. Supporting refactor: blocks.py anchor
+  resolution split into `_locate_anchor_paragraph` (read-only) +
+  `_resolve_anchor_paragraph` (mutation path, keeps the protection check).
+- **Phase 6 — bookmarks + field authoring.** New modules `docx.bookmarks`
+  (list/create/delete; creation wraps exact spans via edge-run isolation,
+  globally unique ids, Word-legal names; deletion keeps text and refuses
+  while REF/PAGEREF instructions reference the name) and `docx.fields`
+  (PAGE/NUMPAGES/DATE simple fields, REF/PAGEREF/REF-\\r cross-references,
+  TOC complex field with dirty flag) — every field carries placeholder
+  result text and arms `w:updateFields`; this package NEVER computes field
+  values. Self-consistency pinned: the v0.1 `in_field` guard refuses spans
+  inside our own fields.
+- **Phase 7 — effective-format resolver.** New module `docx.formatting`:
+  `format_of(Run|Paragraph|Span)` and `surrounding_format(document,
+  anchor)`; docDefaults → paragraph-style chain → character style → direct
+  with §17.7.3 toggle XOR (nested bold cancels — pinned), provenance
+  chains on every value, "mixed" for disagreeing spans, and a declared
+  unresolved list (table-style conditional formatting, numbering-mark
+  properties, EA/CS variants) — never a guess.
 
 ### v0.1 (2026-07-08) — honesty recall, everyday shapes, four verbs
 

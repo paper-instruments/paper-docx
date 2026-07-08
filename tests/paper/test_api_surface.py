@@ -182,6 +182,37 @@ APPROVED_SIGNATURES = [
     ),
     ("docx.protection", "protection_status", "(document)"),
     ("docx.protection", "acknowledge_protection", "(document)"),
+    (
+        "docx.package",
+        "compare",
+        "(original, revised, *, author, date=None, granularity='word',"
+        " materialize=None)",
+    ),
+    (
+        "docx.composition",
+        "insert_blocks_from",
+        "(document, source, start_anchor, *, anchor, end_anchor=None,"
+        " count=1, styles='match_by_name')",
+    ),
+    (
+        "docx.composition",
+        "append_document",
+        "(document, source, *, section='new_page', styles='match_by_name')",
+    ),
+    ("docx.bookmarks", "list_bookmarks", "(document)"),
+    ("docx.bookmarks", "create_bookmark", "(document, span, name)"),
+    ("docx.bookmarks", "delete_bookmark", "(document, name)"),
+    ("docx.fields", "add_page_number_field", "(paragraph)"),
+    ("docx.fields", "add_page_count_field", "(paragraph)"),
+    ("docx.fields", "add_date_field", "(paragraph, *, date_format=None)"),
+    (
+        "docx.fields",
+        "add_reference_field",
+        "(paragraph, *, bookmark, kind='text')",
+    ),
+    ("docx.fields", "insert_toc_after", "(document, anchor, *, levels=(1, 3))"),
+    ("docx.formatting", "format_of", "(target)"),
+    ("docx.formatting", "surrounding_format", "(document, anchor)"),
 ]
 
 _IDS = [f"{module}.{attr}" for module, attr, _ in APPROVED_SIGNATURES]
