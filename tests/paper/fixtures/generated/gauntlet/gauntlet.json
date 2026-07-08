@@ -37,10 +37,15 @@
     "no-break-space",
     "note-references",
     "numbering-references",
+    "paragraph-mark-deletion",
+    "paragraph-mark-format-change",
+    "paragraph-mark-insertion",
     "point-bookmark",
     "ppr-change",
     "preserved-spaces",
     "proof-err",
+    "rich-stored-properties",
+    "row-revision-marks",
     "rpr-change",
     "showing-plc-hdr",
     "simple-field",
@@ -50,7 +55,11 @@
     "tracked-deletion",
     "tracked-format-change",
     "tracked-insertion",
+    "tracked-merge",
     "tracked-move",
+    "tracked-row-delete",
+    "tracked-row-insert",
+    "tracked-split",
     "two-authors",
     "wps-drawing"
   ],
@@ -162,7 +171,84 @@
         "was": "default",
         "text": "This paragraph was centered with tracking on."
       },
-      "format_change_count": 2
+      "format_change_count": 5
+    },
+    "format_changes_rich": {
+      "run_property_change": {
+        "author": "Bob Reviewer",
+        "now": "bold",
+        "was": "italic, half-point size 28",
+        "text": "Delivery follows the schedule in Exhibit A."
+      },
+      "paragraph_property_change": {
+        "author": "Bob Reviewer",
+        "now": "centered",
+        "was": "right-aligned",
+        "text": "This paragraph was right-aligned before re-centering."
+      },
+      "paragraph_mark_change": {
+        "author": "Bob Reviewer",
+        "now": "bold paragraph mark",
+        "was": "plain paragraph mark",
+        "text": "The paragraph mark itself was re-formatted."
+      },
+      "format_change_count": 3
+    },
+    "row_revisions": {
+      "header_row": [
+        "Item",
+        "Amount"
+      ],
+      "inserted_row": {
+        "author": "Alice Editor",
+        "marker": "w:trPr/w:ins",
+        "cells": [
+          "Filing fee",
+          "$100"
+        ]
+      },
+      "deleted_row": {
+        "author": "Bob Reviewer",
+        "marker": "w:trPr/w:del",
+        "cells": [
+          "Old charge",
+          "$50"
+        ]
+      },
+      "rows_after_accept_all": [
+        [
+          "Item",
+          "Amount"
+        ],
+        [
+          "Filing fee",
+          "$100"
+        ]
+      ],
+      "rows_after_reject_all": [
+        [
+          "Item",
+          "Amount"
+        ],
+        [
+          "Old charge",
+          "$50"
+        ]
+      ]
+    },
+    "paragraph_marks": {
+      "deleted_mark": {
+        "author": "Bob Reviewer",
+        "first_paragraph": "This sentence continues ",
+        "second_paragraph": "onto the following line.",
+        "accept_merges_to": "This sentence continues onto the following line."
+      },
+      "inserted_mark": {
+        "author": "Alice Editor",
+        "first_paragraph": "A tracked split divides ",
+        "second_paragraph": "this once-single sentence.",
+        "reject_merges_to": "A tracked split divides this once-single sentence."
+      }
     },
     "fields": {
       "simple_field": {

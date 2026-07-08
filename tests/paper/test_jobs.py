@@ -264,7 +264,9 @@ class DescribeJobSafetyNet:
         for key in ("moves", "format_changes", "fields"):
             assert key in counts, f"blind_region_counts missing {key!r}"
         assert counts["moves"] == 2
-        assert counts["format_changes"] == 2
+        # v0: 2 (rPrChange + pPrChange); v0.11 gauntlet adds the rich pair
+        # plus a paragraph-mark rPrChange
+        assert counts["format_changes"] == 5
         assert counts["fields"] == 3  # fldSimple + PAGEREF + multi-paragraph TOC
 
     def it_never_lets_a_refusal_mutate_the_document(self, tmp_path: Path):

@@ -329,6 +329,154 @@ TOC_FIELD_GROUND_TRUTH = {
     "all_entry_paragraphs_are_field_content": True,
 }
 
+# -- v0.11 redline-pipeline fixtures (PLAN-v0.11 Phase 0) --------------------
+
+ROW_REVISION_FEATURES = ["tracked-row-insert", "tracked-row-delete", "row-revision-marks"]
+RICH_FORMAT_FEATURES = FORMAT_CHANGE_FEATURES + [
+    "paragraph-mark-format-change",
+    "rich-stored-properties",
+]
+MERGE_FEATURES = [
+    "paragraph-mark-deletion",
+    "paragraph-mark-insertion",
+    "tracked-merge",
+    "tracked-split",
+]
+
+ROW_REVISIONS_GROUND_TRUTH: Dict[str, Any] = {
+    "header_row": ["Item", "Amount"],
+    "inserted_row": {
+        "author": "Alice Editor",
+        "marker": "w:trPr/w:ins",
+        "cells": ["Filing fee", "$100"],
+    },
+    "deleted_row": {
+        "author": "Bob Reviewer",
+        "marker": "w:trPr/w:del",
+        "cells": ["Old charge", "$50"],
+    },
+    "rows_after_accept_all": [["Item", "Amount"], ["Filing fee", "$100"]],
+    "rows_after_reject_all": [["Item", "Amount"], ["Old charge", "$50"]],
+}
+
+FORMAT_CHANGES_RICH_GROUND_TRUTH: Dict[str, Any] = {
+    "run_property_change": {
+        "author": "Bob Reviewer",
+        "now": "bold",
+        "was": "italic, half-point size 28",
+        "text": "Delivery follows the schedule in Exhibit A.",
+    },
+    "paragraph_property_change": {
+        "author": "Bob Reviewer",
+        "now": "centered",
+        "was": "right-aligned",
+        "text": "This paragraph was right-aligned before re-centering.",
+    },
+    "paragraph_mark_change": {
+        "author": "Bob Reviewer",
+        "now": "bold paragraph mark",
+        "was": "plain paragraph mark",
+        "text": "The paragraph mark itself was re-formatted.",
+    },
+    "format_change_count": 3,
+}
+
+PARAGRAPH_MERGE_GROUND_TRUTH: Dict[str, Any] = {
+    "deleted_mark": {
+        "author": "Bob Reviewer",
+        "first_paragraph": "This sentence continues ",
+        "second_paragraph": "onto the following line.",
+        "accept_merges_to": "This sentence continues onto the following line.",
+    },
+    "inserted_mark": {
+        "author": "Alice Editor",
+        "first_paragraph": "A tracked split divides ",
+        "second_paragraph": "this once-single sentence.",
+        "reject_merges_to": "A tracked split divides this once-single sentence.",
+    },
+}
+
+
+def protection_ground_truth(edit: str) -> Dict[str, Any]:
+    return {
+        "document_protection": {"edit": edit, "enforcement": True, "password": None},
+        "inline_control_tag": "inline-field-1",
+        "advisory_not_security": True,
+        "body_paragraph_count": 3,
+    }
+
+
+MULTIROUND_MOVED_TEXT = "The indemnity clause shall survive termination of this agreement."
+
+MULTIROUND_GROUND_TRUTH: Dict[str, Any] = {
+    "authors": {
+        "Alice Editor": "round 1: paragraph move, row insert, tracked split, signature insertion",
+        "Bob Reviewer": "round 2: format changes, row delete, paragraph merge, comment",
+    },
+    "revision_features": [
+        "whole-paragraph move pair mrMove1 with paragraph-mark stamps",
+        "rPrChange with empty and with rich stored properties",
+        "pPrChange with rich stored properties",
+        "tracked row insert and row delete",
+        "paragraph merge (deleted mark) and split (inserted mark)",
+        "comment anchored inside a tracked insertion",
+    ],
+    "moved_text": MULTIROUND_MOVED_TEXT,
+    "comment": {
+        "author": "Bob Reviewer",
+        "text": "Confirm the execution venue.",
+        "anchored_inside_insertion": True,
+    },
+    "accepted_ground_truth": "generated/redline/multiround-accepted.docx",
+}
+
+MULTIROUND_ACCEPTED_GROUND_TRUTH: Dict[str, Any] = {
+    "derivation": (
+        "multiround.docx with every revision applied, hand-computed to Word's"
+        " Accept All semantics"
+    ),
+    "revision_count": 0,
+    "body_paragraph_texts": [
+        "Engagement letter, revised across two rounds.",
+        "This agreement is made between the parties.",
+        "Middle paragraph between the move sites.",
+        MULTIROUND_MOVED_TEXT,
+        "Payment is due within thirty days of invoice.",
+        "Delivery follows the schedule in Exhibit A.",
+        "This sentence continues onto the following line.",
+        "A tracked split divides ",
+        "this once-single sentence.",
+        "Signed at the offices of the Client.",
+        "Closing paragraph after all tracked activity.",
+    ],
+    "table_rows": [["Item", "Amount"], ["Filing fee", "$100"]],
+    "comment_survives_resolution": True,
+}
+
+COMPARE_ORIGINAL_GROUND_TRUTH: Dict[str, Any] = {
+    "role": "compare-pair original (edited with tracking OFF into compare-revised.docx)",
+    "revision_count": 0,
+    "headings": ["Service Agreement", "Fees", "Confidentiality"],
+    "table_rows": [["Service", "Rate"], ["Advisory", "$200"], ["Drafting", "$150"]],
+}
+
+COMPARE_REVISED_GROUND_TRUTH: Dict[str, Any] = {
+    "role": "compare-pair revised",
+    "revision_count": 0,
+    "delta_from_original": [
+        "reworded: 'consulting services' -> 'consulting and advisory services'",
+        "deleted: 'The consultant will deliver monthly progress reports.'",
+        "reworded: 'thirty days notice' -> 'sixty days notice'",
+        "Confidentiality section moved ahead of Fees",
+        "reworded: 'one percent' -> 'one and a half percent'",
+        "added: 'A retainer of one thousand dollars is due on signing.'",
+        "table cell changed: Advisory $200 -> $250",
+    ],
+    "headings": ["Service Agreement", "Confidentiality", "Fees"],
+    "table_rows": [["Service", "Rate"], ["Advisory", "$250"], ["Drafting", "$150"]],
+}
+
+
 SIDECARS: Dict[str, Dict[str, Any]] = {
     # -- generated bucket ---------------------------------------------------
     "generated/minimal-clean/minimal.docx": sidecar(
@@ -441,6 +589,75 @@ SIDECARS: Dict[str, Dict[str, Any]] = {
         TOC_FIELD_FEATURES,
         TOC_FIELD_GROUND_TRUTH,
     ),
+    "generated/feature-isolated/row-revisions.docx": sidecar(
+        "row-revisions.docx",
+        GENERATED_PROVENANCE,
+        ROW_REVISION_FEATURES,
+        ROW_REVISIONS_GROUND_TRUTH,
+    ),
+    "generated/feature-isolated/format-changes-rich.docx": sidecar(
+        "format-changes-rich.docx",
+        GENERATED_PROVENANCE,
+        RICH_FORMAT_FEATURES,
+        FORMAT_CHANGES_RICH_GROUND_TRUTH,
+    ),
+    "generated/feature-isolated/paragraph-merge.docx": sidecar(
+        "paragraph-merge.docx",
+        GENERATED_PROVENANCE,
+        MERGE_FEATURES,
+        PARAGRAPH_MERGE_GROUND_TRUTH,
+    ),
+    "generated/feature-isolated/protected-forms.docx": sidecar(
+        "protected-forms.docx",
+        GENERATED_PROVENANCE,
+        ["document-protection", "restrict-editing", "forms-protection"],
+        protection_ground_truth("forms"),
+    ),
+    "generated/feature-isolated/protected-readonly.docx": sidecar(
+        "protected-readonly.docx",
+        GENERATED_PROVENANCE,
+        ["document-protection", "restrict-editing", "read-only-protection"],
+        protection_ground_truth("readOnly"),
+    ),
+    "generated/feature-isolated/protected-tracked.docx": sidecar(
+        "protected-tracked.docx",
+        GENERATED_PROVENANCE,
+        ["document-protection", "restrict-editing", "tracked-changes-protection"],
+        protection_ground_truth("trackedChanges"),
+    ),
+    # -- redline bucket (document-pair ground truth, PLAN-v0.11 Phase 0) -----
+    "generated/redline/multiround.docx": sidecar(
+        "multiround.docx",
+        GENERATED_PROVENANCE,
+        sorted(
+            set(
+                MOVES_FEATURES
+                + RICH_FORMAT_FEATURES
+                + ROW_REVISION_FEATURES
+                + MERGE_FEATURES
+                + ["two-authors", "comment-inside-insertion", "multi-round-redline"]
+            )
+        ),
+        MULTIROUND_GROUND_TRUTH,
+    ),
+    "generated/redline/multiround-accepted.docx": sidecar(
+        "multiround-accepted.docx",
+        GENERATED_PROVENANCE,
+        ["redline-resolution-ground-truth", "no-revisions"],
+        MULTIROUND_ACCEPTED_GROUND_TRUTH,
+    ),
+    "generated/redline/compare-original.docx": sidecar(
+        "compare-original.docx",
+        GENERATED_PROVENANCE,
+        ["compare-pair", "clean-no-revisions", "headings", "table"],
+        COMPARE_ORIGINAL_GROUND_TRUTH,
+    ),
+    "generated/redline/compare-revised.docx": sidecar(
+        "compare-revised.docx",
+        GENERATED_PROVENANCE,
+        ["compare-pair", "clean-no-revisions", "headings", "table"],
+        COMPARE_REVISED_GROUND_TRUTH,
+    ),
     "generated/gauntlet/gauntlet.docx": sidecar(
         "gauntlet.docx",
         GENERATED_PROVENANCE,
@@ -456,7 +673,9 @@ SIDECARS: Dict[str, Dict[str, Any]] = {
                 + NUMBERING_FEATURES
                 + FRAGMENTED_FEATURES
                 + MOVES_FEATURES
-                + FORMAT_CHANGE_FEATURES
+                + RICH_FORMAT_FEATURES
+                + ROW_REVISION_FEATURES
+                + MERGE_FEATURES
                 + FIELDS_FEATURES
                 + PLACEHOLDER_FEATURES
                 + BOOKMARK_FEATURES
@@ -478,7 +697,10 @@ SIDECARS: Dict[str, Dict[str, Any]] = {
             "textbox_visible_texts": ["Text living inside the text box."],
             "notes": FOOTNOTES_GROUND_TRUTH,
             "moves": MOVES_GROUND_TRUTH,
-            "format_changes": FORMAT_CHANGES_GROUND_TRUTH,
+            "format_changes": {**FORMAT_CHANGES_GROUND_TRUTH, "format_change_count": 5},
+            "format_changes_rich": FORMAT_CHANGES_RICH_GROUND_TRUTH,
+            "row_revisions": ROW_REVISIONS_GROUND_TRUTH,
+            "paragraph_marks": PARAGRAPH_MERGE_GROUND_TRUTH,
             "fields": {**FIELDS_GROUND_TRUTH, "field_count": 3},
             "toc_field": TOC_FIELD_GROUND_TRUTH,
             "placeholder_control": PLACEHOLDER_GROUND_TRUTH,

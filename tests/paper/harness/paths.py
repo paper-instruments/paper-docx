@@ -22,7 +22,9 @@ from typing import Iterator
 FIXTURES_DIR = Path(__file__).resolve().parent.parent / "fixtures"
 
 PROVENANCE_BUCKETS = ("word", "google", "libreoffice", "other", "generated")
-TAXONOMY_BUCKETS = ("minimal-clean", "feature-isolated", "gauntlet", "corrupt", "large")
+TAXONOMY_BUCKETS = (
+    "minimal-clean", "feature-isolated", "gauntlet", "corrupt", "large", "redline",
+)
 
 
 def fixture_path(relpath: str) -> Path:

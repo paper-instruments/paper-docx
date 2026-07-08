@@ -586,6 +586,13 @@ def build_gauntlet(out: Path) -> None:
     apply_custom_numbering(doc.add_paragraph("Gauntlet numbered item one"), ilvl=0)
     apply_custom_numbering(doc.add_paragraph("Gauntlet numbered item two"), ilvl=0)
 
+    # v0.11: row revisions, rich format changes, tracked paragraph merge/split
+    append_block(doc, row_revision_table(base_id=81))
+    for p in rich_format_change_paragraphs():
+        append_block(doc, p)
+    for p in paragraph_merge_paragraphs():
+        append_block(doc, p)
+
     s2 = doc.add_section()
     doc.add_paragraph("Gauntlet section two body paragraph.")
     s2.header.is_linked_to_previous = False
@@ -826,6 +833,418 @@ def build_toc_field(out: Path) -> None:
     save_frozen(doc, out)
 
 
+# ---------------------------------------------------------------------------
+# v0.11 redline-pipeline fixtures (PLAN-v0.11 Phase 0)
+# ---------------------------------------------------------------------------
+
+
+def rich_format_change_paragraphs() -> "List[docx.oxml.xmlchemy.BaseOxmlElement]":
+    """Format-change revisions whose stored previous properties are NON-empty
+    (reject must restore them, not just drop the change element), plus a
+    paragraph-MARK formatting change (`w:pPr/w:rPr/w:rPrChange`)."""
+    run_change = parse_xml(
+        f"<w:p {W}><w:r><w:rPr><w:b/>"
+        f'<w:rPrChange w:id="91" w:author="{AUTHOR_B}" w:date="{DATE_B}">'
+        '<w:rPr><w:i/><w:sz w:val="28"/></w:rPr></w:rPrChange>'
+        "</w:rPr><w:t>Delivery follows the schedule in Exhibit A.</w:t></w:r></w:p>"
+    )
+    par_change = parse_xml(
+        f"<w:p {W}><w:pPr>"
+        '<w:jc w:val="center"/>'
+        f'<w:pPrChange w:id="92" w:author="{AUTHOR_B}" w:date="{DATE_B}">'
+        '<w:pPr><w:jc w:val="right"/></w:pPr></w:pPrChange>'
+        "</w:pPr><w:r><w:t>This paragraph was right-aligned before re-centering.</w:t></w:r></w:p>"
+    )
+    mark_change = parse_xml(
+        f"<w:p {W}><w:pPr><w:rPr><w:b/>"
+        f'<w:rPrChange w:id="93" w:author="{AUTHOR_B}" w:date="{DATE_B}">'
+        "<w:rPr/></w:rPrChange>"
+        "</w:rPr></w:pPr><w:r><w:t>The paragraph mark itself was re-formatted.</w:t></w:r></w:p>"
+    )
+    return [run_change, par_change, mark_change]
+
+
+def build_format_changes_rich(out: Path) -> None:
+    doc = Document()
+    doc.add_paragraph("Paragraph before the rich formatting changes.")
+    for p in rich_format_change_paragraphs():
+        append_block(doc, p)
+    doc.add_paragraph("Paragraph after the rich formatting changes.")
+    save_frozen(doc, out)
+
+
+def paragraph_merge_paragraphs() -> "List[docx.oxml.xmlchemy.BaseOxmlElement]":
+    """Two tracked paragraph-mark revisions: a deleted mark (Word's deleted
+    pilcrow — accept merges the two paragraphs) and an inserted mark (a
+    tracked split — reject merges them back)."""
+    return [
+        parse_xml(
+            f"<w:p {W}><w:pPr><w:rPr>"
+            f'<w:del w:id="94" w:author="{AUTHOR_B}" w:date="{DATE_B}"/>'
+            "</w:rPr></w:pPr>"
+            '<w:r><w:t xml:space="preserve">This sentence continues </w:t></w:r></w:p>'
+        ),
+        parse_xml(f"<w:p {W}><w:r><w:t>onto the following line.</w:t></w:r></w:p>"),
+        parse_xml(
+            f"<w:p {W}><w:pPr><w:rPr>"
+            f'<w:ins w:id="95" w:author="{AUTHOR_A}" w:date="{DATE_A}"/>'
+            "</w:rPr></w:pPr>"
+            '<w:r><w:t xml:space="preserve">A tracked split divides </w:t></w:r></w:p>'
+        ),
+        parse_xml(f"<w:p {W}><w:r><w:t>this once-single sentence.</w:t></w:r></w:p>"),
+    ]
+
+
+def build_paragraph_merge(out: Path) -> None:
+    doc = Document()
+    doc.add_paragraph("Paragraph before the tracked paragraph-mark revisions.")
+    for p in paragraph_merge_paragraphs():
+        append_block(doc, p)
+    doc.add_paragraph("Paragraph after the tracked paragraph-mark revisions.")
+    save_frozen(doc, out)
+
+
+def row_revision_table(base_id: int) -> "docx.oxml.xmlchemy.BaseOxmlElement":
+    """A table with a plain header row, a row inserted with tracking on
+    (`w:trPr/w:ins`, ins-wrapped cell content, ins-stamped cell paragraph
+    marks) and a row deleted with tracking on (`w:trPr/w:del`, `w:delText`
+    cell content, del-stamped marks) — Word's row-revision shapes."""
+    ids = list(range(base_id, base_id + 10))
+    tc_w = '<w:tcPr><w:tcW w:w="4675" w:type="dxa"/></w:tcPr>'
+
+    def inserted_cell(text: str, mark_id: int, content_id: int) -> str:
+        return (
+            f"<w:tc>{tc_w}<w:p>"
+            f'<w:pPr><w:rPr><w:ins w:id="{mark_id}" w:author="{AUTHOR_A}"'
+            f' w:date="{DATE_A}"/></w:rPr></w:pPr>'
+            f'<w:ins w:id="{content_id}" w:author="{AUTHOR_A}" w:date="{DATE_A}">'
+            f"<w:r><w:t>{text}</w:t></w:r></w:ins>"
+            "</w:p></w:tc>"
+        )
+
+    def deleted_cell(text: str, mark_id: int, content_id: int) -> str:
+        return (
+            f"<w:tc>{tc_w}<w:p>"
+            f'<w:pPr><w:rPr><w:del w:id="{mark_id}" w:author="{AUTHOR_B}"'
+            f' w:date="{DATE_B}"/></w:rPr></w:pPr>'
+            f'<w:del w:id="{content_id}" w:author="{AUTHOR_B}" w:date="{DATE_B}">'
+            f"<w:r><w:delText>{text}</w:delText></w:r></w:del>"
+            "</w:p></w:tc>"
+        )
+
+    header = (
+        f"<w:tr><w:tc>{tc_w}<w:p><w:r><w:t>Item</w:t></w:r></w:p></w:tc>"
+        f"<w:tc>{tc_w}<w:p><w:r><w:t>Amount</w:t></w:r></w:p></w:tc></w:tr>"
+    )
+    inserted_row = (
+        f'<w:tr><w:trPr><w:ins w:id="{ids[0]}" w:author="{AUTHOR_A}"'
+        f' w:date="{DATE_A}"/></w:trPr>'
+        + inserted_cell("Filing fee", ids[1], ids[2])
+        + inserted_cell("$100", ids[3], ids[4])
+        + "</w:tr>"
+    )
+    deleted_row = (
+        f'<w:tr><w:trPr><w:del w:id="{ids[5]}" w:author="{AUTHOR_B}"'
+        f' w:date="{DATE_B}"/></w:trPr>'
+        + deleted_cell("Old charge", ids[6], ids[7])
+        + deleted_cell("$50", ids[8], ids[9])
+        + "</w:tr>"
+    )
+    return parse_xml(
+        f"<w:tbl {W}>"
+        '<w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>'
+        '<w:tblGrid><w:gridCol w:w="4675"/><w:gridCol w:w="4675"/></w:tblGrid>'
+        + header
+        + inserted_row
+        + deleted_row
+        + "</w:tbl>"
+    )
+
+
+def plain_result_table() -> "docx.oxml.xmlchemy.BaseOxmlElement":
+    """`row_revision_table` with all row revisions accepted (hand-computed)."""
+    tc_w = '<w:tcPr><w:tcW w:w="4675" w:type="dxa"/></w:tcPr>'
+    return parse_xml(
+        f"<w:tbl {W}>"
+        '<w:tblPr><w:tblW w:w="0" w:type="auto"/></w:tblPr>'
+        '<w:tblGrid><w:gridCol w:w="4675"/><w:gridCol w:w="4675"/></w:tblGrid>'
+        f"<w:tr><w:tc>{tc_w}<w:p><w:r><w:t>Item</w:t></w:r></w:p></w:tc>"
+        f"<w:tc>{tc_w}<w:p><w:r><w:t>Amount</w:t></w:r></w:p></w:tc></w:tr>"
+        f"<w:tr><w:tc>{tc_w}<w:p><w:r><w:t>Filing fee</w:t></w:r></w:p></w:tc>"
+        f"<w:tc>{tc_w}<w:p><w:r><w:t>$100</w:t></w:r></w:p></w:tc></w:tr>"
+        "</w:tbl>"
+    )
+
+
+def build_row_revisions(out: Path) -> None:
+    doc = Document()
+    doc.add_paragraph("Paragraph before the row-revision table.")
+    append_block(doc, row_revision_table(base_id=81))
+    doc.add_paragraph("Paragraph after the row-revision table.")
+    save_frozen(doc, out)
+
+
+COMMENTS_CT = "application/vnd.openxmlformats-officedocument.wordprocessingml.comments+xml"
+COMMENTS_RT = "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments"
+
+MULTIROUND_COMMENTS_XML = (
+    f"<w:comments {W}>"
+    f'<w:comment w:id="0" w:author="{AUTHOR_B}" w:date="{DATE_B}" w:initials="BR">'
+    '<w:p><w:pPr><w:pStyle w:val="CommentText"/></w:pPr>'
+    '<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr><w:annotationRef/></w:r>'
+    '<w:r><w:t xml:space="preserve">Confirm the execution venue.</w:t></w:r>'
+    "</w:p></w:comment>"
+    "</w:comments>"
+).encode("utf-8")
+
+
+def add_multiround_comment_part(parts: Dict[str, bytes], order: List[str]) -> None:
+    add_part(parts, order, "word/comments.xml", MULTIROUND_COMMENTS_XML)
+    add_content_type_overrides(parts, {"word/comments.xml": COMMENTS_CT})
+    add_document_relationships(parts, {COMMENTS_RT: "comments.xml"})
+    add_comment_style_definitions(parts, order)
+
+
+MULTIROUND_MOVED_TEXT = "The indemnity clause shall survive termination of this agreement."
+
+
+def multiround_paragraphs() -> "List[docx.oxml.xmlchemy.BaseOxmlElement]":
+    """The two-author, two-round redline body (FIXTURE-REQUESTS §15 bootstrap).
+
+    Every revision type v0.11 resolves, in one document: rPrChange (empty and
+    rich stored properties), pPrChange, a mark-stamped whole-paragraph move,
+    tracked row insert/delete, tracked paragraph merge + split, and a comment
+    anchored inside a tracked insertion. Hand-built; the real-Word capture
+    requested in FIXTURE-REQUESTS.md supersedes this bootstrap on arrival.
+    """
+    blocks: "List[docx.oxml.xmlchemy.BaseOxmlElement]" = [
+        parse_xml(
+            f"<w:p {W}><w:r><w:t>Engagement letter, revised across two rounds.</w:t></w:r></w:p>"
+        ),
+        parse_xml(
+            f"<w:p {W}>"
+            '<w:r><w:t xml:space="preserve">This </w:t></w:r>'
+            "<w:r><w:rPr><w:b/>"
+            f'<w:rPrChange w:id="101" w:author="{AUTHOR_B}" w:date="{DATE_B}">'
+            "<w:rPr/></w:rPrChange>"
+            "</w:rPr><w:t>agreement</w:t></w:r>"
+            '<w:r><w:t xml:space="preserve"> is made between the parties.</w:t></w:r>'
+            "</w:p>"
+        ),
+        # move source: content and the paragraph mark both move away
+        parse_xml(
+            f"<w:p {W}>"
+            f'<w:pPr><w:rPr><w:moveFrom w:id="102" w:author="{AUTHOR_A}"'
+            f' w:date="{DATE_A}"/></w:rPr></w:pPr>'
+            f'<w:moveFromRangeStart w:id="103" w:author="{AUTHOR_A}"'
+            f' w:date="{DATE_A}" w:name="mrMove1"/>'
+            f'<w:moveFrom w:id="104" w:author="{AUTHOR_A}" w:date="{DATE_A}">'
+            f"<w:r><w:t>{MULTIROUND_MOVED_TEXT}</w:t></w:r>"
+            "</w:moveFrom>"
+            '<w:moveFromRangeEnd w:id="103"/>'
+            "</w:p>"
+        ),
+        parse_xml(
+            f"<w:p {W}><w:r><w:t>Middle paragraph between the move sites.</w:t></w:r></w:p>"
+        ),
+        # move destination
+        parse_xml(
+            f"<w:p {W}>"
+            f'<w:pPr><w:rPr><w:moveTo w:id="105" w:author="{AUTHOR_A}"'
+            f' w:date="{DATE_A}"/></w:rPr></w:pPr>'
+            f'<w:moveToRangeStart w:id="106" w:author="{AUTHOR_A}"'
+            f' w:date="{DATE_A}" w:name="mrMove1"/>'
+            f'<w:moveTo w:id="107" w:author="{AUTHOR_A}" w:date="{DATE_A}">'
+            f"<w:r><w:t>{MULTIROUND_MOVED_TEXT}</w:t></w:r>"
+            "</w:moveTo>"
+            '<w:moveToRangeEnd w:id="106"/>'
+            "</w:p>"
+        ),
+        parse_xml(
+            f"<w:p {W}><w:pPr>"
+            '<w:jc w:val="center"/>'
+            f'<w:pPrChange w:id="108" w:author="{AUTHOR_B}" w:date="{DATE_B}">'
+            '<w:pPr><w:jc w:val="right"/></w:pPr></w:pPrChange>'
+            "</w:pPr><w:r><w:t>Payment is due within thirty days of invoice.</w:t></w:r></w:p>"
+        ),
+        parse_xml(
+            f"<w:p {W}><w:r><w:rPr><w:b/>"
+            f'<w:rPrChange w:id="109" w:author="{AUTHOR_B}" w:date="{DATE_B}">'
+            '<w:rPr><w:i/><w:sz w:val="28"/></w:rPr></w:rPrChange>'
+            "</w:rPr><w:t>Delivery follows the schedule in Exhibit A.</w:t></w:r></w:p>"
+        ),
+        row_revision_table(base_id=110),
+    ]
+    blocks.extend(paragraph_merge_paragraphs())
+    blocks.append(
+        parse_xml(
+            f"<w:p {W}>"
+            '<w:r><w:t xml:space="preserve">Signed at </w:t></w:r>'
+            f'<w:ins w:id="122" w:author="{AUTHOR_A}" w:date="{DATE_A}">'
+            '<w:commentRangeStart w:id="0"/>'
+            "<w:r><w:t>the offices of the Client</w:t></w:r>"
+            '<w:commentRangeEnd w:id="0"/>'
+            '<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
+            '<w:commentReference w:id="0"/></w:r>'
+            "</w:ins>"
+            "<w:r><w:t>.</w:t></w:r>"
+            "</w:p>"
+        )
+    )
+    blocks.append(
+        parse_xml(
+            f"<w:p {W}><w:r><w:t>Closing paragraph after all tracked activity.</w:t></w:r></w:p>"
+        )
+    )
+    return blocks
+
+
+def build_redline_multiround(out: Path) -> None:
+    doc = Document()
+    for block in multiround_paragraphs():
+        append_block(doc, block)
+    save_frozen(doc, out, post=add_multiround_comment_part)
+
+
+def build_redline_multiround_accepted(out: Path) -> None:
+    """`multiround.docx` with every revision applied, hand-computed to Word's
+    Accept All semantics — the resolution ground truth until the real-Word
+    capture (FIXTURE-REQUESTS §16) supersedes it."""
+    doc = Document()
+    for block in [
+        parse_xml(
+            f"<w:p {W}><w:r><w:t>Engagement letter, revised across two rounds.</w:t></w:r></w:p>"
+        ),
+        parse_xml(
+            f"<w:p {W}>"
+            '<w:r><w:t xml:space="preserve">This </w:t></w:r>'
+            "<w:r><w:rPr><w:b/></w:rPr><w:t>agreement</w:t></w:r>"
+            '<w:r><w:t xml:space="preserve"> is made between the parties.</w:t></w:r>'
+            "</w:p>"
+        ),
+        # accepted move: source paragraph gone, destination plain
+        parse_xml(
+            f"<w:p {W}><w:r><w:t>Middle paragraph between the move sites.</w:t></w:r></w:p>"
+        ),
+        parse_xml(f"<w:p {W}><w:r><w:t>{MULTIROUND_MOVED_TEXT}</w:t></w:r></w:p>"),
+        parse_xml(
+            f"<w:p {W}><w:pPr><w:jc w:val=\"center\"/></w:pPr>"
+            "<w:r><w:t>Payment is due within thirty days of invoice.</w:t></w:r></w:p>"
+        ),
+        parse_xml(
+            f"<w:p {W}><w:r><w:rPr><w:b/></w:rPr>"
+            "<w:t>Delivery follows the schedule in Exhibit A.</w:t></w:r></w:p>"
+        ),
+        plain_result_table(),
+        # merged pair (deleted mark applied), split pair (inserted mark kept)
+        parse_xml(
+            f"<w:p {W}><w:r>"
+            '<w:t xml:space="preserve">This sentence continues </w:t></w:r>'
+            "<w:r><w:t>onto the following line.</w:t></w:r></w:p>"
+        ),
+        parse_xml(
+            f'<w:p {W}><w:r><w:t xml:space="preserve">A tracked split divides </w:t></w:r></w:p>'
+        ),
+        parse_xml(f"<w:p {W}><w:r><w:t>this once-single sentence.</w:t></w:r></w:p>"),
+        parse_xml(
+            f"<w:p {W}>"
+            '<w:r><w:t xml:space="preserve">Signed at </w:t></w:r>'
+            '<w:commentRangeStart w:id="0"/>'
+            "<w:r><w:t>the offices of the Client</w:t></w:r>"
+            '<w:commentRangeEnd w:id="0"/>'
+            '<w:r><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
+            '<w:commentReference w:id="0"/></w:r>'
+            "<w:r><w:t>.</w:t></w:r>"
+            "</w:p>"
+        ),
+        parse_xml(
+            f"<w:p {W}><w:r><w:t>Closing paragraph after all tracked activity.</w:t></w:r></w:p>"
+        ),
+    ]:
+        append_block(doc, block)
+    save_frozen(doc, out, post=add_multiround_comment_part)
+    blob = part_bytes(out, "word/document.xml")
+    for marker in (b"<w:ins ", b"<w:del ", b"<w:moveFrom", b"<w:moveTo", b"PrChange"):
+        assert marker not in blob, f"accepted ground truth still carries {marker!r}"
+
+
+def build_compare_original(out: Path) -> None:
+    doc = Document()
+    doc.add_heading("Service Agreement", level=1)
+    doc.add_paragraph("This agreement governs the provision of consulting services.")
+    doc.add_paragraph("The consultant will deliver monthly progress reports.")
+    doc.add_paragraph("Either party may terminate with thirty days notice.")
+    doc.add_heading("Fees", level=2)
+    doc.add_paragraph("Fees are payable within thirty days of invoice.")
+    doc.add_paragraph("Late payments accrue interest at one percent monthly.")
+    table = doc.add_table(rows=3, cols=2)
+    for row, (service, rate) in zip(
+        table.rows, [("Service", "Rate"), ("Advisory", "$200"), ("Drafting", "$150")]
+    ):
+        row.cells[0].text = service
+        row.cells[1].text = rate
+    doc.add_heading("Confidentiality", level=2)
+    doc.add_paragraph("Each party shall protect the other's confidential information.")
+    save_frozen(doc, out)
+
+
+def build_compare_revised(out: Path) -> None:
+    """`compare-original.docx` edited with tracking OFF: a word-level rewording,
+    a deleted paragraph, an added paragraph, a changed table cell, and the
+    Confidentiality section moved ahead of Fees."""
+    doc = Document()
+    doc.add_heading("Service Agreement", level=1)
+    doc.add_paragraph(
+        "This agreement governs the provision of consulting and advisory services."
+    )
+    doc.add_paragraph("Either party may terminate with sixty days notice.")
+    doc.add_heading("Confidentiality", level=2)
+    doc.add_paragraph("Each party shall protect the other's confidential information.")
+    doc.add_heading("Fees", level=2)
+    doc.add_paragraph("Fees are payable within thirty days of invoice.")
+    doc.add_paragraph("Late payments accrue interest at one and a half percent monthly.")
+    doc.add_paragraph("A retainer of one thousand dollars is due on signing.")
+    table = doc.add_table(rows=3, cols=2)
+    for row, (service, rate) in zip(
+        table.rows, [("Service", "Rate"), ("Advisory", "$250"), ("Drafting", "$150")]
+    ):
+        row.cells[0].text = service
+        row.cells[1].text = rate
+    save_frozen(doc, out)
+
+
+def add_document_protection(parts: Dict[str, bytes], edit: str) -> None:
+    """Insert `w:documentProtection` into word/settings.xml at its schema
+    position (before `w:defaultTabStop`; CT_Settings child sequence)."""
+    blob = parts["word/settings.xml"].decode("utf-8")
+    marker = "<w:defaultTabStop"
+    assert marker in blob, "default template settings.xml lost defaultTabStop?"
+    protection = f'<w:documentProtection w:edit="{edit}" w:enforcement="1"/>'
+    parts["word/settings.xml"] = blob.replace(marker, protection + marker, 1).encode("utf-8")
+
+
+def build_protected(out: Path, edit: str) -> None:
+    """A document Word treats as protected (Restrict Editing, no password):
+    `w:documentProtection w:edit="<mode>" w:enforcement="1"`."""
+    doc = Document()
+    doc.add_paragraph("This template is locked; only sanctioned edits apply.")
+    append_block(doc, inline_content_control_paragraph())
+    doc.add_paragraph("Paragraph after the form control.")
+    save_frozen(doc, out, post=lambda parts, order: add_document_protection(parts, edit))
+
+
+def build_protected_forms(out: Path) -> None:
+    build_protected(out, "forms")
+
+
+def build_protected_readonly(out: Path) -> None:
+    build_protected(out, "readOnly")
+
+
+def build_protected_tracked(out: Path) -> None:
+    build_protected(out, "trackedChanges")
+
+
 def build_corrupt_broken_rel(minimal: Path, out: Path) -> None:
     """Valid zip, valid XML, but document.xml.rels points at a missing part."""
     parts, order = read_parts(minimal.read_bytes())
@@ -950,11 +1369,62 @@ FEATURE_PROBES: Dict[str, List[Tuple[str, bytes]]] = {
         ("word/document.xml", b'w:fldCharType="separate"'),
         ("word/document.xml", b"Chapter Two entry"),
     ],
+    "row-revisions": [
+        ("word/document.xml", b"<w:trPr><w:ins "),
+        ("word/document.xml", b"<w:trPr><w:del "),
+        ("word/document.xml", b"Filing fee"),
+        ("word/document.xml", b"Old charge"),
+    ],
+    "format-changes-rich": [
+        ("word/document.xml", b"Delivery follows the schedule in Exhibit A."),
+        ("word/document.xml", b'<w:jc w:val="right"/>'),
+        ("word/document.xml", b"The paragraph mark itself was re-formatted."),
+    ],
+    "paragraph-merge": [
+        ("word/document.xml", b"This sentence continues "),
+        ("word/document.xml", b"A tracked split divides "),
+    ],
 }
 
 GAUNTLET_PROBES: List[Tuple[str, bytes]] = [
     probe for probes in FEATURE_PROBES.values() for probe in probes
 ]
+
+#: probes for fixtures that deliberately do NOT fold into the gauntlet
+#: (protection would poison every other gauntlet test; the redline bucket
+#: fixtures are document-pair ground truth, not isolated features).
+STANDALONE_PROBES: Dict[str, List[Tuple[str, bytes]]] = {
+    "protected-forms": [
+        ("word/settings.xml", b'w:edit="forms"'),
+        ("word/settings.xml", b'w:enforcement="1"'),
+    ],
+    "protected-readonly": [("word/settings.xml", b'w:edit="readOnly"')],
+    "protected-tracked": [("word/settings.xml", b'w:edit="trackedChanges"')],
+    "multiround": [
+        ("word/document.xml", b'w:name="mrMove1"'),
+        ("word/document.xml", b"<w:rPrChange "),
+        ("word/document.xml", b"<w:pPrChange "),
+        ("word/document.xml", b"<w:trPr><w:ins "),
+        ("word/document.xml", b"<w:trPr><w:del "),
+        ("word/document.xml", b"<w:pPr><w:rPr><w:del "),
+        ("word/document.xml", b"<w:pPr><w:rPr><w:moveFrom "),
+        ("word/comments.xml", b"Confirm the execution venue."),
+    ],
+    "multiround-accepted": [
+        ("word/document.xml", b"Filing fee"),
+        ("word/document.xml", MULTIROUND_MOVED_TEXT.encode()),
+        ("word/comments.xml", b"Confirm the execution venue."),
+    ],
+    "compare-original": [
+        ("word/document.xml", b"monthly progress reports"),
+        ("word/document.xml", b"$200"),
+    ],
+    "compare-revised": [
+        ("word/document.xml", b"consulting and advisory services"),
+        ("word/document.xml", b"$250"),
+        ("word/document.xml", b"A retainer of one thousand dollars"),
+    ],
+}
 
 
 def multi_section_probe(path: Path) -> None:
@@ -1139,6 +1609,16 @@ def main(argv: "List[str] | None" = None) -> int:
         feature_dir / "bookmarks.docx": build_bookmarks,
         feature_dir / "noisy-markup.docx": build_noisy_markup,
         feature_dir / "toc-field.docx": build_toc_field,
+        feature_dir / "row-revisions.docx": build_row_revisions,
+        feature_dir / "format-changes-rich.docx": build_format_changes_rich,
+        feature_dir / "paragraph-merge.docx": build_paragraph_merge,
+        feature_dir / "protected-forms.docx": build_protected_forms,
+        feature_dir / "protected-readonly.docx": build_protected_readonly,
+        feature_dir / "protected-tracked.docx": build_protected_tracked,
+        GENERATED_DIR / "redline" / "multiround.docx": build_redline_multiround,
+        GENERATED_DIR / "redline" / "multiround-accepted.docx": build_redline_multiround_accepted,
+        GENERATED_DIR / "redline" / "compare-original.docx": build_compare_original,
+        GENERATED_DIR / "redline" / "compare-revised.docx": build_compare_revised,
         GENERATED_DIR / "gauntlet" / "gauntlet.docx": build_gauntlet,
         GENERATED_DIR / "large" / "large-5000-paragraphs.docx": build_large,
     }
@@ -1158,7 +1638,7 @@ def main(argv: "List[str] | None" = None) -> int:
         if stem == "gauntlet":
             probes = GAUNTLET_PROBES
         else:
-            probes = FEATURE_PROBES.get(stem, [])
+            probes = FEATURE_PROBES.get(stem, []) + STANDALONE_PROBES.get(stem, [])
         validate_generated_fixture(out_path, probes, run_lo=run_lo and stem != "large-5000-paragraphs")
         if stem in ("header-footer-sections", "gauntlet"):
             multi_section_probe(out_path)

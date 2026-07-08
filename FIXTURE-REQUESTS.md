@@ -86,6 +86,53 @@ only desktop Word can confirm our model against reality.
     paragraphs. Needed for field-instruction refusal tests (`w:instrText`,
     `w:fldChar`).
 
+## word/other/ — v0.11 priority requests (redline pipeline ground truth)
+
+These are the critical path for v0.11 Phases 1–4 (revision resolution, scrub,
+compare). LibreOffice cannot faithfully produce moves, format-change markup,
+or Word's proofing noise, so the v0.11 work bootstraps these shapes as
+hand-built XML with honest provenance; only these captures can confirm the
+model against reality. All in US-English desktop Word 365; record the exact
+build in each sidecar.
+
+15. **multi-round-redline.docx** — One document edited across TWO rounds by
+    TWO authors (change the user name between rounds, File → Options →
+    General), Track Changes on throughout, containing ALL of:
+    - one paragraph moved by drag-and-drop and one moved by cut+paste
+      (`w:moveFrom`/`w:moveTo` with range markers);
+    - bold and italic applied to existing (pre-existing, round-1) text
+      (`w:rPrChange`);
+    - one paragraph's style changed, e.g. Normal → Heading 2 (`w:pPrChange`);
+    - a table with one row inserted and a different row deleted while
+      tracking (`w:trPr/w:ins`, `w:trPr/w:del`);
+    - two paragraphs merged by deleting the paragraph mark between them
+      (select the pilcrow with ¶ display on, press Delete);
+    - a comment anchored to text INSIDE a tracked insertion and another
+      spanning a tracked deletion.
+    Do not resolve anything. Record per-author change counts in
+    `ground_truth`.
+16. **multi-round-redline-accepted.docx** — Open a COPY of №15 in Word,
+    Review → Accept → Accept All Changes (do not stop tracking first; then
+    turn tracking off), save. This is the resolution ground truth: v0.11's
+    `accept_all()` must match its visible text exactly.
+17. **compare-original.docx / compare-revised.docx / compare-word-output.docx**
+    — Author a 2-page document (headings, a list, a table). Save as
+    compare-original. Edit it with Track Changes OFF: reword sentences,
+    delete a paragraph, add a paragraph, change a table cell, move a section.
+    Save as compare-revised. Then Review → Compare (original vs revised),
+    save Word's own result as compare-word-output. The pair feeds
+    `compare()`; Word's output is the reasonableness reference (visible-text
+    equivalence, not byte parity).
+18. **protected-forms.docx** — A document with one Rich Text content control
+    and one plain paragraph. Review → Restrict Editing → "Allow only this
+    type of editing: Filling in forms" → Yes, Start Enforcing (NO password —
+    leave blank). `w:documentProtection` with `w:edit="forms"`,
+    `w:enforcement="1"`.
+19. **protected-readonly.docx** — Same, but "No changes (Read only)", no
+    password. (`w:edit="readOnly"`.)
+20. **protected-tracked.docx** — Same, but "Tracked changes" enforcement
+    (`w:edit="trackedChanges"`).
+
 ## google/feature-isolated/ (File → Download → Microsoft Word (.docx))
 
 12. **tracked-suggestions.docx** — Google Doc in *Suggesting* mode: one

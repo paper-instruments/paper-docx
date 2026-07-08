@@ -256,10 +256,12 @@ class DescribeBlindRegionCounts:
     def it_counts_traversed_regions_on_the_gauntlet(self):
         counts = outline(_doc(GAUNTLET)).blind_region_counts
         assert counts == {
-            "tracked_insertions": 2,
-            "tracked_deletions": 1,
+            # v0.11: +2 row-cell insertions, +2 ins mark stamps, +1 split mark,
+            # +1 trPr row-insert marker (and symmetrically for deletions)
+            "tracked_insertions": 8,
+            "tracked_deletions": 7,
             "moves": 2,  # one moveFrom + one moveTo
-            "format_changes": 2,  # rPrChange + pPrChange
+            "format_changes": 5,  # rPrChange + pPrChange + rich pair + mark change
             "content_controls": 3,  # block + inline + placeholder form control
             "text_boxes": 1,
             "fields": 3,  # fldSimple + complex PAGEREF + multi-paragraph TOC
