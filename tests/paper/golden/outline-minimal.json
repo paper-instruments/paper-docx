@@ -1,11 +1,18 @@
 {
   "schema": "paper_outline",
-  "version": 1,
+  "version": 2,
   "story_parts": [
     "word/document.xml"
   ],
   "blind_region_counts": {
+    "alt_chunks": 0,
     "content_controls": 0,
+    "embedded_objects": 0,
+    "fields": 0,
+    "format_changes": 0,
+    "hidden_text": 0,
+    "math": 0,
+    "moves": 0,
     "text_boxes": 0,
     "tracked_deletions": 0,
     "tracked_insertions": 0
@@ -26,6 +33,7 @@
       "in_delete": false,
       "in_content_control": false,
       "in_text_box": false,
+      "has_field": false,
       "table": null
     },
     {
@@ -43,6 +51,7 @@
       "in_delete": false,
       "in_content_control": false,
       "in_text_box": false,
+      "has_field": false,
       "table": null
     },
     {
@@ -60,6 +69,7 @@
       "in_delete": false,
       "in_content_control": false,
       "in_text_box": false,
+      "has_field": false,
       "table": null
     }
   ]

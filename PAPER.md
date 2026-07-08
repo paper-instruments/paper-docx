@@ -82,3 +82,39 @@ release tag exists, merge that release tag into `main`, and run both the pytest
 and behave suites plus package smoke tests. Resolve conflicts using this file as
 the map of intentional fork identity changes. Merge upstream releases; never
 rebase `main`.
+
+## Paper Ledger (additive work)
+
+All entries below are purely additive (§1.1); upstream suites stayed green at
+every commit (pytest 1609, behave 650 scenarios). Signatures are pinned in
+`API-PROPOSAL.md` and mechanically enforced by `tests/paper/test_api_surface.py`.
+
+### v0 (2026-07-07) — the safe-editing surface
+
+Phases 0–9 of `agent_docs/PLAN-paper-docx.md`: `tests/paper/` harness +
+frozen fixture corpus; `docx.errors`; `docx.package` kernel
+(`xml_equivalent`/`diff_package`/`patch_save`); `docx.story`
+visibility-complete traversal; `docx.search` (`find_text`/`Span.replace`,
+surgical + tracked, new `w:ins`/`w:del` oxml vocabulary); `docx.blocks`;
+`Document.revisions` with the tracked-edit algebra; guarded `docx.tableops` +
+`docx.numbering`. Upstream files touched (additively only): re-export block
+in `docx/package.py`, part registrations in `docx/__init__.py`,
+`Document.revisions` property.
+
+### v0.1 (2026-07-08) — honesty recall, everyday shapes, four verbs
+
+`agent_docs/PLAN-v0.1.md`, driven by the 83-finding gap review. Standing job
+evals (`tests/paper/test_jobs.py`) with the strict-xfail ledger discipline —
+all markers flipped green by completion. Phase 0 honesty recall: tracked
+moves and format-change revisions enumerated/counted/view-filtered (never
+resolved silently; `remaining_unsupported` census), `Span.in_field` +
+field-result refusal, placeholder-aware form fill, control-char refusals, no
+fake bullets, untracked-in-insertion and bookmark-hollowing guards,
+blind-region confession (outline schema v2), `docx.package.diagnose`.
+Phase 1: cell-wise table guards, transparent Word noise in block ops,
+`replace_all`, same-author redline layering, break-tolerant narrowing,
+hyperlink-interior redlines. Phase 2: `docx.controls`, numbering authoring
+(`ensure_*_definition`/`restart_numbering`), `insert_blocks_after` typed
+blocks, `Span.comment` + `docx.commentops` (w15 replies/resolution),
+`docx.package.text_diff`/`pending_changes`. Additional additive upstream
+touch: commentsExtended part registration in `docx/__init__.py`.

@@ -258,6 +258,13 @@ class DescribeBlindRegionCounts:
         assert counts == {
             "tracked_insertions": 2,
             "tracked_deletions": 1,
-            "content_controls": 2,
+            "moves": 2,  # one moveFrom + one moveTo
+            "format_changes": 2,  # rPrChange + pPrChange
+            "content_controls": 3,  # block + inline + placeholder form control
             "text_boxes": 1,
+            "fields": 3,  # fldSimple + complex PAGEREF + multi-paragraph TOC
+            "math": 0,
+            "embedded_objects": 0,
+            "alt_chunks": 0,
+            "hidden_text": 0,
         }

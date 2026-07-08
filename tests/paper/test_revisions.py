@@ -12,6 +12,7 @@ import pytest
 
 import docx
 from docx.blocks import tracked_delete_paragraphs, tracked_replace_paragraphs
+from docx.errors import UnsupportedStructureError
 from docx.search import find_one
 from docx.story import iter_blocks
 
@@ -67,7 +68,8 @@ class DescribeEnumeration:
         payload_2 = json.dumps(_doc(TRACKED).revisions.to_dict())
         assert payload_1 == payload_2
         parsed = json.loads(payload_1)
-        assert parsed["schema"] == "paper_revisions" and parsed["version"] == 1
+        assert parsed["schema"] == "paper_revisions" and parsed["version"] == 2
+        assert parsed["remaining_unsupported"] == {}
 
 
 class DescribeAcceptReject:
@@ -184,3 +186,45 @@ class DescribeTrackedEditAlgebra:
             "Replacement one.",
             "Replacement two.",
         ]
+
+
+class DescribeUnresolvableRevisions:
+    """v0.1 honesty recall: moves and format changes are seen, counted, and
+    refused — never half-resolved, never silently omitted."""
+
+    MOVES = "generated/feature-isolated/tracked-moves.docx"
+    FORMAT_CHANGES = "generated/feature-isolated/format-changes.docx"
+
+    def it_reports_a_census_of_unsupported_revisions(self):
+        revisions = _doc(self.MOVES).revisions
+        assert revisions.remaining_unsupported() == {"move_from": 1, "move_to": 1}
+        assert _doc(self.FORMAT_CHANGES).revisions.remaining_unsupported() == {
+            "format_change": 2
+        }
+
+    def it_refuses_individual_resolution_of_a_move(self):
+        revision = next(
+            r for r in _doc(self.MOVES).revisions if r.revision_type == "move_from"
+        )
+        with pytest.raises(UnsupportedStructureError, match="not yet"):
+            revision.accept()
+
+    def it_resolves_an_author_filtered_clean_subset_alongside_moves(self, tmp_path):
+        """Selected-set semantics: Carol's plain insertion resolves even though
+        Alice's move stays pending — the census carries the rest."""
+        import shutil
+
+        path = tmp_path / "mixed.docx"
+        shutil.copyfile(fixture_path(self.MOVES), path)
+        document = docx.Document(str(path))
+        find_one(document, "Paragraph before the tracked move.").replace(
+            "Paragraph ahead of the tracked move.",
+            tracked=True, author="Carol QA",
+        )
+        resolved = document.revisions.accept_all(author="Carol QA")
+        assert resolved > 0
+        assert document.revisions.remaining_unsupported() == {
+            "move_from": 1, "move_to": 1
+        }
+        with pytest.raises(UnsupportedStructureError):
+            document.revisions.accept_all()

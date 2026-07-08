@@ -45,6 +45,36 @@ Confirmed pinned shapes against real code: §2 exceptions (`docx/errors.py` is
 a free name; upstream uses `exceptions.py`), §2 anchors (below), §4 sidecar
 schema (already shipping in Phase 1), §7 kernel (F1 resolution above).
 
+**v0.1 amendments (honesty recall, per PLAN-v0.1.md):** `Outline.to_dict`
+version bumps to 2 — `blind_region_counts` gains `moves`, `format_changes`,
+`fields` and the confession keys (`math`, `embedded_objects`, `alt_chunks`,
+`hidden_text`); blocks gain `has_field`. `Span` gains public `in_field`;
+`Span.replace` refuses field-result targets. Story views treat `w:moveFrom`
+as deletion-like and `w:moveTo` as insertion-like (moved text appears once
+per view). `Revision.revision_type` gains `move_from` / `move_to` /
+`format_change` (enumerated, counted, NOT resolvable — individual and batch
+resolution refuse); `Revisions.to_dict` bumps to v2 with a
+`remaining_unsupported` census, and `accept_all`/`reject_all` validate the
+selected set atomically before touching anything.
+
+**v0.1 Phase 1-2 amendments (everyday shapes + verbs, per PLAN-v0.1.md):**
+table guards are cell-wise/row-wise (S1); tracked block ops treat
+proofErr/point-bookmarks/comment-anchors as transparent (S2);
+`docx.search.replace_all` (S3, reverse-document-order semantics, schema
+`paper_replace_all` v1); same-author redline layering (S4); break-tolerant
+narrowing with whitespace↔tab alignment in kept regions (S5);
+hyperlink-interior tracked replace with boundary refusal (S6). New verbs:
+`docx.controls` (list/get/set by tag or alias; checkbox/dropdown/date typed;
+data-bound refuses), `docx.numbering.ensure_bullet_definition` /
+`ensure_decimal_definition` / `restart_numbering` (two canonical definitions,
+level-0 restarts; everything exotic still refuses),
+`docx.blocks.insert_blocks_after` with the typed `RichParagraph` /
+`ListBlock` / `TableBlock` vocabulary (tracked table insertion refuses),
+`Span.comment` + `docx.commentops` (anchored text, w15 replies/resolution;
+main-story anchors in v0.1), and `docx.package.text_diff` /
+`pending_changes` (schema `paper_text_diff` v1) promoted from the reference
+`diff_docx.py`. All signatures enforced in `tests/paper/test_api_surface.py`.
+
 **Post-implementation amendments (adversarial review):** duplicate zip member
 names collapse with LAST entry winning (`zipfile` semantics — corrected from
 this document's first draft which said "first"); `xml_equivalent` refuses

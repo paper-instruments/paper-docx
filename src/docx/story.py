@@ -43,12 +43,32 @@ _SDT = qn("w:sdt")
 _SDT_CONTENT = qn("w:sdtContent")
 _INS = qn("w:ins")
 _DEL = qn("w:del")
+_MOVE_FROM = qn("w:moveFrom")
+_MOVE_TO = qn("w:moveTo")
 _T = qn("w:t")
 _DEL_TEXT = qn("w:delText")
 _TAB = qn("w:tab")
 _BR = qn("w:br")
 _CR = qn("w:cr")
 _TXBX = qn("w:txbxContent")
+_FLD_SIMPLE = qn("w:fldSimple")
+_FLD_CHAR = qn("w:fldChar")
+_FLD_CHAR_TYPE = qn("w:fldCharType")
+
+#: tracked property-change vocabulary — enumerable, countable, not resolvable
+_FORMAT_CHANGE_TAGS = frozenset(
+    qn(tag)
+    for tag in (
+        "w:rPrChange", "w:pPrChange", "w:tblPrChange", "w:tcPrChange",
+        "w:trPrChange", "w:sectPrChange", "w:numberingChange",
+        "w:cellIns", "w:cellDel", "w:cellMerge",
+    )
+)
+_M_NS = "http://schemas.openxmlformats.org/officeDocument/2006/math"
+_MATH_TAGS = (f"{{{_M_NS}}}oMath", f"{{{_M_NS}}}oMathPara")
+_OBJECT = qn("w:object")
+_ALT_CHUNK = qn("w:altChunk")
+_VANISH = qn("w:vanish")
 _P_STYLE_XPATH = "./w:pPr/w:pStyle/@w:val"
 _FOOTNOTE_TYPE = qn("w:type")
 
@@ -118,6 +138,7 @@ class Block:
     in_delete: bool
     in_content_control: bool
     in_text_box: bool
+    has_field: bool
     table: Optional[TableShape]
 
     def to_dict(self) -> dict:
@@ -132,6 +153,7 @@ class Block:
             "in_delete": self.in_delete,
             "in_content_control": self.in_content_control,
             "in_text_box": self.in_text_box,
+            "has_field": self.has_field,
             "table": self.table.to_dict() if self.table else None,
         }
 
@@ -147,7 +169,8 @@ class Outline:
     def to_dict(self) -> dict:
         return {
             "schema": "paper_outline",
-            "version": 1,
+            "version": 2,  # v2: moves/format_changes/fields + confession keys,
+            #     per-block has_field (v0.1 honesty recall)
             "story_parts": list(self.story_parts),
             "blind_region_counts": dict(sorted(self.blind_region_counts.items())),
             "blocks": [block.to_dict() for block in self.blocks],
@@ -197,7 +220,14 @@ def _first_choice_children(element: "_Element") -> "List[_Element]":
 
 
 class _TextVisitor:
-    """Accumulates view-filtered text and region flags over a subtree."""
+    """Accumulates view-filtered text and region flags over a subtree.
+
+    Tracked MOVES participate in the views: `w:moveFrom` content is
+    deletion-like (excluded from "current", present in "original") and
+    `w:moveTo` content is insertion-like — so moved text appears exactly once
+    per view instead of doubling (v0.1 honesty recall, H1). Resolution of
+    moves is a separate, refused concern.
+    """
 
     def __init__(self, view: str) -> None:
         self.view = view
@@ -206,22 +236,29 @@ class _TextVisitor:
         self.in_delete = False
         self.in_content_control = False
         self.in_text_box = False
+        self.has_field = False
 
     def visit(self, element: "_Element", *, in_ins: bool, in_del: bool,
               in_sdt: bool, in_txbx: bool, skip_text_boxes: bool) -> None:
         tag = element.tag
         if tag == _TXBX and skip_text_boxes:
             return
-        if tag == _INS:
+        if tag in (_INS, _MOVE_TO):
             in_ins = True
-        elif tag == _DEL:
+        elif tag in (_DEL, _MOVE_FROM):
             in_del = True
         elif tag == _SDT:
             in_sdt = True
         elif tag == _TXBX:
             in_txbx = True
+        elif tag == _FLD_SIMPLE or (
+            tag == _FLD_CHAR and element.get(_FLD_CHAR_TYPE) == "begin"
+        ):
+            self.has_field = True
 
         if tag == _T:
+            if self.view == "current" and in_del:
+                return  # moveFrom source text: gone once changes are accepted
             if self.view == "original" and in_ins:
                 return
             self._emit(element.text or "", in_ins, in_del, in_sdt, in_txbx)
@@ -235,11 +272,12 @@ class _TextVisitor:
                 return
             self._emit(element.text or "", in_ins, True, in_sdt, in_txbx)
             return
-        if tag == _TAB:
-            self._emit("\t", in_ins, in_del, in_sdt, in_txbx)
-            return
-        if tag in (_BR, _CR):
-            self._emit("\n", in_ins, in_del, in_sdt, in_txbx)
+        if tag in (_TAB, _BR, _CR):
+            if self.view == "current" and in_del:
+                return
+            if self.view == "original" and in_ins:
+                return
+            self._emit("\t" if tag == _TAB else "\n", in_ins, in_del, in_sdt, in_txbx)
             return
         for child in _first_choice_children(element):
             self.visit(child, in_ins=in_ins, in_del=in_del, in_sdt=in_sdt,
@@ -357,6 +395,26 @@ def _iter_block_elements(
         yield from _walk_container(container, counter, in_sdt=in_sdt, in_txbx=False)
 
 
+def _count_fldchar_delta(element: "_Element") -> int:
+    """Net change in open complex-field depth across `element`'s traversal
+    space (begins minus ends, floored at closing more than opened)."""
+    delta = 0
+
+    def walk(node: "_Element") -> None:
+        nonlocal delta
+        for child in _first_choice_children(node):
+            if child.tag == _FLD_CHAR:
+                fld_type = child.get(_FLD_CHAR_TYPE)
+                if fld_type == "begin":
+                    delta += 1
+                elif fld_type == "end":
+                    delta -= 1
+            walk(child)
+
+    walk(element)
+    return delta
+
+
 def _build_block(
     story: str,
     kind: str,
@@ -366,6 +424,7 @@ def _build_block(
     *,
     in_sdt: bool,
     in_txbx: bool,
+    in_open_field: bool = False,
 ) -> Block:
     if kind == "table":
         visitor = _subtree_text(element, view, skip_text_boxes=False,
@@ -391,6 +450,9 @@ def _build_block(
         in_delete=visitor.in_delete,
         in_content_control=in_sdt or visitor.in_content_control,
         in_text_box=in_txbx or visitor.in_text_box,
+        # a block BETWEEN a field's begin and end (TOC entry paragraphs) is
+        # field content even though neither marker lives in it
+        has_field=visitor.has_field or in_open_field,
         table=table,
     )
 
@@ -406,27 +468,69 @@ def _table_text(table: "_Element", view: str) -> str:
     return "\n".join(pieces)
 
 
+#: every key blind_region_counts reports, in payload order
+BLIND_REGION_KEYS = (
+    "tracked_insertions",
+    "tracked_deletions",
+    "moves",
+    "format_changes",
+    "content_controls",
+    "text_boxes",
+    "fields",
+    "math",
+    "embedded_objects",
+    "alt_chunks",
+    "hidden_text",
+)
+
+
 def _count_blind_regions(root: "_Element") -> Dict[str, int]:
-    """Occurrences of each blind-region element in traversal space (i.e.,
-    with mc:Fallback duplicates excluded)."""
-    counts = {
-        "tracked_insertions": 0,
-        "tracked_deletions": 0,
-        "content_controls": 0,
-        "text_boxes": 0,
-    }
+    """Occurrences of each region the traversal flags — or CANNOT read — in
+    traversal space (mc:Fallback duplicates excluded).
+
+    The last four keys are the honesty confession (v0.1 H9): math, embedded
+    objects (OLE/charts/SmartArt), altChunk imports and hidden (`w:vanish`)
+    text hold content this package does not surface; a non-zero count says
+    "there is more here than the outline shows".
+    """
+    counts = {key: 0 for key in BLIND_REGION_KEYS}
     tag_keys = {
         _INS: "tracked_insertions",
         _DEL: "tracked_deletions",
+        _MOVE_FROM: "moves",
+        _MOVE_TO: "moves",
         _SDT: "content_controls",
         _TXBX: "text_boxes",
+        _FLD_SIMPLE: "fields",
+        _MATH_TAGS[0]: "math",
+        _MATH_TAGS[1]: "math",
+        _OBJECT: "embedded_objects",
+        _ALT_CHUNK: "alt_chunks",
+        _VANISH: "hidden_text",
     }
+
+    graphic_data = (
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}graphicData"
+    )
+    _SURFACED_GRAPHIC_URIS = (
+        "http://schemas.openxmlformats.org/drawingml/2006/picture",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
+    )
 
     def walk(element: "_Element") -> None:
         for child in _first_choice_children(element):
             key = tag_keys.get(child.tag)
             if key is not None:
                 counts[key] += 1
+            elif child.tag in _FORMAT_CHANGE_TAGS:
+                counts["format_changes"] += 1
+            elif child.tag == _FLD_CHAR and child.get(_FLD_CHAR_TYPE) == "begin":
+                counts["fields"] += 1
+            elif child.tag == graphic_data and (
+                child.get("uri") not in _SURFACED_GRAPHIC_URIS
+            ):
+                # charts, SmartArt, OLE previews — content we cannot read
+                counts["embedded_objects"] += 1
             walk(child)
 
     walk(root)
@@ -443,10 +547,14 @@ def iter_blocks(document: "Document", *, view: str = "current") -> Iterator[Bloc
     if view not in VIEWS:
         raise ValueError(f"view must be one of {VIEWS}, got {view!r}")
     for story, root in _story_elements(document):
+        open_field_depth = 0
         for kind, index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
             yield _build_block(
-                story, kind, index, element, view, in_sdt=in_sdt, in_txbx=in_txbx
+                story, kind, index, element, view,
+                in_sdt=in_sdt, in_txbx=in_txbx,
+                in_open_field=open_field_depth > 0,
             )
+            open_field_depth = max(0, open_field_depth + _count_fldchar_delta(element))
 
 
 def outline(document: "Document", *, view: str = "current") -> Outline:
@@ -456,12 +564,7 @@ def outline(document: "Document", *, view: str = "current") -> Outline:
     on every call (CONVENTIONS §4, inspection determinism).
     """
     blocks = tuple(iter_blocks(document, view=view))
-    totals = {
-        "tracked_insertions": 0,
-        "tracked_deletions": 0,
-        "content_controls": 0,
-        "text_boxes": 0,
-    }
+    totals = {key: 0 for key in BLIND_REGION_KEYS}
     for _, root in _story_elements(document):
         for key, value in _count_blind_regions(root).items():
             totals[key] += value

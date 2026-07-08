@@ -365,6 +365,127 @@ def _write_bytes_atomically(out_path: Path, data: bytes) -> None:
             temp_path.unlink()
 
 
+#: OLE Compound File header — encrypted Office files and legacy .doc binaries
+_CFB_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
+
+_MAIN_PART_KINDS = {
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml": "docx",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml": "dotx",
+    "application/vnd.ms-word.document.macroEnabled.main+xml": "docm",
+    "application/vnd.ms-word.template.macroEnabledTemplate.main+xml": "dotm",
+}
+
+
+@dataclass(frozen=True)
+class PackageDiagnosis:
+    """Typed triage for a file `docx.Document()` may refuse or crash on.
+
+    `readable` means "this package can open it as a WordprocessingML
+    document"; `kind` names what the file actually is; `problems` say why it
+    is not readable (empty when it is).
+    """
+
+    path: str
+    readable: bool
+    kind: str
+    problems: Tuple[str, ...]
+
+    def to_dict(self) -> dict:
+        return {
+            "schema": "paper_diagnosis",
+            "version": 1,
+            "path": self.path,
+            "readable": self.readable,
+            "kind": self.kind,
+            "problems": list(self.problems),
+        }
+
+
+def diagnose(path: _PathLike) -> PackageDiagnosis:
+    """Say what the file at `path` is and why it can or cannot be opened.
+
+    The upstream `docx.Document()` entry point raises raw, untyped errors on
+    encrypted, macro-enabled, template, or corrupt input; its behavior is
+    frozen (§1.1), so triage ships as this additive API instead: call it when
+    an open fails (or before opening untrusted input).
+    """
+    file_path = Path(path)
+
+    def result(readable: bool, kind: str, *problems: str) -> PackageDiagnosis:
+        return PackageDiagnosis(
+            path=str(file_path), readable=readable, kind=kind, problems=tuple(problems)
+        )
+
+    if not file_path.is_file():
+        return result(False, "missing", "file does not exist")
+    header = file_path.read_bytes()[:8]
+    if header.startswith(_CFB_MAGIC):
+        return result(
+            False,
+            "encrypted-or-legacy-binary",
+            "OLE compound file: either a password-protected Office document"
+            " (decrypt it first) or a legacy binary .doc (convert to .docx)",
+        )
+    if not header.startswith(b"PK"):
+        return result(False, "not-a-zip", "not a ZIP archive, so not an OPC package")
+    try:
+        parts, _ = _read_zip(file_path.read_bytes())
+    except zipfile.BadZipFile as exc:
+        return result(False, "corrupt-zip", f"ZIP structure is damaged: {exc}")
+
+    problems = [
+        f"required part {name!r} is missing"
+        for name in (_CONTENT_TYPES_PART, "_rels/.rels")
+        if name not in parts
+    ]
+    main_type = None
+    main_part_name = "word/document.xml"
+    if "_rels/.rels" in parts:
+        try:
+            for rel_id, rel_type, target, mode in _relationship_multiset(
+                parts["_rels/.rels"]
+            ):
+                if rel_type.endswith("/officeDocument") and mode == "Internal":
+                    main_part_name = target.lstrip("/")
+                    break
+        except (etree.XMLSyntaxError, UnsupportedXmlError):
+            pass
+    if _CONTENT_TYPES_PART in parts:
+        try:
+            _, overrides = _effective_content_types(
+                parts[_CONTENT_TYPES_PART], list(parts)
+            )
+            main_type = overrides.get("/" + main_part_name)
+        except (etree.XMLSyntaxError, UnsupportedXmlError) as exc:
+            problems.append(f"[Content_Types].xml is unparseable or unsafe: {exc}")
+
+    if main_part_name not in parts:
+        for marker, kind in (("xl/", "xlsx"), ("ppt/", "pptx")):
+            if any(name.startswith(marker) for name in parts):
+                return result(
+                    False, kind, "an OPC package, but not a WordprocessingML one"
+                )
+        return result(
+            False, "opc-unknown", f"no {main_part_name} main document part",
+            *problems,
+        )
+
+    kind = _MAIN_PART_KINDS.get(main_type or "", "docx" if main_type is None else "opc-unknown")
+    if kind in ("docm", "dotm"):
+        problems.append(
+            f"macro-enabled Office file ({kind}); python-docx opens only"
+            " plain .docx — resave without macros"
+        )
+    elif kind == "dotx":
+        problems.append(
+            "Word template (.dotx); python-docx opens only .docx — resave as"
+            " a document"
+        )
+    elif kind == "opc-unknown":
+        problems.append(f"unrecognized main-part content type {main_type!r}")
+    return result(not problems, kind, *problems)
+
+
 def patch_save(
     original_path: _PathLike, document: "Document | IO[bytes]", out_path: _PathLike
 ) -> PatchSaveResult:

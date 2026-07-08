@@ -1,9 +1,12 @@
-"""Numbering enumeration and application (paper-docx, narrow and guarded).
+"""Numbering enumeration, application, and minimal authoring (paper-docx).
 
-v0 applies EXISTING numbering definitions and list styles to paragraphs, and
-reports what a document defines and uses. Authoring new `numbering.xml`
-definitions (including restart/continue mechanics that require them) is
-explicitly out of v0 scope and refuses loudly.
+Applies EXISTING numbering definitions and list styles to paragraphs and
+reports what a document defines and uses. As of v0.1 (V2), it also ships
+exactly two canonical definitions — one bullet, one decimal —
+creatable on demand (`ensure_bullet_definition` / `ensure_decimal_definition`,
+idempotent), plus level-0 restarts (`restart_numbering`). Anything more
+exotic (custom level text, legal numbering, image bullets) stays out of scope
+and refuses loudly.
 """
 
 from __future__ import annotations
@@ -171,7 +174,8 @@ def apply_numbering(paragraph: "Paragraph", *, num_id: int, level: int = 0) -> N
 
     The definition must exist in word/numbering.xml and define `level` —
     otherwise |TargetNotFoundError|; this API never fabricates definitions
-    (authoring numbering.xml is out of v0).
+    (create one deliberately with `ensure_bullet_definition` /
+    `ensure_decimal_definition`).
     """
     document = _document_of_paragraph(paragraph)
     report_definitions = _definitions(_numbering_root(document))
@@ -193,13 +197,213 @@ def apply_numbering(paragraph: "Paragraph", *, num_id: int, level: int = 0) -> N
     num_pr.get_or_add_numId().val = num_id
 
 
+def _style_numbering_binding(document: "Document", style_name: str) -> Optional[int]:
+    """The numId `style_name` binds (following the basedOn chain), or None.
+
+    numId 0 means "no numbering" per ECMA-376 and reads as no binding.
+    """
+    style = document.styles[style_name]
+    seen = set()
+    while style is not None and style.style_id not in seen:
+        seen.add(style.style_id)
+        values = style.element.xpath("./w:pPr/w:numPr/w:numId/@w:val")
+        if values:
+            num_id = int(values[0])
+            return num_id if num_id != 0 else None
+        style = style.base_style
+    return None
+
+
 def apply_list_style(paragraph: "Paragraph", style_name: str) -> None:
     """Apply the existing paragraph style named `style_name` (e.g. a list
-    style like "List Bullet") — |TargetNotFoundError| when undefined."""
+    style like "List Bullet") — |TargetNotFoundError| when undefined.
+
+    When the style binds a numbering definition, that definition must
+    actually resolve in word/numbering.xml; otherwise this call refuses
+    rather than producing the classic FAKE bullet (a list-styled paragraph
+    that renders with no marker — v0.1 honesty recall, H7). Styles with no
+    numbering binding apply as plain styles.
+    """
     document = _document_of_paragraph(paragraph)
     defined = {style.name for style in document.styles}
     if style_name not in defined:
         raise TargetNotFoundError(
             f"style {style_name!r} is not defined in this document"
         )
+    bound_num_id = _style_numbering_binding(document, style_name)
+    if bound_num_id is not None:
+        definitions = _definitions(_numbering_root(document))
+        if not any(d.num_id == bound_num_id for d in definitions):
+            raise TargetNotFoundError(
+                f"style {style_name!r} binds numbering definition"
+                f" numId={bound_num_id}, which does not resolve in this"
+                " document — applying it would render a fake, marker-less"
+                " list; add a real definition first"
+            )
     paragraph.style = style_name
+
+
+# ---------------------------------------------------------------------------
+# v0.1 V2 — minimal, guarded numbering AUTHORING
+# ---------------------------------------------------------------------------
+
+#: canonical three-level definitions, shaped like Word's own defaults. The
+#: w:name marker makes ensure_* idempotent (one shared definition per kind).
+_CANONICAL_ABSTRACT_XML = {
+    "bullet": (
+        "PaperBulletList",
+        '<w:abstractNum {ids}>'
+        '<w:name w:val="PaperBulletList"/>'
+        '<w:multiLevelType w:val="hybridMultilevel"/>'
+        '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="bullet"/>'
+        '<w:lvlText w:val="•"/><w:lvlJc w:val="left"/>'
+        '<w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr>'
+        '<w:rPr><w:rFonts w:ascii="Symbol" w:hAnsi="Symbol" w:hint="default"/></w:rPr></w:lvl>'
+        '<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="bullet"/>'
+        '<w:lvlText w:val="o"/><w:lvlJc w:val="left"/>'
+        '<w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr>'
+        '<w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:hint="default"/></w:rPr></w:lvl>'
+        '<w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="bullet"/>'
+        '<w:lvlText w:val="▪"/><w:lvlJc w:val="left"/>'
+        '<w:pPr><w:ind w:left="2160" w:hanging="360"/></w:pPr>'
+        '<w:rPr><w:rFonts w:ascii="Wingdings" w:hAnsi="Wingdings" w:hint="default"/></w:rPr></w:lvl>'
+        "</w:abstractNum>"
+    ),
+    "decimal": (
+        "PaperDecimalList",
+        '<w:abstractNum {ids}>'
+        '<w:name w:val="PaperDecimalList"/>'
+        '<w:multiLevelType w:val="hybridMultilevel"/>'
+        '<w:lvl w:ilvl="0"><w:start w:val="1"/><w:numFmt w:val="decimal"/>'
+        '<w:lvlText w:val="%1."/><w:lvlJc w:val="left"/>'
+        '<w:pPr><w:ind w:left="720" w:hanging="360"/></w:pPr></w:lvl>'
+        '<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="lowerLetter"/>'
+        '<w:lvlText w:val="%2."/><w:lvlJc w:val="left"/>'
+        '<w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr></w:lvl>'
+        '<w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="lowerRoman"/>'
+        '<w:lvlText w:val="%3."/><w:lvlJc w:val="right"/>'
+        '<w:pPr><w:ind w:left="2160" w:hanging="180"/></w:pPr></w:lvl>'
+        "</w:abstractNum>"
+    ),
+}
+
+
+def _get_or_create_numbering_root(document: "Document") -> "_Element":
+    """The `w:numbering` root, creating the part when the document has none.
+
+    Upstream's `NumberingPart.new()` is a NotImplementedError stub, so the
+    part is assembled here: root element, part instance, relationship. The
+    package writer emits the content-type override automatically on save.
+    """
+    root = _numbering_root(document)
+    if root is not None:
+        return root
+    from docx.opc.constants import CONTENT_TYPE as CT
+    from docx.opc.packuri import PackURI
+    from docx.oxml.ns import nsdecls
+    from docx.oxml.parser import parse_xml
+    from docx.parts.numbering import NumberingPart
+
+    root = parse_xml(f"<w:numbering {nsdecls('w')}/>")
+    part = NumberingPart(
+        PackURI("/word/numbering.xml"), CT.WML_NUMBERING, root, document.part.package
+    )
+    document.part.relate_to(part, RT.NUMBERING)
+    return root
+
+
+def _next_free_ids(numbering: "_Element") -> Tuple[int, int]:
+    abstract_ids = [
+        int(a.get(qn("w:abstractNumId")) or 0)
+        for a in numbering.findall(qn("w:abstractNum"))
+    ]
+    num_ids = [int(n.get(qn("w:numId")) or 0) for n in numbering.findall(qn("w:num"))]
+    return (max(abstract_ids, default=-1) + 1, max(num_ids, default=0) + 1)
+
+
+def _append_definition(numbering: "_Element", abstract: "_Element", num: "_Element") -> None:
+    """Insert respecting the schema order: abstractNum* before num*."""
+    first_num = numbering.find(qn("w:num"))
+    if first_num is not None:
+        first_num.addprevious(abstract)
+    else:
+        numbering.append(abstract)
+    last = numbering.findall(qn("w:num"))
+    if last:
+        last[-1].addnext(num)
+    else:
+        numbering.append(num)
+
+
+def _ensure_definition(document: "Document", kind: str) -> int:
+    from docx.oxml.ns import nsdecls
+    from docx.oxml.parser import parse_xml
+
+    name, template = _CANONICAL_ABSTRACT_XML[kind]
+    numbering = _get_or_create_numbering_root(document)
+    # idempotent: reuse the canonical definition if it is already here
+    for abstract in numbering.findall(qn("w:abstractNum")):
+        name_elm = abstract.find(qn("w:name"))
+        if name_elm is not None and name_elm.get(qn("w:val")) == name:
+            abstract_id = abstract.get(qn("w:abstractNumId"))
+            for num in numbering.findall(qn("w:num")):
+                ref = num.find(qn("w:abstractNumId"))
+                if ref is not None and ref.get(qn("w:val")) == abstract_id:
+                    return int(num.get(qn("w:numId")))
+    abstract_id, num_id = _next_free_ids(numbering)
+    ids = f'{nsdecls("w")} w:abstractNumId="{abstract_id}"'
+    abstract = parse_xml(template.format(ids=ids))
+    num = parse_xml(
+        f'<w:num {nsdecls("w")} w:numId="{num_id}">'
+        f'<w:abstractNumId w:val="{abstract_id}"/></w:num>'
+    )
+    _append_definition(numbering, abstract, num)
+    return num_id
+
+
+def ensure_bullet_definition(document: "Document") -> int:
+    """The numId of a real bullet-list definition, creating one when the
+    document has none (v0.1 V2 — closes the 'cannot make a real bullet'
+    gap). Idempotent: repeated calls return the same definition."""
+    return _ensure_definition(document, "bullet")
+
+
+def ensure_decimal_definition(document: "Document") -> int:
+    """The numId of a real decimal-list definition, created on demand.
+    Idempotent, like `ensure_bullet_definition`."""
+    return _ensure_definition(document, "decimal")
+
+
+def restart_numbering(document: "Document", *, num_id: int) -> int:
+    """A NEW numId continuing `num_id`'s formatting but restarting at 1.
+
+    Word models restarts as a fresh `w:num` referencing the same abstract
+    definition with a level-0 `w:startOverride`; paragraphs re-point at the
+    returned numId. Anything fancier (mid-list overrides, custom level text)
+    stays out of scope and refuses via the ordinary numId validation.
+    """
+    numbering = _numbering_root(document)
+    definition = None
+    if numbering is not None:
+        for num in numbering.findall(qn("w:num")):
+            if int(num.get(qn("w:numId"))) == num_id:
+                definition = num
+                break
+    if definition is None:
+        raise TargetNotFoundError(
+            f"numbering definition numId={num_id} does not exist; nothing to restart"
+        )
+    from docx.oxml.ns import nsdecls
+    from docx.oxml.parser import parse_xml
+
+    abstract_id = definition.find(qn("w:abstractNumId")).get(qn("w:val"))
+    _, new_num_id = _next_free_ids(numbering)
+    new_num = parse_xml(
+        f'<w:num {nsdecls("w")} w:numId="{new_num_id}">'
+        f'<w:abstractNumId w:val="{abstract_id}"/>'
+        '<w:lvlOverride w:ilvl="0"><w:startOverride w:val="1"/></w:lvlOverride>'
+        "</w:num>"
+    )
+    last = numbering.findall(qn("w:num"))
+    last[-1].addnext(new_num)
+    return new_num_id

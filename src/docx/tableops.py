@@ -1,10 +1,12 @@
 """Narrow, guarded table operations (paper-docx).
 
-Every operation refuses loudly on tables with merged cells (`vMerge`,
-`gridSpan`) or nested tables — the failure mode this module exists to prevent
-is a "clever" edit that silently reshuffles a complex table. Cell updates
-route through `Span.replace` (Phase 5), so formatting preservation, tracked
-changes and refusal atomicity all come from the same machinery as body text.
+Guards are CELL-WISE (v0.1 S1): an operation refuses when the cells or rows
+it actually touches participate in a merge or hold a nested table — a merged
+header row (the default shape of real tables) no longer blocks edits to plain
+data cells. The failure mode this module exists to prevent is unchanged: a
+"clever" edit that silently reshuffles a complex region. Cell updates route
+through `Span.replace`, so formatting preservation, tracked changes and
+refusal atomicity all come from the same machinery as body text.
 """
 
 from __future__ import annotations
@@ -37,18 +39,88 @@ if TYPE_CHECKING:
 _T = qn("w:t")
 
 
-def _is_complex(table: "Table") -> bool:
-    # `.//w:tbl` relative to this w:tbl matches DESCENDANT tables only, i.e.
-    # any nested table (the reference's `.//w:tbl//w:tbl` missed singly-nested)
-    return bool(table._tbl.xpath(".//w:vMerge | .//w:gridSpan | .//w:tbl"))
+_TC_PR = qn("w:tcPr")
+_GRID_SPAN = qn("w:gridSpan")
+_V_MERGE = qn("w:vMerge")
+_TBL = qn("w:tbl")
+_TC = qn("w:tc")
+_W_VAL = qn("w:val")
 
 
-def _refuse_complex(table: "Table") -> None:
-    if _is_complex(table):
+def _cell_is_merged(tc) -> bool:
+    tc_pr = tc.find(_TC_PR)
+    if tc_pr is None:
+        return False
+    return tc_pr.find(_GRID_SPAN) is not None or tc_pr.find(_V_MERGE) is not None
+
+
+def _cell_has_nested_table(tc) -> bool:
+    return tc.find(_TBL) is not None
+
+
+def _refuse_complex_cell(tc, *, row: int, column: int) -> None:
+    """Cell-wise guard (v0.1 S1): only the TARGET cell's complexity refuses.
+
+    A merged header row no longer poisons edits to the plain data cells
+    below it — merged-header tables are the default shape of real tables."""
+    if _cell_is_merged(tc):
         raise UnsupportedStructureError(
-            "table has merged cells or nested tables; refusing rather than"
-            " silently corrupting its structure"
+            f"cell ({row}, {column}) participates in a merge (gridSpan/vMerge);"
+            " editing it would silently reshuffle the merged region"
         )
+    if _cell_has_nested_table(tc):
+        raise UnsupportedStructureError(
+            f"cell ({row}, {column}) contains a nested table; address the inner"
+            " table directly instead"
+        )
+
+
+def _row_cells(tr):
+    return tr.findall(_TC)
+
+
+def _row_has_vmerge(tr) -> bool:
+    return any(
+        tc.find(_TC_PR) is not None and tc.find(_TC_PR).find(_V_MERGE) is not None
+        for tc in _row_cells(tr)
+    )
+
+
+def _row_has_nested_table(tr) -> bool:
+    return any(_cell_has_nested_table(tc) for tc in _row_cells(tr))
+
+
+def _row_continues_merge_from_above(tr) -> bool:
+    for tc in _row_cells(tr):
+        tc_pr = tc.find(_TC_PR)
+        v_merge = tc_pr.find(_V_MERGE) if tc_pr is not None else None
+        if v_merge is not None and (v_merge.get(_W_VAL) or "continue") == "continue":
+            return True
+    return False
+
+
+def _refuse_row_op(table: "Table", *, affected_rows, splits_before=None) -> None:
+    """Row-op guard (v0.1 S1): refuse only when the AFFECTED rows intersect a
+    vertical merge or hold a nested table, or when insertion would split a
+    merge; horizontal merges elsewhere in the table are none of our business."""
+    for index in affected_rows:
+        tr = table.rows[index]._tr
+        if _row_has_vmerge(tr):
+            raise UnsupportedStructureError(
+                f"row {index} participates in a vertical merge; structural row"
+                " operations there would corrupt the merged region"
+            )
+        if _row_has_nested_table(tr):
+            raise UnsupportedStructureError(
+                f"row {index} contains a nested table; refusing rather than"
+                " duplicating or destroying it wholesale"
+            )
+    if splits_before is not None and splits_before < len(table.rows):
+        if _row_continues_merge_from_above(table.rows[splits_before]._tr):
+            raise UnsupportedStructureError(
+                f"inserting between rows {splits_before - 1} and {splits_before}"
+                " would split a vertical merge"
+            )
 
 
 def _document_of(table: "Table") -> "Document":
@@ -126,9 +198,12 @@ def update_cell(
     """
     if tracked and not author:
         raise ValueError("author is required when tracked=True")
-    _refuse_complex(table)
+    from docx.search import _validate_writable_text
+
+    _validate_writable_text(new_text, argument="new_text")
     document = _document_of(table)
     cell = _cell_at(table, row, column)
+    _refuse_complex_cell(cell._tc, row=row, column=column)
 
     populated = [p for p in cell.paragraphs if p.text]
     if len(populated) > 1:
@@ -159,6 +234,7 @@ def update_cell(
         in_delete=False,
         in_content_control=any(a.sdt is not None for a in atoms),
         in_text_box=any(a.in_text_box for a in atoms),
+        in_field=any(a.in_field for a in atoms),
         crosses_paragraphs=False,
         _document=document,
         _atoms=atoms,
@@ -205,7 +281,6 @@ def insert_row_after(
 ) -> None:
     """Insert a new row after `row` (0-based), copying formatting from
     `copy_format_from` (default: the anchor row) and filling `values`."""
-    _refuse_complex(table)
     rows = table.rows
     if not 0 <= row < len(rows):
         raise TargetNotFoundError(f"row {row} does not exist (0..{len(rows) - 1})")
@@ -214,10 +289,28 @@ def insert_row_after(
         raise TargetNotFoundError(
             f"copy_format_from row {template_index} does not exist"
         )
+    _refuse_row_op(table, affected_rows={template_index}, splits_before=row + 1)
+    from docx.search import _validate_writable_text
+
+    for position, value in enumerate(values):
+        _validate_writable_text(value, argument=f"values[{position}]")
     column_count = len(rows[row].cells)
     if len(values) > column_count:
         raise ValueError(
             f"{len(values)} values for a {column_count}-column table"
+        )
+    # a horizontally merged template row repeats its merged tc through
+    # rows[..].cells, so positional value assignment would silently drop or
+    # misplace values — refuse instead
+    template_tr = rows[template_index]._tr
+    if any(
+        tc.find(_TC_PR) is not None and tc.find(_TC_PR).find(_GRID_SPAN) is not None
+        for tc in _row_cells(template_tr)
+    ):
+        raise UnsupportedStructureError(
+            f"template row {template_index} contains horizontally merged cells"
+            " (gridSpan); positional values cannot be assigned unambiguously —"
+            " copy formatting from an unmerged row"
         )
 
     # -- validated; mutate --
@@ -250,10 +343,10 @@ def _set_cell_text_keeping_format(cell: "_Cell", text: str) -> None:
 def delete_row(table: "Table", row: int) -> None:
     """Delete row `row` (0-based). The last remaining row is refused —
     a rowless table is not valid WordprocessingML."""
-    _refuse_complex(table)
     rows = table.rows
     if not 0 <= row < len(rows):
         raise TargetNotFoundError(f"row {row} does not exist (0..{len(rows) - 1})")
+    _refuse_row_op(table, affected_rows={row})
     if len(rows) == 1:
         raise UnsupportedStructureError(
             "deleting the last remaining row would leave an invalid table;"

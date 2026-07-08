@@ -553,6 +553,22 @@ def build_gauntlet(out: Path) -> None:
     append_block(doc, block_content_control())
     append_block(doc, inline_content_control_paragraph())
     append_block(doc, textbox_paragraph())
+    for p in tracked_move_paragraphs():
+        append_block(doc, p)
+    for p in format_change_paragraphs():
+        append_block(doc, p)
+    for p in field_paragraphs():
+        append_block(doc, p)
+    append_block(doc, placeholder_control_paragraph())
+    append_block(doc, bookmark_paragraph())
+    for p in toc_field_paragraphs():
+        append_block(doc, p)
+    noisy = doc.add_paragraph("Gauntlet paragrah with proofing noise.")
+    noisy._p.insert(  # noqa: SLF001 - authoring tool
+        list(noisy._p).index(noisy.runs[0]._r),
+        parse_xml(f'<w:proofErr {W} w:type="spellStart"/>'),
+    )
+    noisy._p.append(parse_xml(f'<w:proofErr {W} w:type="spellEnd"/>'))
     for p in note_reference_paragraphs():
         append_block(doc, p)
 
@@ -581,6 +597,7 @@ def build_gauntlet(out: Path) -> None:
         add_footnotes_and_endnotes_parts(parts, order)
         add_custom_numbering_definition(parts, order)
         add_comment_style_definitions(parts, order)
+        add_placeholder_style_definition(parts, order)
 
     save_frozen(doc, out, post=post)
 
@@ -591,6 +608,221 @@ def build_large(out: Path) -> None:
         if i % 250 == 1:
             doc.add_heading(f"Chapter {i // 250 + 1}", level=2)
         doc.add_paragraph(f"Paragraph {i}: steady-state filler text for the perf smoke fixture.")
+    save_frozen(doc, out)
+
+
+def tracked_move_paragraphs() -> "List[docx.oxml.xmlchemy.BaseOxmlElement]":
+    """Three paragraphs: a moveFrom source, an untouched middle, a moveTo
+    destination — the shape Word emits for drag/cut-paste with tracking on."""
+    moved_text = "The indemnity clause relocated by tracked move."
+    source = parse_xml(
+        f"<w:p {W}>"
+        f'<w:moveFromRangeStart w:id="61" w:author="{AUTHOR_A}" w:date="{DATE_A}"'
+        ' w:name="move1"/>'
+        f'<w:moveFrom w:id="62" w:author="{AUTHOR_A}" w:date="{DATE_A}">'
+        f"<w:r><w:t>{moved_text}</w:t></w:r>"
+        "</w:moveFrom>"
+        '<w:moveFromRangeEnd w:id="61"/>'
+        "</w:p>"
+    )
+    middle = parse_xml(f"<w:p {W}><w:r><w:t>Paragraph between the move ends.</w:t></w:r></w:p>")
+    destination = parse_xml(
+        f"<w:p {W}>"
+        f'<w:moveToRangeStart w:id="63" w:author="{AUTHOR_A}" w:date="{DATE_A}"'
+        ' w:name="move1"/>'
+        f'<w:moveTo w:id="64" w:author="{AUTHOR_A}" w:date="{DATE_A}">'
+        f"<w:r><w:t>{moved_text}</w:t></w:r>"
+        "</w:moveTo>"
+        '<w:moveToRangeEnd w:id="63"/>'
+        "</w:p>"
+    )
+    return [source, middle, destination]
+
+
+def build_tracked_moves(out: Path) -> None:
+    doc = Document()
+    doc.add_paragraph("Paragraph before the tracked move.")
+    for p in tracked_move_paragraphs():
+        append_block(doc, p)
+    doc.add_paragraph("Paragraph after the tracked move.")
+    save_frozen(doc, out)
+
+
+def format_change_paragraphs() -> "List[docx.oxml.xmlchemy.BaseOxmlElement]":
+    """A run made bold with tracking on (w:rPrChange) and a paragraph
+    re-centered with tracking on (w:pPrChange)."""
+    run_change = parse_xml(
+        f"<w:p {W}><w:r><w:rPr><w:b/>"
+        f'<w:rPrChange w:id="71" w:author="{AUTHOR_B}" w:date="{DATE_B}">'
+        "<w:rPr/></w:rPrChange>"
+        "</w:rPr><w:t>This text was bolded with tracking on.</w:t></w:r></w:p>"
+    )
+    par_change = parse_xml(
+        f"<w:p {W}><w:pPr>"
+        '<w:jc w:val="center"/>'
+        f'<w:pPrChange w:id="72" w:author="{AUTHOR_B}" w:date="{DATE_B}">'
+        "<w:pPr/></w:pPrChange>"
+        "</w:pPr><w:r><w:t>This paragraph was centered with tracking on.</w:t></w:r></w:p>"
+    )
+    return [run_change, par_change]
+
+
+def build_format_changes(out: Path) -> None:
+    doc = Document()
+    doc.add_paragraph("Paragraph before the tracked formatting changes.")
+    for p in format_change_paragraphs():
+        append_block(doc, p)
+    save_frozen(doc, out)
+
+
+def field_paragraphs() -> "List[docx.oxml.xmlchemy.BaseOxmlElement]":
+    """Both field shapes: a w:fldSimple DATE and a complex PAGEREF field
+    (fldChar begin / instrText / separate / cached result / end)."""
+    simple = parse_xml(
+        f"<w:p {W}>"
+        '<w:r><w:t xml:space="preserve">Dated: </w:t></w:r>'
+        '<w:fldSimple w:instr=" DATE \\@ &quot;MMMM d, yyyy&quot; ">'
+        "<w:r><w:t>June 1, 2026</w:t></w:r>"
+        "</w:fldSimple>"
+        "</w:p>"
+    )
+    complex_field = parse_xml(
+        f"<w:p {W}>"
+        '<w:r><w:t xml:space="preserve">See page </w:t></w:r>'
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        '<w:r><w:instrText xml:space="preserve"> PAGEREF _RefAnchor \\h </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        "<w:r><w:t>14</w:t></w:r>"
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+        '<w:r><w:t xml:space="preserve"> for the details.</w:t></w:r>'
+        "</w:p>"
+    )
+    return [simple, complex_field]
+
+
+def build_fields(out: Path) -> None:
+    doc = Document()
+    doc.add_paragraph("Paragraph before the fields.")
+    for p in field_paragraphs():
+        append_block(doc, p)
+    save_frozen(doc, out)
+
+
+PLACEHOLDER_TEXT = "Click or tap here to enter text."
+
+PLACEHOLDER_STYLE_XML = (
+    '<w:style w:type="character" w:styleId="PlaceholderText">'
+    '<w:name w:val="Placeholder Text"/>'
+    '<w:rPr><w:color w:val="808080"/></w:rPr></w:style>'
+)
+
+
+def add_placeholder_style_definition(parts: Dict[str, bytes], order: List[str]) -> None:
+    del order
+    blob = parts["word/styles.xml"].decode("utf-8")
+    assert 'w:styleId="PlaceholderText"' not in blob
+    parts["word/styles.xml"] = blob.replace(
+        "</w:styles>", PLACEHOLDER_STYLE_XML + "</w:styles>"
+    ).encode("utf-8")
+
+
+def placeholder_control_paragraph() -> "docx.oxml.xmlchemy.BaseOxmlElement":
+    """An unfilled form control exactly as Word templates ship them:
+    w:showingPlcHdr set, PlaceholderText-styled prompt run."""
+    return parse_xml(
+        f"<w:p {W}>"
+        '<w:r><w:t xml:space="preserve">Client name: </w:t></w:r>'
+        "<w:sdt><w:sdtPr>"
+        '<w:alias w:val="ClientName"/><w:tag w:val="client-name"/>'
+        '<w:id w:val="2001"/><w:showingPlcHdr/>'
+        "</w:sdtPr><w:sdtContent>"
+        '<w:r><w:rPr><w:rStyle w:val="PlaceholderText"/></w:rPr>'
+        f"<w:t>{PLACEHOLDER_TEXT}</w:t></w:r>"
+        "</w:sdtContent></w:sdt>"
+        "</w:p>"
+    )
+
+
+def build_placeholder_control(out: Path) -> None:
+    doc = Document()
+    append_block(doc, placeholder_control_paragraph())
+    doc.add_paragraph("Paragraph after the form control.")
+    save_frozen(doc, out, post=add_placeholder_style_definition)
+
+
+def bookmark_paragraph() -> "docx.oxml.xmlchemy.BaseOxmlElement":
+    """A named non-empty bookmark (cross-reference target) plus Word's
+    ubiquitous point bookmark `_GoBack`."""
+    return parse_xml(
+        f"<w:p {W}>"
+        '<w:r><w:t xml:space="preserve">See </w:t></w:r>'
+        '<w:bookmarkStart w:id="1" w:name="DefinedTerm"/>'
+        "<w:r><w:t>the Master Agreement</w:t></w:r>"
+        '<w:bookmarkEnd w:id="1"/>'
+        '<w:r><w:t xml:space="preserve"> for definitions.</w:t></w:r>'
+        '<w:bookmarkStart w:id="2" w:name="_GoBack"/>'
+        '<w:bookmarkEnd w:id="2"/>'
+        "</w:p>"
+    )
+
+
+def build_bookmarks(out: Path) -> None:
+    doc = Document()
+    append_block(doc, bookmark_paragraph())
+    doc.add_paragraph("Paragraph after the bookmarks.")
+    save_frozen(doc, out)
+
+
+def build_noisy_markup(out: Path) -> None:
+    """proofErr spell-check noise + comment anchors + _GoBack around ordinary
+    paragraphs — the markup Word scatters through virtually every saved doc.
+    (Hand-built; a real-Word capture is requested in FIXTURE-REQUESTS.md.)"""
+    doc = Document()
+    p1 = doc.add_paragraph("Paragrah with a spelling issue.")
+    p1._p.insert(  # noqa: SLF001 - authoring tool
+        list(p1._p).index(p1.runs[0]._r),
+        parse_xml(f'<w:proofErr {W} w:type="spellStart"/>'),
+    )
+    p1._p.append(parse_xml(f'<w:proofErr {W} w:type="spellEnd"/>'))
+    p1._p.append(parse_xml(f'<w:bookmarkStart {W} w:id="9" w:name="_GoBack"/>'))
+    p1._p.append(parse_xml(f'<w:bookmarkEnd {W} w:id="9"/>'))
+    p2 = doc.add_paragraph("This clause carries a reviewer comment.")
+    doc.add_comment(p2.runs, text="Noise-tolerance target.", author=AUTHOR_A, initials="AE")
+    doc.add_paragraph("Paragraph after the noisy ones.")
+    freeze_comment_dates(doc)
+    save_frozen(doc, out, post=add_comment_style_definitions)
+
+
+def toc_field_paragraphs() -> "List[docx.oxml.xmlchemy.BaseOxmlElement]":
+    """A TOC-shaped multi-paragraph complex field: begin+instr+separate in the
+    first paragraph, an entry paragraph in the middle, end in the last —
+    the canonical shape whose cross-block state the v0.1 review caught."""
+    first = parse_xml(
+        f"<w:p {W}>"
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        '<w:r><w:instrText xml:space="preserve"> TOC \\o &quot;1-3&quot; \\h </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        "<w:r><w:t>Chapter One entry	4</w:t></w:r>"
+        "</w:p>"
+    )
+    middle = parse_xml(
+        f"<w:p {W}><w:r><w:t>Chapter Two entry	9</w:t></w:r></w:p>"
+    )
+    last = parse_xml(
+        f"<w:p {W}>"
+        "<w:r><w:t>Chapter Three entry	14</w:t></w:r>"
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+        "</w:p>"
+    )
+    return [first, middle, last]
+
+
+def build_toc_field(out: Path) -> None:
+    doc = Document()
+    doc.add_paragraph("Contents heading before the TOC field.")
+    for p in toc_field_paragraphs():
+        append_block(doc, p)
+    doc.add_paragraph("Body paragraph after the TOC field.")
     save_frozen(doc, out)
 
 
@@ -684,6 +916,39 @@ FEATURE_PROBES: Dict[str, List[Tuple[str, bytes]]] = {
         ("word/document.xml", "–".encode("utf-8")),
         ("word/document.xml", "“full-".encode("utf-8")),
         ("word/document.xml", " 30".encode("utf-8")),
+    ],
+    "tracked-moves": [
+        ("word/document.xml", b"<w:moveFrom "),
+        ("word/document.xml", b"<w:moveTo "),
+        ("word/document.xml", b'w:name="move1"'),
+    ],
+    "format-changes": [
+        ("word/document.xml", b"<w:rPrChange "),
+        ("word/document.xml", b"<w:pPrChange "),
+    ],
+    "fields": [
+        ("word/document.xml", b"<w:fldSimple "),
+        ("word/document.xml", b'w:fldCharType="begin"'),
+        ("word/document.xml", b"PAGEREF"),
+    ],
+    "placeholder-control": [
+        ("word/document.xml", b"<w:showingPlcHdr/>"),
+        ("word/document.xml", b"Click or tap here to enter text."),
+        ("word/styles.xml", b'w:styleId="PlaceholderText"'),
+    ],
+    "bookmarks": [
+        ("word/document.xml", b'w:name="DefinedTerm"'),
+        ("word/document.xml", b'w:name="_GoBack"'),
+    ],
+    "noisy-markup": [
+        ("word/document.xml", b"<w:proofErr "),
+        ("word/document.xml", b"commentRangeStart"),
+        ("word/document.xml", b'w:name="_GoBack"'),
+    ],
+    "toc-field": [
+        ("word/document.xml", b" TOC "),
+        ("word/document.xml", b'w:fldCharType="separate"'),
+        ("word/document.xml", b"Chapter Two entry"),
     ],
 }
 
@@ -867,6 +1132,13 @@ def main(argv: "List[str] | None" = None) -> int:
         feature_dir / "table-merged-nested.docx": build_table_merged_nested,
         feature_dir / "numbering-custom.docx": build_numbering_custom,
         feature_dir / "fragmented-runs.docx": build_fragmented_runs,
+        feature_dir / "tracked-moves.docx": build_tracked_moves,
+        feature_dir / "format-changes.docx": build_format_changes,
+        feature_dir / "fields.docx": build_fields,
+        feature_dir / "placeholder-control.docx": build_placeholder_control,
+        feature_dir / "bookmarks.docx": build_bookmarks,
+        feature_dir / "noisy-markup.docx": build_noisy_markup,
+        feature_dir / "toc-field.docx": build_toc_field,
         GENERATED_DIR / "gauntlet" / "gauntlet.docx": build_gauntlet,
         GENERATED_DIR / "large" / "large-5000-paragraphs.docx": build_large,
     }

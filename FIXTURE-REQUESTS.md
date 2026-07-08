@@ -56,7 +56,26 @@ re-run it, and re-run `freeze_manifest.py` in the same PR.
    section (Layout → Breaks → Next Page) with a different header, and
    "Different First Page" enabled in section one.
 
-## word/other/
+## word/other/ — v0.1 honesty-recall priority requests
+
+These four are the TOP requests: the v0.1 honesty work bootstraps them as
+hand-built XML (`generated/` bucket), but LibreOffice cannot produce the real
+shapes (it converts moves to plain ins/del and never emits `proofErr`), so
+only desktop Word can confirm our model against reality.
+
+9a. **tracked-moves.docx** — With Track Changes on, select a whole paragraph
+    and drag it (or cut+paste it) two paragraphs down. Do not resolve. Word
+    emits `w:moveFrom`/`w:moveTo` with range markers — record the moved text
+    in `ground_truth`.
+9b. **format-change-revisions.docx** — With Track Changes on: bold one word,
+    re-center one paragraph, change one paragraph's style. Do not resolve
+    (`w:rPrChange`/`w:pPrChange`).
+9c. **toc-and-fields.docx** — Two heading paragraphs, References → Table of
+    Contents, plus an Insert → Date field and a cross-reference (Insert →
+    Cross-reference to a heading). Save WITHOUT updating fields.
+9d. **word-noise.docx** — Type two paragraphs with a couple of deliberate
+    typos, add one comment, save. (Captures `proofErr`, `_GoBack`, comment
+    anchors, `rsid` attributes as Word actually scatters them.)
 
 10. **spanning-revision.docx** — With Track Changes on, make one insertion
     that spans a paragraph boundary (select across two paragraphs, type

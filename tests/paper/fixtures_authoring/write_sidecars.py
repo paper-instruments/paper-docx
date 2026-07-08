@@ -241,6 +241,94 @@ def sidecar(
     }
 
 
+MOVED_TEXT = "The indemnity clause relocated by tracked move."
+
+MOVES_GROUND_TRUTH: Dict[str, Any] = {
+    "move": {
+        "author": "Alice Editor",
+        "date": "2026-06-01T09:30:00Z",
+        "name": "move1",
+        "text": MOVED_TEXT,
+        "move_from_ids": [61, 62],
+        "move_to_ids": [63, 64],
+    },
+    "visible_text_current_contains_moved_text_times": 1,
+    "visible_text_original_contains_moved_text_times": 1,
+}
+
+FORMAT_CHANGES_GROUND_TRUTH: Dict[str, Any] = {
+    "run_property_change": {
+        "author": "Bob Reviewer",
+        "date": "2026-06-02T14:45:00Z",
+        "now": "bold",
+        "was": "plain",
+        "text": "This text was bolded with tracking on.",
+    },
+    "paragraph_property_change": {
+        "author": "Bob Reviewer",
+        "date": "2026-06-02T14:45:00Z",
+        "now": "centered",
+        "was": "default",
+        "text": "This paragraph was centered with tracking on.",
+    },
+    "format_change_count": 2,
+}
+
+FIELDS_GROUND_TRUTH: Dict[str, Any] = {
+    "simple_field": {"instr": "DATE", "cached_result": "June 1, 2026"},
+    "complex_field": {"instr": "PAGEREF _RefAnchor", "cached_result": "14"},
+    "field_count": 2,
+    "visible_text_includes_results": True,
+}
+
+PLACEHOLDER_GROUND_TRUTH: Dict[str, Any] = {
+    "control": {
+        "alias": "ClientName",
+        "tag": "client-name",
+        "showing_placeholder": True,
+        "placeholder_text": "Click or tap here to enter text.",
+        "placeholder_style": "PlaceholderText",
+    },
+}
+
+BOOKMARKS_GROUND_TRUTH: Dict[str, Any] = {
+    "named_bookmark": {"name": "DefinedTerm", "text": "the Master Agreement"},
+    "point_bookmarks": ["_GoBack"],
+    "host_paragraph_text": "See the Master Agreement for definitions.",
+}
+
+NOISY_MARKUP_GROUND_TRUTH: Dict[str, Any] = {
+    "proof_err_count": 2,
+    "comment": {"author": "Alice Editor", "text": "Noise-tolerance target."},
+    "point_bookmarks": ["_GoBack"],
+    "paragraph_texts": [
+        "Paragrah with a spelling issue.",
+        "This clause carries a reviewer comment.",
+        "Paragraph after the noisy ones.",
+    ],
+}
+
+MOVES_FEATURES = ["tracked-move", "move-range-markers"]
+FORMAT_CHANGE_FEATURES = ["tracked-format-change", "rpr-change", "ppr-change"]
+FIELDS_FEATURES = ["fields", "simple-field", "complex-field", "field-cached-result"]
+PLACEHOLDER_FEATURES = ["content-control-placeholder", "showing-plc-hdr"]
+BOOKMARK_FEATURES = ["bookmarks", "point-bookmark"]
+NOISY_FEATURES = ["proof-err", "comment-anchors", "point-bookmark"]
+TOC_FIELD_FEATURES = ["complex-field", "multi-paragraph-field", "toc-shape"]
+
+TOC_FIELD_GROUND_TRUTH = {
+    "field": {
+        "instr": "TOC",
+        "spans_paragraphs": 3,
+        "entry_texts": [
+            "Chapter One entry\t4",
+            "Chapter Two entry\t9",
+            "Chapter Three entry\t14",
+        ],
+    },
+    "all_entry_paragraphs_are_field_content": True,
+}
+
 SIDECARS: Dict[str, Dict[str, Any]] = {
     # -- generated bucket ---------------------------------------------------
     "generated/minimal-clean/minimal.docx": sidecar(
@@ -311,6 +399,48 @@ SIDECARS: Dict[str, Dict[str, Any]] = {
         FRAGMENTED_FEATURES,
         FRAGMENTED_GROUND_TRUTH,
     ),
+    "generated/feature-isolated/tracked-moves.docx": sidecar(
+        "tracked-moves.docx",
+        GENERATED_PROVENANCE,
+        MOVES_FEATURES,
+        MOVES_GROUND_TRUTH,
+    ),
+    "generated/feature-isolated/format-changes.docx": sidecar(
+        "format-changes.docx",
+        GENERATED_PROVENANCE,
+        FORMAT_CHANGE_FEATURES,
+        FORMAT_CHANGES_GROUND_TRUTH,
+    ),
+    "generated/feature-isolated/fields.docx": sidecar(
+        "fields.docx",
+        GENERATED_PROVENANCE,
+        FIELDS_FEATURES,
+        FIELDS_GROUND_TRUTH,
+    ),
+    "generated/feature-isolated/placeholder-control.docx": sidecar(
+        "placeholder-control.docx",
+        GENERATED_PROVENANCE,
+        PLACEHOLDER_FEATURES,
+        PLACEHOLDER_GROUND_TRUTH,
+    ),
+    "generated/feature-isolated/bookmarks.docx": sidecar(
+        "bookmarks.docx",
+        GENERATED_PROVENANCE,
+        BOOKMARK_FEATURES,
+        BOOKMARKS_GROUND_TRUTH,
+    ),
+    "generated/feature-isolated/noisy-markup.docx": sidecar(
+        "noisy-markup.docx",
+        GENERATED_PROVENANCE,
+        NOISY_FEATURES,
+        NOISY_MARKUP_GROUND_TRUTH,
+    ),
+    "generated/feature-isolated/toc-field.docx": sidecar(
+        "toc-field.docx",
+        GENERATED_PROVENANCE,
+        TOC_FIELD_FEATURES,
+        TOC_FIELD_GROUND_TRUTH,
+    ),
     "generated/gauntlet/gauntlet.docx": sidecar(
         "gauntlet.docx",
         GENERATED_PROVENANCE,
@@ -325,7 +455,12 @@ SIDECARS: Dict[str, Dict[str, Any]] = {
                 + TABLE_FEATURES
                 + NUMBERING_FEATURES
                 + FRAGMENTED_FEATURES
-                + ["gauntlet"]
+                + MOVES_FEATURES
+                + FORMAT_CHANGE_FEATURES
+                + FIELDS_FEATURES
+                + PLACEHOLDER_FEATURES
+                + BOOKMARK_FEATURES
+                + ["proof-err", "gauntlet"]
             )
         ),
         {
@@ -339,9 +474,16 @@ SIDECARS: Dict[str, Dict[str, Any]] = {
                     "anchor_paragraph_text": "This gauntlet paragraph carries a comment.",
                 }
             ],
-            "content_controls": CONTENT_CONTROL_GROUND_TRUTH,
+            "content_controls": {**CONTENT_CONTROL_GROUND_TRUTH, "sdt_count": 3},
             "textbox_visible_texts": ["Text living inside the text box."],
             "notes": FOOTNOTES_GROUND_TRUTH,
+            "moves": MOVES_GROUND_TRUTH,
+            "format_changes": FORMAT_CHANGES_GROUND_TRUTH,
+            "fields": {**FIELDS_GROUND_TRUTH, "field_count": 3},
+            "toc_field": TOC_FIELD_GROUND_TRUTH,
+            "placeholder_control": PLACEHOLDER_GROUND_TRUTH,
+            "bookmarks": BOOKMARKS_GROUND_TRUTH,
+            "proof_err_count": 2,
             "sections": {
                 "section_count": 2,
                 "header_texts": [

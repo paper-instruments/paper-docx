@@ -54,6 +54,13 @@ PartFactory.part_type_for[CT.WML_HEADER] = HeaderPart
 PartFactory.part_type_for[CT.WML_NUMBERING] = NumberingPart
 PartFactory.part_type_for[CT.WML_SETTINGS] = SettingsPart
 PartFactory.part_type_for[CT.WML_STYLES] = StylesPart
+# -- paper-docx additions (v0.1): comments-extended thread/resolution part --
+from docx.opc.part import XmlPart as _PaperXmlPart
+
+PartFactory.part_type_for[
+    "application/vnd.openxmlformats-officedocument.wordprocessingml"
+    ".commentsExtended+xml"
+] = _PaperXmlPart
 
 del (
     CT,
@@ -68,5 +75,6 @@ del (
     PartFactory,
     SettingsPart,
     StylesPart,
+    _PaperXmlPart,
     part_class_selector,
 )
