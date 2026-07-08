@@ -59,14 +59,12 @@ class DescribeMultiRoundRedlineJob:
         texts = [b.text for b in iter_blocks(doc)]
         assert "First body paragraph with perfectly ordinary text." in texts
 
-    @pytest.mark.xfail(strict=True, reason="move enumeration lands in Phase 0b (H1)")
     def it_enumerates_moves_instead_of_reporting_a_clean_document(self):
         """A doc with pending tracked MOVES must never read as revision-free."""
         doc = docx.Document(str(fixture_path(MOVES)))
         move_types = {r.revision_type for r in doc.revisions}
         assert "move_from" in move_types and "move_to" in move_types
 
-    @pytest.mark.xfail(strict=True, reason="move view-filtering lands in Phase 0b (H1)")
     def it_shows_moved_text_exactly_once_per_view(self):
         doc = docx.Document(str(fixture_path(MOVES)))
         current = "\n".join(b.text for b in iter_blocks(doc, view="current"))
@@ -74,18 +72,12 @@ class DescribeMultiRoundRedlineJob:
         assert current.count(MOVED_TEXT) == 1
         assert original.count(MOVED_TEXT) == 1
 
-    @pytest.mark.xfail(
-        strict=True, reason="format-change enumeration lands in Phase 0b (H2)"
-    )
     def it_enumerates_format_change_revisions(self):
         """Bolding a word with tracking on must be visible to revisions."""
         doc = docx.Document(str(fixture_path(FORMAT_CHANGES)))
         kinds = {r.revision_type for r in doc.revisions}
         assert "format_change" in kinds
 
-    @pytest.mark.xfail(
-        strict=True, reason="selected-set resolution honesty lands in Phase 0c (H3)"
-    )
     @pytest.mark.parametrize("relpath", [MOVES, FORMAT_CHANGES])
     def it_refuses_to_claim_resolution_of_unsupported_revisions(self, relpath: str):
         doc = docx.Document(str(fixture_path(relpath)))
@@ -158,7 +150,6 @@ class DescribeFormFillJob:
         boxed = [b.text for b in iter_blocks(doc) if b.in_text_box]
         assert boxed == ["Text living happily in the box."]
 
-    @pytest.mark.xfail(strict=True, reason="field awareness lands in Phase 0b (H4)")
     def it_refuses_to_fill_a_field_result(self):
         """Field results are Word's to regenerate; edits there vanish."""
         doc = docx.Document(str(fixture_path(FIELDS)))
@@ -282,7 +273,6 @@ class DescribeReportAssemblyJob:
 class DescribeJobSafetyNet:
     """Cross-job honesty: outline never hides what it cannot read."""
 
-    @pytest.mark.xfail(strict=True, reason="blind-region confession lands in Phase 0b (H9)")
     def it_confesses_unreadable_and_unresolved_regions(self):
         counts = outline(docx.Document(str(fixture_path(GAUNTLET)))).blind_region_counts
         for key in ("moves", "format_changes", "fields"):
@@ -291,7 +281,6 @@ class DescribeJobSafetyNet:
         assert counts["format_changes"] == 2
         assert counts["fields"] == 2
 
-    @pytest.mark.xfail(strict=True, reason="field awareness lands in Phase 0b (H4)")
     def it_never_lets_a_refusal_mutate_the_document(self, tmp_path: Path):
         from .harness.contract import assert_refusal_atomic
 

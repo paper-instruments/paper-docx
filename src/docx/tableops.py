@@ -159,6 +159,7 @@ def update_cell(
         in_delete=False,
         in_content_control=any(a.sdt is not None for a in atoms),
         in_text_box=any(a.in_text_box for a in atoms),
+        in_field=any(a.in_field for a in atoms),
         crosses_paragraphs=False,
         _document=document,
         _atoms=atoms,

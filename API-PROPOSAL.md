@@ -45,6 +45,18 @@ Confirmed pinned shapes against real code: §2 exceptions (`docx/errors.py` is
 a free name; upstream uses `exceptions.py`), §2 anchors (below), §4 sidecar
 schema (already shipping in Phase 1), §7 kernel (F1 resolution above).
 
+**v0.1 amendments (honesty recall, per PLAN-v0.1.md):** `Outline.to_dict`
+version bumps to 2 — `blind_region_counts` gains `moves`, `format_changes`,
+`fields` and the confession keys (`math`, `embedded_objects`, `alt_chunks`,
+`hidden_text`); blocks gain `has_field`. `Span` gains public `in_field`;
+`Span.replace` refuses field-result targets. Story views treat `w:moveFrom`
+as deletion-like and `w:moveTo` as insertion-like (moved text appears once
+per view). `Revision.revision_type` gains `move_from` / `move_to` /
+`format_change` (enumerated, counted, NOT resolvable — individual and batch
+resolution refuse); `Revisions.to_dict` bumps to v2 with a
+`remaining_unsupported` census, and `accept_all`/`reject_all` validate the
+selected set atomically before touching anything.
+
 **Post-implementation amendments (adversarial review):** duplicate zip member
 names collapse with LAST entry winning (`zipfile` semantics — corrected from
 this document's first draft which said "first"); `xml_equivalent` refuses

@@ -52,11 +52,16 @@ _SYNTHETIC_TAGS = {qn("w:tab"): "\t", qn("w:br"): "\n", qn("w:cr"): "\n"}
 _R = qn("w:r")
 _INS = qn("w:ins")
 _DEL = qn("w:del")
+_MOVE_FROM = qn("w:moveFrom")
+_MOVE_TO = qn("w:moveTo")
 _SDT = qn("w:sdt")
 _HYPERLINK = qn("w:hyperlink")
 _TXBX = qn("w:txbxContent")
 _RPR = qn("w:rPr")
 _XML_SPACE = qn("xml:space")
+_FLD_SIMPLE = qn("w:fldSimple")
+_FLD_CHAR = qn("w:fldChar")
+_FLD_CHAR_TYPE = qn("w:fldCharType")
 
 
 @dataclass
@@ -79,6 +84,7 @@ class _Atom:
     in_delete: bool
     in_text_box: bool
     in_hyperlink: bool
+    in_field: bool = False
     fixed_text: Optional[str] = None
 
     @property
@@ -100,12 +106,27 @@ def _collect_block_atoms(
     skip_text_boxes: bool,
     in_txbx: bool,
 ) -> "Iterator[_Atom]":
-    """Text atoms under one block element, in document order."""
+    """Text atoms under one block element, in document order.
 
-    def walk(node, paragraph, run, sdt, in_ins, in_del, in_hlink, in_box):
+    Complex fields (`w:fldChar` begin…separate…end run sequences) are tracked
+    with a depth counter as the walk passes them in document order: every
+    atom between begin and end — instruction AND cached result — carries
+    `in_field=True`, as do `w:fldSimple` descendants. Tracked moves flag
+    their atoms deletion-like (`w:moveFrom`) / insertion-like (`w:moveTo`).
+    """
+    field_depth = [0]
+
+    def walk(node, paragraph, run, sdt, in_ins, in_del, in_hlink, in_box, in_fld):
         for child in _first_choice_children(node):
             tag = child.tag
             if tag == _TXBX and skip_text_boxes:
+                continue
+            if tag == _FLD_CHAR:
+                fld_type = child.get(_FLD_CHAR_TYPE)
+                if fld_type == "begin":
+                    field_depth[0] += 1
+                elif fld_type == "end" and field_depth[0] > 0:
+                    field_depth[0] -= 1
                 continue
             if tag in _TEXT_TAGS or tag in _SYNTHETIC_TAGS:
                 yield _Atom(
@@ -120,6 +141,7 @@ def _collect_block_atoms(
                     in_delete=in_del,
                     in_text_box=in_box,
                     in_hyperlink=in_hlink,
+                    in_field=in_fld or field_depth[0] > 0,
                     fixed_text=_SYNTHETIC_TAGS.get(tag),
                 )
                 continue
@@ -128,14 +150,15 @@ def _collect_block_atoms(
                 child if tag == qn("w:p") else paragraph,
                 child if tag == _R else run,
                 child if tag == _SDT else sdt,
-                in_ins or tag == _INS,
-                in_del or tag == _DEL,
+                in_ins or tag in (_INS, _MOVE_TO),
+                in_del or tag in (_DEL, _MOVE_FROM),
                 in_hlink or tag == _HYPERLINK,
                 in_box or tag == _TXBX,
+                in_fld or tag == _FLD_SIMPLE,
             )
 
     paragraph = element if element.tag == qn("w:p") else None
-    yield from walk(element, paragraph, None, None, False, False, False, in_txbx)
+    yield from walk(element, paragraph, None, None, False, False, False, in_txbx, False)
 
 
 def _story_atoms(document: "Document", story_name: str, root: "_Element") -> "List[_Atom]":
@@ -152,12 +175,17 @@ def _story_atoms(document: "Document", story_name: str, root: "_Element") -> "Li
 
 def _include_atom(atom: _Atom, view: str) -> bool:
     if atom.is_synthetic:
-        return not (view == "original" and atom.in_insert)
+        if view == "current":
+            return not atom.in_delete
+        if view == "original":
+            return not atom.in_insert
+        return True
     if view == "current":
-        return atom.tag == _T
+        # in_delete covers moveFrom sources (live w:t that vanishes on accept)
+        return atom.tag == _T and not atom.in_delete
     if view == "original":
-        # nothing inside a pending insertion existed in the original —
-        # including deletions nested within it
+        # nothing inside a pending insertion (incl. moveTo destinations)
+        # existed in the original — including deletions nested within it
         return not atom.in_insert and atom.tag in (_T, _DEL_TEXT)
     return True  # "all"
 
@@ -255,6 +283,7 @@ class Span:
     in_delete: bool
     in_content_control: bool
     in_text_box: bool
+    in_field: bool
     crosses_paragraphs: bool
     _document: "Document" = field(repr=False)
     _atoms: "List[_Atom]" = field(repr=False)
@@ -321,6 +350,12 @@ class Span:
                 raise UnsupportedStructureError(
                     "span includes field-instruction text; editing field code"
                     " internals is not supported"
+                )
+            if atom.in_field:
+                raise UnsupportedStructureError(
+                    "span lies inside a field result (TOC entry, page number,"
+                    " date, cross-reference, …); Word regenerates field results"
+                    " on update, so the edit would silently vanish"
                 )
         if self.crosses_paragraphs:
             raise BoundaryViolationError(
@@ -549,10 +584,10 @@ def _pieces_in_range(pieces, start: int, end: int):
 
 
 def _enclosing_insertion(element: "_Element") -> "Optional[_Element]":
-    """The nearest `w:ins` ancestor of `element`, or None."""
+    """The nearest insertion-like (`w:ins`/`w:moveTo`) ancestor, or None."""
     node = element.getparent()
     while node is not None:
-        if node.tag == _INS:
+        if node.tag in (_INS, _MOVE_TO):
             return node
         node = node.getparent()
     return None
@@ -659,6 +694,7 @@ def _spans_for_story(
                 in_delete=any(a.in_delete or a.tag == _DEL_TEXT for a in span_atoms),
                 in_content_control=any(a.sdt is not None for a in span_atoms),
                 in_text_box=any(a.in_text_box for a in span_atoms),
+                in_field=any(a.in_field for a in span_atoms),
                 crosses_paragraphs=crosses,
                 _document=document,
                 _atoms=list(span_atoms),
