@@ -122,6 +122,9 @@ class _Ctx:
     document: "Document"
     findings: List[CompareFinding]
     numbering_ids: frozenset
+    #: one shared cell per compare run: ids on DETACHED clones are invisible
+    #: to the attached-tree scan, so the counter is the source of truth
+    id_cell: List[int]
 
 
 def compare(
@@ -213,6 +216,7 @@ def compare(
         )
     numbering_ids = _numbering_ids(document)
     compared: List[str] = []
+    id_cell = [0]
     for story in sorted(names_o):
         ctx = _Ctx(
             author=author,
@@ -222,6 +226,7 @@ def compare(
             document=document,
             findings=findings,
             numbering_ids=numbering_ids,
+            id_cell=id_cell,
         )
         _compare_story(ctx, stories_o[story], stories_r[story])
         compared.append(story)
@@ -398,7 +403,9 @@ def _report_formatting_difference(ctx: _Ctx, block_o, block_r) -> None:
 def _next_id(ctx: _Ctx) -> int:
     from docx.search import _next_revision_id
 
-    return _next_revision_id(ctx.document)
+    value = max(ctx.id_cell[0], _next_revision_id(ctx.document))
+    ctx.id_cell[0] = value + 1
+    return value
 
 
 def _delete_block(ctx: _Ctx, kind: str, element: "_Element", text: str) -> None:
@@ -733,14 +740,42 @@ def _compare_table(ctx: _Ctx, table_o: "_Element", table_r: "_Element") -> None:
         old_rows, new_rows = rows_o[i1:i2], rows_r[j1:j2]
         _refuse_merged_rows(ctx, list(old_rows) + list(new_rows))
         paired = min(len(old_rows), len(new_rows))
+        cursor = None  # last row placed in OUTPUT order
         for k in range(paired):
-            if not _replace_row_cells(ctx, old_rows[k], new_rows[k]):
+            if _replace_row_cells(ctx, old_rows[k], new_rows[k]):
+                cursor = old_rows[k]
+            else:
                 _mark_row_deleted(ctx, old_rows[k])
-                _insert_rows(ctx, rows_o, i1 + k, [new_rows[k]], after=old_rows[k])
+                inserted = _insert_rows(
+                    ctx, rows_o, i1 + k, [new_rows[k]], after=old_rows[k]
+                )
+                cursor = inserted[-1]
         for row in old_rows[paired:]:
             _mark_row_deleted(ctx, row)
+            cursor = row
         if len(new_rows) > paired:
-            _insert_rows(ctx, rows_o, i2, new_rows[paired:], after=old_rows[-1])
+            _insert_rows(
+                ctx, rows_o, i2, new_rows[paired:],
+                after=cursor if cursor is not None else old_rows[-1],
+            )
+
+
+def _visible_paragraph_text(paragraph: "_Element") -> str:
+    """Paragraph text with tabs/breaks as their synthetic characters —
+    matching the atom stream _paragraph_span slices, so word-diff offsets
+    never desynchronize (v0.11 review sweep)."""
+    pieces: List[str] = []
+    for child in paragraph:
+        if child.tag == _PPR:
+            continue  # w:tabs STOP definitions live here, not tab chars
+        for node in child.iter():
+            if node.tag == _T:
+                pieces.append(node.text or "")
+            elif node.tag == qn("w:tab"):
+                pieces.append("\t")
+            elif node.tag in (qn("w:br"), qn("w:cr")):
+                pieces.append("\n")
+    return "".join(pieces)
 
 
 def _replace_row_cells(ctx: _Ctx, row_o: "_Element", row_r: "_Element") -> bool:
@@ -749,18 +784,20 @@ def _replace_row_cells(ctx: _Ctx, row_o: "_Element", row_r: "_Element") -> bool:
     cells_o, cells_r = row_o.findall(_TC), row_r.findall(_TC)
     if len(cells_o) != len(cells_r) or ctx.granularity != "word":
         return False
+    if row_o.find(f".//{_TBL}") is not None or row_r.find(f".//{_TBL}") is not None:
+        return False  # nested-table differences need whole-row del+ins
     plan = []
     for cell_o, cell_r in zip(cells_o, cells_r):
         paragraphs_o = cell_o.findall(_P)
         paragraphs_r = cell_r.findall(_P)
         if len(paragraphs_o) != 1 or len(paragraphs_r) != 1:
-            texts_o = ["".join(t.text or "" for t in p.iter(_T)) for p in paragraphs_o]
-            texts_r = ["".join(t.text or "" for t in p.iter(_T)) for p in paragraphs_r]
+            texts_o = [_visible_paragraph_text(p) for p in paragraphs_o]
+            texts_r = [_visible_paragraph_text(p) for p in paragraphs_r]
             if texts_o == texts_r:
                 continue
             return False
-        text_o = "".join(t.text or "" for t in paragraphs_o[0].iter(_T))
-        text_r = "".join(t.text or "" for t in paragraphs_r[0].iter(_T))
+        text_o = _visible_paragraph_text(paragraphs_o[0])
+        text_r = _visible_paragraph_text(paragraphs_r[0])
         if text_o != text_r:
             plan.append((paragraphs_o[0], text_o, text_r))
     for paragraph, text_o, text_r in plan:
@@ -812,7 +849,7 @@ def _mark_cloned_row_inserted(ctx: _Ctx, row: "_Element") -> None:
             )
 
 
-def _insert_rows(ctx: _Ctx, rows_o, index: int, new_rows, after=None) -> None:
+def _insert_rows(ctx: _Ctx, rows_o, index: int, new_rows, after=None) -> list:
     clones = []
     for row in new_rows:
         clone = copy.deepcopy(row)
@@ -824,19 +861,24 @@ def _insert_rows(ctx: _Ctx, rows_o, index: int, new_rows, after=None) -> None:
         for clone in clones:
             reference.addnext(clone)
             reference = clone
-        return
+        return clones
     if index < len(rows_o):
         for clone in clones:
             rows_o[index].addprevious(clone)
-        return
+        return clones
     reference = rows_o[-1]
     for clone in clones:
         reference.addnext(clone)
         reference = clone
+    return clones
 
 
 def _iso(stamp: "dt.datetime") -> str:
-    return stamp.strftime("%Y-%m-%dT%H:%M:%SZ")
+    from docx.oxml.simpletypes import ST_DateTime
+
+    # the same serialization the oxml layer uses for w:ins/w:del dates —
+    # one logical edit must never carry two different timestamps
+    return ST_DateTime.convert_to_xml(stamp)
 
 
 # ---------------------------------------------------------------------------
@@ -848,8 +890,14 @@ def _replace_paragraph_text(
     ctx: _Ctx, paragraph: "_Element", text_o: str, text_r: str
 ) -> None:
     """Token-level tracked edits inside one matched paragraph; whole-block
-    del+ins fallback when the span machinery refuses a region."""
+    del+ins fallback when the span machinery refuses a region.
+
+    A refusal can arrive AFTER earlier regions already emitted revisions;
+    falling back on the half-redlined paragraph would nest fresh w:del
+    inside w:del (v0.11 review sweep) — so the pristine paragraph is
+    swapped back in before the fallback runs."""
     regions = _token_regions(text_o, text_r)
+    pristine = copy.deepcopy(paragraph)
     try:
         for start, end, replacement in reversed(regions):
             span = _paragraph_span(ctx, paragraph, start, end)
@@ -859,6 +907,10 @@ def _replace_paragraph_text(
                 replacement, tracked=True, author=ctx.author, date=ctx.stamp
             )
     except PaperRefusal:
+        parent = paragraph.getparent()
+        if parent is not None:
+            parent.replace(paragraph, pristine)
+            paragraph = pristine
         _fallback_paragraph_replace(ctx, paragraph, text_r)
 
 
@@ -867,6 +919,22 @@ def _fallback_paragraph_replace(
 ) -> None:
     from docx.blocks import _stamp_paragraph_mark, _wrap_paragraph_content_as_insertion
     from docx.oxml.parser import OxmlElement
+
+    if (
+        paragraph.find(f".//{_FLD_CHAR}") is not None
+        or paragraph.find(f".//{qn('w:fldSimple')}") is not None
+    ):
+        ctx.findings.append(
+            CompareFinding(
+                kind="field_flattened",
+                story=ctx.story,
+                detail=(
+                    "a changed paragraph containing a field was redlined as"
+                    " whole-paragraph delete+insert; the replacement carries"
+                    " the field's TEXT, not the field itself (report-only)"
+                ),
+            )
+        )
 
     replacement = OxmlElement("w:p")
     p_pr = paragraph.find(_PPR)

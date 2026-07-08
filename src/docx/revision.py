@@ -276,11 +276,21 @@ class Revisions(Sequence[Revision]):
                 " resolve the rest in Word"
             )
         _validate_moves(selected, self._document)
+        if author is None:
+            # an UNFILTERED resolution certifies "clean afterwards" — refuse
+            # upfront anything that would falsify that (v0.11 review sweep)
+            _refuse_unaccounted_markup(self._document)
         resolved = 0
-        # content revisions first, then paragraph marks (mark resolution can
-        # remove whole paragraphs and must see post-content state)
-        ordered = sorted(selected, key=lambda item: item.is_paragraph_mark)
-        for revision in ordered:
+        # moves first (their range brackets must still be intact — a row
+        # removal in the same batch could take a move site with it), then
+        # other content, then paragraph marks (mark resolution can remove
+        # whole paragraphs and must see post-content state)
+        def _order(item: Revision) -> int:
+            if item.revision_type in ("move_from", "move_to"):
+                return 0
+            return 2 if item.is_paragraph_mark else 1
+
+        for revision in sorted(selected, key=_order):
             _resolve_one(  # noqa: SLF001
                 revision._element, accept=accept, document=self._document
             )
@@ -369,7 +379,14 @@ def _scan_story_moves(
                 if kind == "start":
                     name = child.get(_NAME)
                     if site is not None:
-                        orphans.append((child, "nested move ranges"))
+                        # overlapping/nested ranges: wrapper attribution is
+                        # ambiguous — orphan BOTH ranges, never guess
+                        orphans.append((child, "overlapping move ranges"))
+                        orphans.extend(
+                            (element, "overlapping move ranges")
+                            for element in site.elements
+                        )
+                        open_site[direction] = None
                     elif not name:
                         orphans.append((child, "move range without a w:name"))
                     else:
@@ -560,6 +577,27 @@ def _enumerate_revisions(document: "Document") -> Iterator[Revision]:
                     _element=node,
                     _document=document,
                 )
+        # BODY-level w:sectPr (the final section) lives outside every block;
+        # a tracked section-property change there must still be enumerated —
+        # invisible-to-census markup would let accept_all report a clean
+        # document while w:sectPrChange remains (v0.11 review sweep). The
+        # synthetic index -1 anchor marks "story level, not a block".
+        for sect_pr in root.iter(_SECT_PR):
+            parent = sect_pr.getparent()
+            if parent is not None and parent.tag == _PPR:
+                continue  # paragraph-level section break: reached via its block
+            for node in _iter_revision_nodes(sect_pr, skip_text_boxes=False):
+                yield Revision(
+                    revision_type=_revision_type_of(node),
+                    author=node.get(_AUTHOR) or "",
+                    date=_parse_date(node.get(_DATE)),
+                    text="",
+                    story=story,
+                    anchor=Anchor(story=story, index=-1, content_hash=content_hash("")),
+                    is_paragraph_mark=False,
+                    _element=node,
+                    _document=document,
+                )
 
 
 #: every tag that constitutes revision markup, for the post-resolution rescan
@@ -575,26 +613,80 @@ _MARKUP_SCAN_TAGS = tuple(_REVISION_TYPES) + tuple(
 )
 
 
-def _iter_markup_nodes(element: "_Element") -> Iterator["_Element"]:
-    for child in _first_choice_children(element):
-        if child.tag in _MARKUP_SCAN_TAGS:
-            yield child
-        yield from _iter_markup_nodes(child)
-
-
 def _remaining_markup(document: "Document") -> dict:
-    """{local-tag-name: count} of ALL revision markup left in traversal space.
-
-    The invariant oracle: after a successful `accept_all()`/`reject_all()`
-    (and, post-Phase-2, move resolution) this is empty — "resolved" while
-    markup remains anywhere would be false state.
+    """{local-tag-name: count} of ALL revision markup left ANYWHERE — the
+    full serialized space, including mc:Fallback branches (which traversal
+    skips but a saved file still carries). The invariant oracle: after a
+    successful `accept_all()`/`reject_all()` this is empty — "resolved"
+    while markup remains anywhere would be false state.
     """
     counts: dict = {}
     for _story, root in _story_elements(document):
-        for node in _iter_markup_nodes(root):
+        for node in root.iter(*_MARKUP_SCAN_TAGS):
             name = node.tag.rsplit("}", 1)[-1]
             counts[name] = counts.get(name, 0) + 1
     return dict(sorted(counts.items()))
+
+
+_MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+
+
+def _fallback_markup(document: "Document") -> dict:
+    """Revision markup hiding inside mc:Fallback branches — invisible to
+    traversal (first-Choice-only) but alive in the saved file."""
+    counts: dict = {}
+    for _story, root in _story_elements(document):
+        for fallback in root.iter(_MC_FALLBACK):
+            for node in fallback.iter(*_MARKUP_SCAN_TAGS):
+                name = node.tag.rsplit("}", 1)[-1]
+                counts[name] = counts.get(name, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _refuse_unaccounted_markup(document: "Document") -> None:
+    """Refuse an unfiltered resolution that could not end clean: fallback
+    markup, orphaned move markup, or markup enumeration cannot reach would
+    all survive a 'successful' accept_all — reporting resolved-and-clean
+    while markup remains is false state (v0.11 review sweep)."""
+    fallback = _fallback_markup(document)
+    if fallback:
+        raise UnsupportedStructureError(
+            f"revision markup lives inside mc:AlternateContent fallback"
+            f" branches ({fallback}); this package resolves the primary"
+            " content only, so the saved file would still carry it. Nothing"
+            " was changed — resolve this document in Word"
+        )
+    units, orphans = _move_units(document)
+    if orphans:
+        reasons = sorted({reason for _element, reason in orphans})
+        raise UnsupportedStructureError(
+            "the document carries move markup this package cannot pair"
+            f" ({'; '.join(reasons)}); nothing was changed. Resolve it in"
+            " Word instead"
+        )
+    accounted = {id(r._element) for r in _enumerate_revisions(document)}  # noqa: SLF001
+    for unit in units:
+        accounted.update(id(element) for element in unit.elements)
+    unaccounted: dict = {}
+    for _story, root in _story_elements(document):
+        for node in root.iter(*_MARKUP_SCAN_TAGS):
+            if id(node) not in accounted:
+                name = node.tag.rsplit("}", 1)[-1]
+                unaccounted[name] = unaccounted.get(name, 0) + 1
+    if unaccounted:
+        raise UnsupportedStructureError(
+            f"the document carries revision markup this package cannot"
+            f" enumerate ({dict(sorted(unaccounted.items()))}); nothing was"
+            " changed. Resolve it in Word instead"
+        )
+
+
+def _is_in_story(node: "_Element", document: "Document") -> bool:
+    root_ids = {id(root) for _story, root in _story_elements(document)}
+    top = node
+    while top.getparent() is not None:
+        top = top.getparent()
+    return id(top) in root_ids
 
 
 def _comment_ids_inside(node: "_Element"):
@@ -637,6 +729,8 @@ def _resolve_one(
 ) -> None:
     if node.getparent() is None:
         return  # already resolved via an enclosing operation
+    if document is not None and not _is_in_story(node, document):
+        return  # its subtree was detached by an enclosing resolution
     revision_type = _revision_type_of(node)
     if revision_type in ("move_from", "move_to"):
         _resolve_move(node, accept=accept, document=document)
@@ -788,8 +882,11 @@ def _next_paragraph_sibling(paragraph: "_Element") -> "Optional[_Element]":
     while node is not None:
         if node.tag == _P:
             return node
-        if node.tag == qn("w:tbl"):
-            return None  # merging across a table is not a paragraph join
+        if node.tag in (qn("w:tbl"), qn("w:sdt")):
+            # merging across a table or INTO a block-level content control
+            # is not a paragraph join — hopping content past it would
+            # silently reorder document text (v0.11 review sweep)
+            return None
         node = node.getnext()
     return None
 

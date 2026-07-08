@@ -268,11 +268,20 @@ def _compose(
             r for s, r in _story_elements_of(document) if s == story
         )
         _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
-    _refuse_missing_numbering_part(document, range_elements)
+    chained_definitions = _chained_source_definitions(source, range_elements)
+    _refuse_missing_numbering_part(
+        document, range_elements + chained_definitions
+    )
+    _refuse_unloadable_media(source, range_elements)
 
     clones = [copy.deepcopy(element) for element in range_elements]
-    _reconcile_styles(document, source, clones, styles_mode, report)
-    _remap_numbering(document, source, clones, report)
+    imported_definitions = _reconcile_styles(
+        document, source, clones, styles_mode, report
+    )
+    # numbering references live in imported STYLE definitions too — an
+    # unmapped one silently binds to unrelated destination numbering
+    # (v0.11 review sweep)
+    _remap_numbering(document, source, clones + imported_definitions, report)
     _copy_media(document, source, clones, report)
     _recreate_hyperlinks(document, source, clones, report)
     _reconcile_bookmarks(document, clones, report)
@@ -313,6 +322,48 @@ def _refuse_missing_numbering_part(
             " definition first (ensure_bullet_definition /"
             " ensure_decimal_definition)"
         )
+
+
+def _chained_source_definitions(
+    source: "Document", elements: "List[_Element]"
+) -> "List[_Element]":
+    """The source style definitions the copied range pulls in (transitive
+    basedOn/link/next chains) — they carry numbering references too."""
+    _root, by_id, _by_name = _style_definitions(source)
+    return [
+        by_id[style_id]
+        for style_id in _expand_style_chain(by_id, _referenced_style_ids(elements))
+    ]
+
+
+def _refuse_unloadable_media(
+    source: "Document", range_elements: "List[_Element]"
+) -> None:
+    """Pre-mutation check: every image in the range must be re-embeddable,
+    or _copy_media would raise AFTER styles/numbering were already imported
+    (refusal atomicity, v0.11 review sweep)."""
+    import io as _io
+
+    from docx.image.exceptions import UnrecognizedImageError
+    from docx.image.image import Image
+
+    for element in range_elements:
+        for node in element.iter(_BLIP, _IMAGEDATA):
+            attr = _R_EMBED if node.tag == _BLIP else _R_ID
+            r_id = node.get(attr)
+            if not r_id:
+                continue
+            rel = source.part.rels.get(r_id)
+            if rel is None or rel.is_external:
+                continue  # dropped later with a finding
+            try:
+                Image.from_blob(rel.target_part.blob)
+            except UnrecognizedImageError:
+                raise UnsupportedStructureError(
+                    "the source range contains an image format this package"
+                    " cannot re-embed (e.g. EMF/WMF); convert or remove it"
+                    " first. Nothing was changed"
+                )
 
 
 def _refuse_unsupported_content(range_elements: "List[_Element]") -> None:
@@ -397,7 +448,9 @@ def _reconcile_styles(
     clones: "List[_Element]",
     mode: str,
     report: CompositionReport,
-) -> None:
+) -> "List[_Element]":
+    """Reconcile and remap; returns the IMPORTED definitions (their
+    numbering references still need remapping by the caller)."""
     destination_root, destination_by_id, destination_by_name = _style_definitions(
         document
     )
@@ -405,6 +458,7 @@ def _reconcile_styles(
     wanted = _expand_style_chain(source_by_id, _referenced_style_ids(clones))
     style_map: "Dict[str, str]" = {}
     to_import: "List[Tuple[str, _Element]]" = []
+    taken_ids = set(destination_by_id)  # incl. ids allocated THIS batch
     for style_id in wanted:
         definition = source_by_id[style_id]
         name_element = definition.find(qn("w:name"))
@@ -420,7 +474,8 @@ def _reconcile_styles(
                 style_map[style_id] = existing.get(qn("w:styleId"))
                 continue
             # import_renamed: clone under a fresh id AND name
-            new_id = _fresh_style_id(destination_by_id, style_id)
+            new_id = _fresh_style_id(taken_ids, style_id)
+            taken_ids.add(new_id)
             new_name = _fresh_style_name(destination_by_name, name)
             style_map[style_id] = new_id
             report.renamed_styles[name] = new_name
@@ -428,9 +483,10 @@ def _reconcile_styles(
             continue
         new_id = (
             style_id
-            if style_id not in destination_by_id
-            else _fresh_style_id(destination_by_id, style_id)
+            if style_id not in taken_ids
+            else _fresh_style_id(taken_ids, style_id)
         )
+        taken_ids.add(new_id)
         style_map[style_id] = new_id
         to_import.append((new_id, _renamed_clone(definition, new_id, None)))
     for new_id, definition in to_import:
@@ -451,6 +507,7 @@ def _reconcile_styles(
                 if value in style_map and style_map[value] != value:
                     node.set(_VAL, style_map[value])
     report.style_map = style_map
+    return [definition for _new_id, definition in to_import]
 
 
 def _renamed_clone(
@@ -465,10 +522,10 @@ def _renamed_clone(
     return clone
 
 
-def _fresh_style_id(destination_by_id: "Dict[str, _Element]", base: str) -> str:
+def _fresh_style_id(taken_ids, base: str) -> str:
     candidate = f"{base}Imported"
     counter = 1
-    while candidate in destination_by_id:
+    while candidate in taken_ids:
         counter += 1
         candidate = f"{base}Imported{counter}"
     return candidate
@@ -724,10 +781,43 @@ def _reconcile_bookmarks(
                 existing_names.add(new_name)
             else:
                 existing_names.add(name)
-        for end in clone.iter(_BOOKMARK_END):
+        for end in list(clone.iter(_BOOKMARK_END)):
             old_id = end.get(_ID)
             if old_id in id_map:
                 end.set(_ID, id_map[old_id])
+            else:
+                # its start lies OUTSIDE the copied range: keeping the source
+                # id would terminate an unrelated destination bookmark
+                end.getparent().remove(end)
+                report.findings.append(
+                    CompositionFinding(
+                        kind="bookmark_partially_in_range",
+                        detail=(
+                            "a bookmark end whose start lies outside the"
+                            " copied range was dropped"
+                        ),
+                    )
+                )
+    # starts whose end never appeared in the range are half-pairs too
+    ends_present = {
+        end.get(_ID) for clone in clones for end in clone.iter(_BOOKMARK_END)
+    }
+    for clone in clones:
+        for start in list(clone.iter(_BOOKMARK_START)):
+            if start.get(_ID) not in ends_present:
+                name = start.get(_NAME) or ""
+                start.getparent().remove(start)
+                renames.pop(name, None)
+                report.findings.append(
+                    CompositionFinding(
+                        kind="bookmark_partially_in_range",
+                        detail=(
+                            f"bookmark {name!r} starts in the copied range"
+                            " but ends outside it; the start marker was"
+                            " dropped"
+                        ),
+                    )
+                )
     if renames:
         _remap_field_refs(clones, renames)
     report.bookmarks_renamed = renames
@@ -743,22 +833,40 @@ def _fresh_bookmark_name(existing: set, base: str) -> str:
 
 
 def _remap_field_refs(clones: "List[_Element]", renames: "Dict[str, str]") -> None:
-    """Rewrite REF/PAGEREF instructions inside the copied range that point at
-    renamed bookmarks."""
+    """Rewrite REF/PAGEREF/NOTEREF instructions and hyperlink anchors inside
+    the copied range that point at renamed bookmarks.
 
-    def rewrite(instr: str) -> str:
-        for old, new in renames.items():
-            instr = re.sub(rf"(?<=\s){re.escape(old)}(?=\s|$)", new, instr)
-        return instr
+    All renames apply SIMULTANEOUSLY (one alternation pass — sequential
+    substitution chains A->B then B->C), and complex-field instructions are
+    matched on their CONCATENATION across split w:instrText runs (v0.11
+    review sweep)."""
+    from docx.bookmarks import _iter_field_instructions
 
+    alternation = re.compile(
+        "|".join(
+            rf"\b{re.escape(old)}\b"
+            for old in sorted(renames, key=len, reverse=True)
+        )
+    )
+
+    def rewrite(text: str) -> str:
+        return alternation.sub(lambda match: renames[match.group(0)], text)
+
+    ref_family = re.compile(r"\b(?:PAGEREF|NOTEREF|REF)\b")
     for clone in clones:
-        for node in clone.iter(_INSTR_TEXT):
-            if node.text and ("REF" in node.text):
-                node.text = rewrite(node.text)
+        for instruction, nodes in _iter_field_instructions(clone):
+            if ref_family.search(instruction):
+                for node in nodes:
+                    if node.text:
+                        node.text = rewrite(node.text)
         for node in clone.iter(_FLD_SIMPLE):
             instr = node.get(_INSTR)
-            if instr and "REF" in instr:
+            if instr and ref_family.search(instr):
                 node.set(_INSTR, rewrite(instr))
+        for link in clone.iter(_HYPERLINK):
+            anchor = link.get(qn("w:anchor"))
+            if anchor and anchor in renames:
+                link.set(qn("w:anchor"), renames[anchor])
 
 
 def _reallocate_sdt_ids(document: "Document", clones: "List[_Element]") -> None:

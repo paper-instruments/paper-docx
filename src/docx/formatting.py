@@ -117,8 +117,10 @@ def format_of(target) -> EffectiveFormat:
 
     if isinstance(target, Run):
         document = _document_of(target)
+        # the run's parent may be a hyperlink/ins wrapper, not the paragraph
+        # — walking up matters or the paragraph-style layer silently drops
         return _resolve_run(
-            document, target._r, target._r.getparent()  # noqa: SLF001
+            document, target._r, _enclosing_paragraph(target._r)  # noqa: SLF001
         )
     if isinstance(target, Paragraph):
         document = _document_of(target)
@@ -141,7 +143,16 @@ def surrounding_format(document: "Document", anchor) -> EffectiveFormat:
     from docx.blocks import _locate_anchor_paragraph
 
     _story, paragraph = _locate_anchor_paragraph(document, anchor)
-    for run in paragraph.findall(qn("w:r")):
+    for run in paragraph.iter(qn("w:r")):  # incl. runs inside hyperlinks
+        inside_textbox = False
+        current = run.getparent()
+        while current is not None and current is not paragraph:
+            if current.tag == qn("w:txbxContent"):
+                inside_textbox = True
+                break
+            current = current.getparent()
+        if inside_textbox:
+            continue
         if run.find(qn("w:t")) is not None:
             return _resolve_run(document, run, paragraph)
     return _resolve_paragraph(document, paragraph)
@@ -150,6 +161,13 @@ def surrounding_format(document: "Document", anchor) -> EffectiveFormat:
 # ---------------------------------------------------------------------------
 # resolution core
 # ---------------------------------------------------------------------------
+
+
+def _enclosing_paragraph(node: "_Element") -> "Optional[_Element]":
+    current = node.getparent()
+    while current is not None and current.tag != qn("w:p"):
+        current = current.getparent()
+    return current
 
 
 def _document_of(proxy) -> "Document":
@@ -393,7 +411,21 @@ def _resolve_span(span) -> EffectiveFormat:
     properties: "Dict[str, ResolvedValue]" = {}
     for key, value in first.properties.items():
         if all(other.properties[key].value == value.value for other in resolved[1:]):
-            properties[key] = value
+            sources = []
+            for item in resolved:
+                source = item.properties[key].source
+                if source not in sources:
+                    sources.append(source)
+            if len(sources) == 1:
+                properties[key] = value
+            else:
+                # same VALUE from different layers per run: asserting the
+                # first run's provenance span-wide would be false provenance
+                properties[key] = ResolvedValue(
+                    value=value.value,
+                    source="agreeing_layers",
+                    chain=tuple(sources),
+                )
         else:
             properties[key] = ResolvedValue(value=None, source="mixed")
     return EffectiveFormat(properties=properties, unresolved=_UNRESOLVED)

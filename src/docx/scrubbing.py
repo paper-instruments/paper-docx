@@ -146,10 +146,13 @@ def scrub(
     survive it) — `finalize` first. Document protection settings are
     reported, never removed.
     """
+    from docx.revision import _fallback_markup
+
     _refuse_if_protected(document, "scrub the document")
-    if metadata and len(document.revisions):
+    if metadata and (len(document.revisions) or _fallback_markup(document)):
         raise UnsupportedStructureError(
-            "cannot scrub metadata while tracked revisions are pending —"
+            "cannot scrub metadata while tracked revisions are pending"
+            " (including markup inside mc:AlternateContent fallbacks) —"
             " their author and date attributions would remain in the"
             " document; finalize(revisions=...) first, or pass"
             " metadata=False. Nothing was changed"
@@ -177,14 +180,31 @@ def scrub(
 
 
 def _scrub_comment_parts(document: "Document", report: ScrubReport) -> None:
+    """Drop the comment part family and report EVERY part that leaves the
+    package with it — parts reachable only through a dropped part (comment
+    media, the dropped part's own .rels file) cascade out of the saved zip,
+    and an unexplained removal breaks report-matches-diff."""
     document_part = document.part
+    package = document_part.package
+    parts_before = {part.partname: part for part in package.iter_parts()}
+    dropped_any = False
     for r_id, rel in list(document_part.rels.items()):
         if rel.is_external:
             continue
         if any(rel.reltype.endswith(sfx) for sfx in _COMMENT_RELTYPE_SUFFIXES):
-            # zip-name form ("word/comments.xml"), matching diff_package
-            report.removed_parts.append(str(rel.target_part.partname).lstrip("/"))
             document_part.drop_rel(r_id)
+            dropped_any = True
+    if not dropped_any:
+        return
+    parts_after = {part.partname for part in package.iter_parts()}
+    for partname, part in sorted(parts_before.items()):
+        if partname in parts_after:
+            continue
+        name = str(partname).lstrip("/")
+        report.removed_parts.append(name)
+        if len(getattr(part, "rels", ())):
+            directory, _, filename = name.rpartition("/")
+            report.removed_parts.append(f"{directory}/_rels/{filename}.rels")
 
 
 def _scrub_comment_anchors(document: "Document", report: ScrubReport) -> None:
@@ -201,12 +221,17 @@ def _scrub_comment_anchors(document: "Document", report: ScrubReport) -> None:
 
 
 def _scrub_metadata(document: "Document", report: ScrubReport) -> None:
-    core = document.core_properties
-    for name in _CORE_STRING_FIELDS:
-        if getattr(core, name):
-            setattr(core, name, "")
-            report.metadata_fields_cleared.append(f"core:{name}")
     package = document.part.package
+    has_core_part = any(
+        not rel.is_external and rel.reltype.endswith("/core-properties")
+        for rel in package.rels.values()
+    )
+    if has_core_part:  # never FABRICATE a core part just to clear it
+        core = document.core_properties
+        for name in _CORE_STRING_FIELDS:
+            if getattr(core, name):
+                setattr(core, name, "")
+                report.metadata_fields_cleared.append(f"core:{name}")
     for r_id, rel in list(package.rels.items()):
         if rel.is_external:
             continue
@@ -241,11 +266,21 @@ def _clear_app_properties(app_part, report: ScrubReport) -> None:
 
 
 def _settings_element(document: "Document"):
-    return document.settings.element
+    """The settings root, or None — scrubbing must never FABRICATE a
+    settings part just to remove things from it."""
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    try:
+        part = document.part.part_related_by(RT.SETTINGS)
+    except KeyError:
+        return None
+    return part.element
 
 
 def _scrub_track_changes_setting(document: "Document", report: ScrubReport) -> None:
     settings = _settings_element(document)
+    if settings is None:
+        return
     node = settings.find(qn("w:trackRevisions"))
     if node is not None:
         settings.remove(node)
@@ -254,10 +289,11 @@ def _scrub_track_changes_setting(document: "Document", report: ScrubReport) -> N
 
 def _scrub_rsids(document: "Document", report: ScrubReport) -> None:
     settings = _settings_element(document)
-    node = settings.find(qn("w:rsids"))
-    if node is not None:
-        settings.remove(node)
-        report.rsids_element_removed = True
+    if settings is not None:
+        node = settings.find(qn("w:rsids"))
+        if node is not None:
+            settings.remove(node)
+            report.rsids_element_removed = True
     for _story, root in _story_elements(document):
         for element in root.iter():
             for attr in _RSID_ATTRS:

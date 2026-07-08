@@ -81,11 +81,19 @@ def list_bookmarks(document: "Document") -> "List[BookmarkInfo]":
     return found
 
 
+def _paragraph_of(node: "_Element") -> "Optional[_Element]":
+    current = node.getparent()
+    while current is not None and current.tag != qn("w:p"):
+        current = current.getparent()
+    return current
+
+
 def _bookmark_text(root: "_Element", start: "_Element", raw_id: Optional[str]) -> str:
     if raw_id is None:
         return ""
     pieces: "List[str]" = []
     collecting = False
+    last_paragraph: "Optional[_Element]" = None
     for node in root.iter():
         if node is start:
             collecting = True
@@ -97,6 +105,10 @@ def _bookmark_text(root: "_Element", start: "_Element", raw_id: Optional[str]) -
         ):
             break
         if collecting and node.tag == _T:
+            paragraph = _paragraph_of(node)
+            if last_paragraph is not None and paragraph is not last_paragraph:
+                pieces.append("\n")  # boundary, matching Span.text semantics
+            last_paragraph = paragraph
             pieces.append(node.text or "")
     return "".join(pieces)
 
@@ -129,6 +141,12 @@ def create_bookmark(document: "Document", span: "Span", name: str) -> BookmarkIn
             " document-unique"
         )
     span._validate_fresh()  # noqa: SLF001 - same-package machinery
+    if span.in_field:
+        raise UnsupportedStructureError(
+            "the span lies inside a field result; a bookmark planted there"
+            " is destroyed the next time the field updates — bookmark the"
+            " field's source text instead"
+        )
     for atom in span._atoms:  # noqa: SLF001
         if atom.run is None:
             raise UnsupportedStructureError(
@@ -162,29 +180,60 @@ def delete_bookmark(document: "Document", name: str) -> None:
             f"bookmark {name!r} is referenced by {referencing} field"
             " instruction(s); update or remove those fields first"
         )
+    removed = 0
     for _story, root in _story_elements(document):
-        for start in root.iter(_BOOKMARK_START):
+        for start in list(root.iter(_BOOKMARK_START)):
             if start.get(_NAME) != name:
                 continue
             raw_id = start.get(_ID)
-            for end in root.iter(_BOOKMARK_END):
+            for end in list(root.iter(_BOOKMARK_END)):
                 if end.get(_ID) == raw_id:
                     end.getparent().remove(end)
                     break
             start.getparent().remove(start)
-            return
-    raise TargetNotFoundError(f"no bookmark named {name!r} exists")
+            removed += 1  # duplicate names all go — "deleted" must mean gone
+    if not removed:
+        raise TargetNotFoundError(f"no bookmark named {name!r} exists")
+
+
+_FLD_CHAR = qn("w:fldChar")
+_FLD_CHAR_TYPE = qn("w:fldCharType")
+
+
+def _iter_field_instructions(root: "_Element"):
+    """(concatenated-instruction, [w:instrText nodes]) per complex field —
+    Word freely SPLITS one instruction across several runs, so any scan
+    matching single nodes silently misses references (v0.11 review sweep).
+    """
+    stack: "List[List[_Element]]" = []
+    for node in root.iter():
+        if node.tag == _FLD_CHAR:
+            fld_type = node.get(_FLD_CHAR_TYPE)
+            if fld_type == "begin":
+                stack.append([])
+            elif fld_type == "end" and stack:
+                nodes = stack.pop()
+                yield "".join(n.text or "" for n in nodes), nodes
+        elif node.tag == _INSTR_TEXT and stack:
+            stack[-1].append(node)
+
+
+def _reference_pattern(name: str):
+    return re.compile(rf"\b(?:PAGEREF|NOTEREF|REF)\s+{re.escape(name)}(?=\s|$)")
 
 
 def _field_references(document: "Document", name: str) -> int:
-    pattern = re.compile(rf"\b(?:PAGE)?REF\s+{re.escape(name)}(?=\s|$)")
+    pattern = _reference_pattern(name)
     count = 0
     for _story, root in _story_elements(document):
-        for node in root.iter(_INSTR_TEXT):
-            if node.text and pattern.search(node.text):
+        for instruction, _nodes in _iter_field_instructions(root):
+            if pattern.search(instruction):
                 count += 1
         for node in root.iter(_FLD_SIMPLE):
             instr = node.get(_INSTR)
             if instr and pattern.search(instr):
                 count += 1
+        for link in root.iter(qn("w:hyperlink")):
+            if link.get(qn("w:anchor")) == name:
+                count += 1  # internal links target bookmarks too
     return count

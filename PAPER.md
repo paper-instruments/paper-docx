@@ -191,6 +191,24 @@ listed here.
   result text and arms `w:updateFields`; this package NEVER computes field
   values. Self-consistency pinned: the v0.1 `in_field` guard refuses spans
   inside our own fields.
+- **Adversarial review sweep** (47 agents: ten dimension-scoped finders,
+  one verifier per finding): 37 findings, 34 confirmed, ALL fixed with
+  regression pins in `tests/paper/test_review_fixes_v011.py`. Highlights:
+  batch resolution now resolves moves FIRST and refuses upfront on
+  anything that would survive a "clean" result (mc:Fallback markup,
+  unpaired/overlapping move ranges, body-level `w:sectPrChange` — now
+  enumerated); paragraph-mark merges stop at block-level content controls;
+  the zero-markup rescan scans the FULL serialized space; scrub never
+  fabricates missing core/settings parts and reports cascade-removed
+  comment side-parts; compare gained doc-wide unique revision ids, a
+  pristine-paragraph fallback (no nested revisions), synthetic-aware cell
+  texts (tabs), nested-table row fallback, ordered row insertion, one
+  timestamp per edit, and a field-flattening finding; composition remaps
+  numbering inside imported styles, drops half-bookmarks at range edges,
+  applies bookmark renames simultaneously over split field instructions,
+  and pre-validates media; bookmark deletion sees split/NOTEREF/anchor
+  references; the format resolver finds the paragraph layer for hyperlink
+  runs and reports span provenance honestly.
 - **Phase 7 — effective-format resolver.** New module `docx.formatting`:
   `format_of(Run|Paragraph|Span)` and `surrounding_format(document,
   anchor)`; docDefaults → paragraph-style chain → character style → direct
