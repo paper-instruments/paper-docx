@@ -195,6 +195,18 @@ class Document(ElementProxy):
         """The |DocumentPart| object of this document."""
         return self._part
 
+    @property
+    def revisions(self):
+        """|Revisions| object enumerating tracked changes across all story parts.
+
+        paper-docx addition (v0): a fresh snapshot on each access; supports
+        accept/reject of all revisions or filtered by author. See
+        `docx.revision`.
+        """
+        from docx.revision import Revisions
+
+        return Revisions(self)
+
     def save(self, path_or_stream: str | IO[bytes]):
         """Save this document to `path_or_stream`.
 
