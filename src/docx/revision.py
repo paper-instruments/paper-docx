@@ -275,7 +275,6 @@ class Revisions(Sequence[Revision]):
                 " by author, resolve individual insertions/deletions, or"
                 " resolve the rest in Word"
             )
-        _validate_row_removals(selected, accept=accept)
         _validate_moves(selected, self._document)
         resolved = 0
         # content revisions first, then paragraph marks (mark resolution can
@@ -517,32 +516,6 @@ def _validate_moves(selected: "List[Revision]", document: "Document") -> None:
         )
 
 
-def _validate_row_removals(selected: "List[Revision]", *, accept: bool) -> None:
-    """Refuse BEFORE mutating when batch resolution would empty a table.
-
-    The per-call guard in `_resolve_row_revision` fires mid-batch otherwise,
-    leaving the document half-resolved (refusal atomicity, CONVENTIONS §2).
-    """
-    removals: dict = {}
-    for revision in selected:
-        removes_row = (revision.revision_type == "row_insertion" and not accept) or (
-            revision.revision_type == "row_deletion" and accept
-        )
-        if not removes_row:
-            continue
-        row = revision._element.getparent().getparent()  # noqa: SLF001
-        table = row.getparent()
-        removals[table] = removals.get(table, 0) + 1
-    for table, count in removals.items():
-        total = sum(1 for child in table if child.tag == _TR)
-        if count >= total:
-            raise UnsupportedStructureError(
-                "resolving the selected row revisions would remove every row"
-                " of a table, leaving invalid XML; nothing was changed."
-                " Resolve that table's rows in Word instead"
-            )
-
-
 def _iter_revision_nodes(
     element: "_Element", *, skip_text_boxes: bool
 ) -> Iterator["_Element"]:
@@ -758,9 +731,11 @@ def _resolve_row_revision(
 
     Keeping the row = remove just the marker. Removing the row = remove the
     whole `w:tr` (the cell-level content revisions inside it are subsumed,
-    exactly as Word's Accept/Reject All treats them). A removal that would
-    leave the table without rows refuses — a zero-row `w:tbl` is invalid
-    XML, and silently dropping the table is not this package's call.
+    exactly as Word's Accept/Reject All treats them). Removing a table's
+    LAST row removes the table itself — Word's semantic for a fully
+    tracked-deleted table; a zero-row `w:tbl` would be invalid XML. When the
+    table was its container's only block, an empty paragraph takes its place
+    (a `w:tc`/body must keep one block).
     """
     tr_pr = node.getparent()
     row = tr_pr.getparent()
@@ -772,11 +747,18 @@ def _resolve_row_revision(
         return
     table = row.getparent()
     if sum(1 for child in table if child.tag == _TR) == 1:
-        verb = "rejecting" if node.tag == _INS else "accepting"
-        raise UnsupportedStructureError(
-            f"{verb} this row revision would remove the table's only row,"
-            " leaving an empty table; resolve it in Word instead"
-        )
+        orphaned = _comment_ids_inside(table)
+        parent = table.getparent()
+        siblings = [
+            child for child in parent if child.tag in (_P, _TBL) and child is not table
+        ]
+        if not siblings:
+            from docx.oxml.parser import OxmlElement
+
+            table.addprevious(OxmlElement("w:p"))
+        parent.remove(table)
+        _cleanup_comment_anchors(document, orphaned)
+        return
     orphaned = _comment_ids_inside(row)
     table.remove(row)
     _cleanup_comment_anchors(document, orphaned)

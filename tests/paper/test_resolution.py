@@ -230,19 +230,22 @@ class DescribeRowRevisionResolution:
         assert "Filing fee" not in reopened.element.xml
         assert "row_deletion" in {r.revision_type for r in reopened.revisions}
 
-    def it_refuses_to_empty_a_table_atomically(self):
-        import copy as copy_mod
-
+    def it_removes_the_whole_table_when_its_last_row_resolves_away(
+        self, tmp_path: Path
+    ):
+        """Word's semantic for a fully tracked-deleted table: accepting the
+        last row's deletion removes the table itself (never an invalid
+        zero-row w:tbl)."""
         document = _doc(ROW_REVISIONS)
         table = document.tables[0]._tbl
         # strip the table down to ONLY the deleted-marked row
         for row in list(table.tr_lst):
             if "Old charge" not in "".join(row.itertext()):
                 table.remove(row)
-        before = copy_mod.deepcopy(document.element.xml)
-        with pytest.raises(UnsupportedStructureError, match="only row|every row"):
-            document.revisions.accept_all()
-        assert document.element.xml == before  # nothing half-resolved
+        document.revisions.accept_all()
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        assert len(reopened.tables) == 0
+        assert _rescan(reopened) == {}
 
 
 class DescribeParagraphMarkResolution:

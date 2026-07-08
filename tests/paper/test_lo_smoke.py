@@ -33,6 +33,23 @@ class DescribeLibreOfficeSmoke:
     def it_opens_every_clean_fixture(self, relpath: str):
         assert_libreoffice_opens(fixture_path(relpath))
 
+    def it_opens_a_compare_engine_redline(self, tmp_path):
+        """v0.11 Phase 4: emitted tracked-changes markup must be valid to an
+        independent loader."""
+        import datetime as dt
+
+        from docx.package import compare
+
+        result = compare(
+            str(fixture_path("generated/redline/compare-original.docx")),
+            str(fixture_path("generated/redline/compare-revised.docx")),
+            author="Compare Engine",
+            date=dt.datetime(2026, 7, 8, 12, 0, 0, tzinfo=dt.timezone.utc),
+        )
+        out = tmp_path / "redline.docx"
+        result.document.save(str(out))
+        assert_libreoffice_opens(out)
+
     def it_opens_the_finalized_and_scrubbed_gauntlet(self, tmp_path):
         """v0.11 Phase 3: the compliance output must survive an independent
         loader, not just our own reopen."""
