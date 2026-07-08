@@ -129,6 +129,46 @@ APPROVED_SIGNATURES = [
     ("docx.numbering", "list_numbering", "(document)"),
     ("docx.numbering", "apply_numbering", "(paragraph, *, num_id, level=0)"),
     ("docx.numbering", "apply_list_style", "(paragraph, style_name)"),
+    # -- v0.1 additions (PLAN-v0.1.md; amendments recorded in API-PROPOSAL.md)
+    ("docx.package", "diagnose", "(path)"),
+    ("docx.package", "text_diff", "(path_a, path_b, *, view='current')"),
+    ("docx.package", "pending_changes", "(path)"),
+    (
+        "docx.search",
+        "replace_all",
+        "(document, needle, new_text, *, story=None, view='current',"
+        " tracked=False, author=None, date=None)",
+    ),
+    (
+        "docx.search",
+        "Span.comment",
+        "(self, text, *, author, initials=None, date=None)",
+    ),
+    ("docx.controls", "list_controls", "(document)"),
+    ("docx.controls", "get_control", "(document, *, tag=None, alias=None)"),
+    (
+        "docx.controls",
+        "set_control_value",
+        "(document, value, *, tag=None, alias=None)",
+    ),
+    ("docx.controls", "Control.set_value", "(self, value)"),
+    ("docx.numbering", "ensure_bullet_definition", "(document)"),
+    ("docx.numbering", "ensure_decimal_definition", "(document)"),
+    ("docx.numbering", "restart_numbering", "(document, *, num_id)"),
+    (
+        "docx.blocks",
+        "insert_blocks_after",
+        "(document, anchor, *, blocks, tracked=False, author=None, date=None)",
+    ),
+    ("docx.commentops", "is_resolved", "(document, comment)"),
+    ("docx.commentops", "resolve", "(document, comment, *, resolved=True)"),
+    (
+        "docx.commentops",
+        "reply",
+        "(document, comment, text, *, author, initials=None, date=None)",
+    ),
+    ("docx.commentops", "anchored_text", "(document, comment)"),
+    ("docx.commentops", "comment_thread", "(document)"),
 ]
 
 _IDS = [f"{module}.{attr}" for module, attr, _ in APPROVED_SIGNATURES]

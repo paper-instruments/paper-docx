@@ -458,3 +458,206 @@ def tracked_replace_paragraphs(
         deleted_text=tuple(deleted_text),
         revision_ids=tuple(revision_ids),
     )
+
+
+# ---------------------------------------------------------------------------
+# v0.1 V3 — rich block insertion (a small TYPED block vocabulary, not
+# arbitrary richness)
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class TextRun:
+    """One run of a rich paragraph."""
+
+    text: str
+    bold: bool = False
+    italic: bool = False
+
+
+@dataclass(frozen=True)
+class RichParagraph:
+    """A paragraph built from styled runs."""
+
+    runs: Sequence[TextRun]
+    style: Optional[str] = None  # style ID, validated against the document
+
+
+@dataclass(frozen=True)
+class ListBlock:
+    """A real bullet/decimal list (backed by a real numbering definition)."""
+
+    items: Sequence[str]
+    kind: str = "bullet"  # "bullet" | "decimal"
+    level: int = 0
+
+
+@dataclass(frozen=True)
+class TableBlock:
+    """A simple rectangular table of plain-text cells."""
+
+    rows: Sequence[Sequence[str]]
+
+
+def _validate_rich_blocks(document: "Document", blocks, *, tracked: bool) -> None:
+    if not blocks:
+        raise ValueError("blocks must not be empty")
+    for position, block in enumerate(blocks):
+        label = f"blocks[{position}]"
+        if isinstance(block, RichParagraph):
+            if not block.runs:
+                raise ValueError(f"{label}: RichParagraph needs at least one run")
+            for run in block.runs:
+                _validate_writable_text(run.text, argument=f"{label} run text")
+            _validated_style_id(document, block.style, argument=f"{label}.style")
+        elif isinstance(block, ListBlock):
+            if block.kind not in ("bullet", "decimal"):
+                raise ValueError(f"{label}: kind must be 'bullet' or 'decimal'")
+            if not 0 <= block.level <= 2:
+                raise ValueError(f"{label}: level must be 0..2")
+            if not block.items:
+                raise ValueError(f"{label}: ListBlock needs at least one item")
+            for item in block.items:
+                _validate_writable_text(item, argument=f"{label} item")
+        elif isinstance(block, TableBlock):
+            if tracked:
+                raise UnsupportedStructureError(
+                    "tracked table insertion is not supported in v0.1 (Word"
+                    " marks table revisions row-by-row; that vocabulary is a"
+                    " later phase) — insert the table untracked or as text"
+                )
+            if not block.rows or not all(block.rows):
+                raise ValueError(f"{label}: TableBlock rows must be non-empty")
+            width = len(block.rows[0])
+            if any(len(r) != width for r in block.rows):
+                raise ValueError(f"{label}: TableBlock rows must be rectangular")
+            for row in block.rows:
+                for cell_text in row:
+                    _validate_writable_text(cell_text, argument=f"{label} cell")
+        else:
+            raise TypeError(
+                f"{label}: expected RichParagraph, ListBlock, or TableBlock,"
+                f" got {type(block).__name__}"
+            )
+
+
+def _new_rich_paragraph(rich: RichParagraph, style_id: Optional[str]) -> "_Element":
+    paragraph = OxmlElement("w:p")
+    if style_id:
+        paragraph.style = style_id
+    for run_spec in rich.runs:
+        run = OxmlElement("w:r")
+        if run_spec.bold or run_spec.italic:
+            r_pr = OxmlElement("w:rPr")
+            if run_spec.bold:
+                r_pr.append(OxmlElement("w:b"))
+            if run_spec.italic:
+                r_pr.append(OxmlElement("w:i"))
+            run.append(r_pr)
+        run.add_t(run_spec.text)
+        paragraph.append(run)
+    return paragraph
+
+
+def _new_list_paragraphs(document: "Document", block: ListBlock) -> "List[_Element]":
+    from docx.numbering import ensure_bullet_definition, ensure_decimal_definition
+    from docx.oxml.ns import nsdecls
+    from docx.oxml.parser import parse_xml
+
+    if block.kind == "bullet":
+        num_id = ensure_bullet_definition(document)
+    else:
+        num_id = ensure_decimal_definition(document)
+    paragraphs = []
+    for item in block.items:
+        paragraph = _new_paragraph(item, None)
+        p_pr = paragraph.get_or_add_pPr()
+        p_pr.append(
+            parse_xml(
+                f'<w:numPr {nsdecls("w")}><w:ilvl w:val="{block.level}"/>'
+                f'<w:numId w:val="{num_id}"/></w:numPr>'
+            )
+        )
+        paragraphs.append(paragraph)
+    return paragraphs
+
+
+def _new_table(document: "Document", block: TableBlock) -> "_Element":
+    from docx.oxml.table import CT_Tbl
+    from docx.shared import Emu, Inches
+
+    try:
+        section = document.sections[-1]
+        width = Emu(
+            int(section.page_width) - int(section.left_margin) - int(section.right_margin)
+        )
+    except (IndexError, TypeError):
+        width = Inches(6)
+    tbl = CT_Tbl.new_tbl(len(block.rows), len(block.rows[0]), width)
+    for tr, row_values in zip(tbl.tr_lst, block.rows):
+        for tc, cell_text in zip(tr.tc_lst, row_values):
+            if cell_text:
+                paragraph = tc.find(qn("w:p"))
+                run = OxmlElement("w:r")
+                run.add_t(cell_text)
+                paragraph.append(run)
+    return tbl
+
+
+def insert_blocks_after(
+    document: "Document",
+    anchor: AnchorLike,
+    *,
+    blocks: "Sequence[object]",
+    tracked: bool = False,
+    author: Optional[str] = None,
+    date: Optional[dt.datetime] = None,
+) -> BlockEditResult:
+    """Insert a typed block list (v0.1 V3) after `anchor`.
+
+    `blocks` mixes |RichParagraph| (styled runs), |ListBlock| (REAL bullet or
+    decimal lists — the numbering definition is created on demand), and
+    |TableBlock| (simple rectangular tables). This is deliberately a small
+    vocabulary: rich enough for a report section, small enough to stay safe.
+    Tracked mode covers paragraphs and lists; tracked TABLE insertion refuses
+    (Word's row-revision vocabulary is a later phase).
+    """
+    if tracked and not author:
+        raise ValueError("author is required when tracked=True")
+    _validate_rich_blocks(document, blocks, tracked=tracked)
+    story, anchor_p = _resolve_anchor_paragraph(document, anchor)
+
+    # -- validated; build and mutate --
+    stamp = date if date is not None else _clock.now()
+    nodes: "List[_Element]" = []
+    paragraph_nodes: "List[_Element]" = []
+    for block in blocks:
+        if isinstance(block, RichParagraph):
+            style_id = _validated_style_id(
+                document, block.style, argument="RichParagraph.style"
+            )
+            node = _new_rich_paragraph(block, style_id)
+            nodes.append(node)
+            paragraph_nodes.append(node)
+        elif isinstance(block, ListBlock):
+            for node in _new_list_paragraphs(document, block):
+                nodes.append(node)
+                paragraph_nodes.append(node)
+        else:
+            nodes.append(_new_table(document, block))
+    revision_ids: "List[int]" = []
+    if tracked:
+        next_id = _next_revision_id(document)
+        for node in paragraph_nodes:
+            _wrap_paragraph_content_as_insertion(node, next_id, author, stamp)
+            _stamp_paragraph_mark(node, "w:ins", next_id, author, stamp)
+            revision_ids.append(next_id)
+            next_id += 1
+    _insert_after(anchor_p, nodes)
+    return BlockEditResult(
+        story=story,
+        inserted_blocks=len(nodes),
+        deleted_blocks=0,
+        deleted_text=(),
+        revision_ids=tuple(revision_ids),
+    )

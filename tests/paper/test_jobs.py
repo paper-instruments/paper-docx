@@ -193,9 +193,6 @@ class DescribeReportAssemblyJob:
         texts = [b.text for b in iter_blocks(reopened)]
         assert "Findings" in texts and "Second finding." in texts
 
-    @pytest.mark.xfail(
-        strict=True, reason="rich block insertion lands in Phase 2 (V3)"
-    )
     def it_inserts_a_rich_section_with_list_and_table(self, tmp_path: Path):
         from docx.blocks import (
             ListBlock,
@@ -219,13 +216,11 @@ class DescribeReportAssemblyJob:
         assert any(b.text == "Key findings" for b in blocks)
         assert any(b.kind == "table" and "Uptime" in b.text for b in blocks)
 
-    @pytest.mark.xfail(
-        strict=True, reason="numbering authoring lands in Phase 2 (V2)"
-    )
     def it_creates_a_real_bullet_list_in_a_definitionless_document(
         self, tmp_path: Path
     ):
         """THE 'real bullet' gap: a doc that never had a list gets one."""
+        import re
         import zipfile
 
         from docx.numbering import ensure_bullet_definition, apply_numbering
@@ -235,11 +230,12 @@ class DescribeReportAssemblyJob:
         with zipfile.ZipFile(source) as zin:
             with zipfile.ZipFile(stripped, "w") as zout:
                 for name in zin.namelist():
-                    if "numbering" not in name:
-                        blob = zin.read(name)
-                        if name.endswith(".rels") or name.endswith(".xml"):
-                            blob = blob.replace(b"numbering.xml", b"gone.xml")
-                        zout.writestr(name, blob)
+                    if name == "word/numbering.xml":
+                        continue
+                    blob = zin.read(name)
+                    if name == "word/_rels/document.xml.rels":
+                        blob = re.sub(rb'<Relationship [^>]*numbering\.xml"/>', b"", blob)
+                    zout.writestr(name, blob)
         doc = docx.Document(str(stripped))
         num_id = ensure_bullet_definition(doc)
         p = doc.add_paragraph("A real bullet at last")

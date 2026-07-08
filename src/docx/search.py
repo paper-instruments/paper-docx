@@ -296,6 +296,77 @@ class Span:
     _norm_start: int = field(repr=False)  # position in the story's normalized text
     _consumed: bool = field(default=False, repr=False)  # set by tracked replace
 
+    # -- comments ---------------------------------------------------------
+
+    def comment(
+        self,
+        text: str,
+        *,
+        author: str,
+        initials: Optional[str] = None,
+        date: Optional[dt.datetime] = None,
+    ) -> "object":
+        """Anchor a new comment to exactly this span's text (v0.1 V4).
+
+        Returns the upstream |Comment|. The comment range marks wrap the
+        span's runs; `date` defaults to the injectable clock. v0.1 anchors
+        comments in the main document story only.
+        """
+        if not author:
+            raise ValueError("author is required")
+        if self.story != "word/document.xml":
+            raise UnsupportedStructureError(
+                "comments anchor in the main document story in v0.1"
+                f" (span is in {self.story})"
+            )
+        self._validate_fresh()
+        for atom in self._atoms:
+            if atom.run is None:
+                raise UnsupportedStructureError(
+                    "span text is not inside runs; cannot anchor a comment"
+                )
+        self._isolate_edge_runs()
+        runs = []
+        for atom in self._atoms:
+            if not any(existing is atom.run for existing in runs):
+                runs.append(atom.run)
+        comments = self._document.comments
+        comment = comments.add_comment(text=text, author=author, initials=initials or "")
+        comment._comment_elm.date = date if date is not None else _clock.now()  # noqa: SLF001
+        runs[0].insert_comment_range_start_above(comment.comment_id)
+        runs[-1].insert_comment_range_end_and_reference_below(comment.comment_id)
+        return comment
+
+    def _isolate_edge_runs(self) -> None:
+        """Split boundary runs so this span's runs hold EXACTLY its text.
+
+        Semantically neutral (text and formatting unchanged — the split-off
+        pieces keep a clone of their run's `rPr`); needed so element-level
+        anchors like comment range marks wrap the span text, not whole runs.
+        """
+        import copy
+
+        first = self._atoms[0]
+        if self._start_offset > 0 and first.run is not None:
+            before_run = OxmlElement("w:r")
+            rpr = first.run.find(_RPR)
+            if rpr is not None:
+                before_run.append(copy.deepcopy(rpr))
+            before_run.add_t(first.text[: self._start_offset])
+            first.run.addprevious(before_run)
+            _set_preserved_text(first.element, first.text[self._start_offset :])
+            self._end_offset -= self._start_offset if len(self._atoms) == 1 else 0
+            self._start_offset = 0
+        last = self._atoms[-1]
+        if self._end_offset < len(last.text) and last.run is not None:
+            after_run = OxmlElement("w:r")
+            rpr = last.run.find(_RPR)
+            if rpr is not None:
+                after_run.append(copy.deepcopy(rpr))
+            after_run.add_t(last.text[self._end_offset :])
+            last.run.addnext(after_run)
+            _set_preserved_text(last.element, last.text[: self._end_offset])
+
     # -- narrowing --------------------------------------------------------
 
     def _synthetic_positions(self) -> "set":
