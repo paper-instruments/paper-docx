@@ -123,6 +123,11 @@ from docx._paperpkg import (  # noqa: E402
     patch_save,
     xml_equivalent,
 )
+from docx._compare import (  # noqa: E402
+    CompareFinding,
+    CompareResult,
+    compare,
+)
 from docx._textdiff import (  # noqa: E402
     StoryTextDiff,
     TextDiff,

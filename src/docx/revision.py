@@ -15,12 +15,14 @@ Resolution mutates the in-memory document; save with
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterator, List, Optional, Sequence, Tuple
 
 from docx.errors import UnsupportedStructureError
 from docx.oxml.ns import qn
+from docx.protection import _refuse_if_protected
 from docx.story import (
     Anchor,
     _first_choice_children,
@@ -40,30 +42,68 @@ _MOVE_FROM = qn("w:moveFrom")
 _MOVE_TO = qn("w:moveTo")
 _T = qn("w:t")
 _DEL_TEXT = qn("w:delText")
+_INSTR_TEXT = qn("w:instrText")
+_DEL_INSTR_TEXT = qn("w:delInstrText")
 _R = qn("w:r")
 _RPR = qn("w:rPr")
 _PPR = qn("w:pPr")
 _P = qn("w:p")
+_TR = qn("w:tr")
+_TRPR = qn("w:trPr")
+_TBL = qn("w:tbl")
+_SECT_PR = qn("w:sectPr")
+_RPR_CHANGE = qn("w:rPrChange")
+_PPR_CHANGE = qn("w:pPrChange")
 _AUTHOR = qn("w:author")
 _DATE = qn("w:date")
 
-#: tag -> revision_type for everything Document.revisions enumerates
+#: tag -> revision_type for everything Document.revisions enumerates.
+#: `w:ins`/`w:del` refine to "row_insertion"/"row_deletion" when the node is
+#: a `w:trPr` row marker (see `_revision_type_of`) — classifying those as
+#: plain insertion/deletion would resolve just the MARKER and leave ghost
+#: rows behind, reporting false state.
 _REVISION_TYPES = {
     _INS: "insertion",
     _DEL: "deletion",
     _MOVE_FROM: "move_from",
     _MOVE_TO: "move_to",
+    _RPR_CHANGE: "format_change",
+    _PPR_CHANGE: "format_change",
 }
-for _change_tag in (
-    "w:rPrChange", "w:pPrChange", "w:tblPrChange", "w:tcPrChange",
-    "w:trPrChange", "w:sectPrChange", "w:numberingChange",
-    "w:cellIns", "w:cellDel", "w:cellMerge",
-):
-    _REVISION_TYPES[qn(_change_tag)] = "format_change"
+for _change_tag in ("w:tblPrChange", "w:tblPrExChange", "w:tblGridChange",
+                    "w:trPrChange", "w:tcPrChange"):
+    _REVISION_TYPES[qn(_change_tag)] = "table_property_change"
+for _change_tag in ("w:cellIns", "w:cellDel", "w:cellMerge"):
+    _REVISION_TYPES[qn(_change_tag)] = "cell_revision"
+_REVISION_TYPES[qn("w:sectPrChange")] = "section_property_change"
+_REVISION_TYPES[qn("w:numberingChange")] = "numbering_change"
+for _change_tag in ("w:customXmlInsRangeStart", "w:customXmlDelRangeStart",
+                    "w:customXmlMoveFromRangeStart", "w:customXmlMoveToRangeStart"):
+    _REVISION_TYPES[qn(_change_tag)] = "custom_xml_revision"
 del _change_tag
 
-#: the only revision types accept()/reject() know how to resolve correctly
-RESOLVABLE_TYPES = frozenset({"insertion", "deletion"})
+
+def _revision_type_of(node: "_Element") -> str:
+    parent = node.getparent()
+    if parent is not None and parent.tag == _TRPR:
+        return "row_insertion" if node.tag == _INS else "row_deletion"
+    return _REVISION_TYPES[node.tag]
+
+
+#: the only revision types accept()/reject() know how to resolve correctly.
+#: move_from/move_to resolve as PAIRED UNITS: accepting or rejecting either
+#: site of a move resolves both (never one side alone).
+RESOLVABLE_TYPES = frozenset(
+    {
+        "insertion",
+        "deletion",
+        "format_change",
+        "row_insertion",
+        "row_deletion",
+        "move_from",
+        "move_to",
+    }
+)
 
 
 def _node_text(node: "_Element") -> str:
@@ -72,6 +112,25 @@ def _node_text(node: "_Element") -> str:
         if child.tag in (_T, _DEL_TEXT):
             pieces.append(child.text or "")
     return "".join(pieces)
+
+
+def _applies_to_text(node: "_Element") -> str:
+    """The text a property-change revision APPLIES to (its own subtree holds
+    only stored properties, so `_node_text` is empty and the revision would
+    be unaddressable): the containing run's text for a run change, the
+    containing paragraph's for a paragraph or paragraph-mark change."""
+    parent = node.getparent()
+    if parent is None:
+        return ""
+    if parent.tag == _RPR:
+        holder = parent.getparent()  # w:r, or w:pPr for a paragraph mark
+        if holder is not None and holder.tag == _PPR:
+            holder = holder.getparent()
+        return _node_text(holder) if holder is not None else ""
+    if parent.tag == _PPR:  # w:pPrChange
+        paragraph = parent.getparent()
+        return _node_text(paragraph) if paragraph is not None else ""
+    return ""
 
 
 def _is_paragraph_mark_revision(node: "_Element") -> bool:
@@ -93,10 +152,13 @@ def _parse_date(value: Optional[str]) -> Optional[dt.datetime]:
 class Revision:
     """One tracked change, addressable — and resolvable when supported.
 
-    `revision_type` is one of "insertion" | "deletion" (resolvable),
-    "move_from" | "move_to" | "format_change" (enumerated and counted, but
-    resolution is refused — v0.1 knows how to SEE these, not how to apply
-    them; claiming otherwise would report false state).
+    Resolvable `revision_type`s: "insertion", "deletion", "format_change"
+    (`w:rPrChange`/`w:pPrChange`, run or paragraph mark), "row_insertion",
+    "row_deletion" (`w:trPr` row markers), and — as paired units —
+    "move_from"/"move_to". The exotic remainder ("table_property_change",
+    "cell_revision", "section_property_change", "numbering_change",
+    "custom_xml_revision") is enumerated and counted but resolution is
+    refused by name — claiming to resolve them would report false state.
     """
 
     revision_type: str
@@ -116,20 +178,26 @@ class Revision:
     def _refuse_unresolvable(self, verb: str) -> None:
         if not self.is_resolvable:
             raise UnsupportedStructureError(
-                f"cannot {verb} a {self.revision_type!r} revision: tracked"
-                " moves and formatting changes are enumerated but not yet"
-                " resolvable (resolve them in Word, or a later paper-docx"
+                f"cannot {verb} a {self.revision_type!r} revision: this"
+                " revision type is enumerated but not resolvable by"
+                " paper-docx (resolve it in Word, or a later paper-docx"
                 " version)"
             )
 
     def accept(self) -> None:
-        """Apply this change to the document."""
+        """Apply this change to the document. Tracked moves resolve as a
+        PAIR: accepting either site accepts both (v0.11 Phase 2)."""
         self._refuse_unresolvable("accept")
+        if self._document is not None:
+            _refuse_if_protected(self._document, "resolve a revision")
         _resolve_one(self._element, accept=True, document=self._document)
 
     def reject(self) -> None:
-        """Undo this change, restoring the pre-change content."""
+        """Undo this change, restoring the pre-change content. Tracked moves
+        resolve as a PAIR: rejecting either site rejects both."""
         self._refuse_unresolvable("reject")
+        if self._document is not None:
+            _refuse_if_protected(self._document, "resolve a revision")
         _resolve_one(self._element, accept=False, document=self._document)
 
     def to_dict(self) -> dict:
@@ -191,6 +259,7 @@ class Revisions(Sequence[Revision]):
         return dict(sorted(census.items()))
 
     def _resolve_all(self, *, accept: bool, author: Optional[str]) -> int:
+        _refuse_if_protected(self._document, "resolve revisions")
         selected = [
             revision
             for revision in self._items
@@ -206,11 +275,22 @@ class Revisions(Sequence[Revision]):
                 " by author, resolve individual insertions/deletions, or"
                 " resolve the rest in Word"
             )
+        _validate_moves(selected, self._document)
+        if author is None:
+            # an UNFILTERED resolution certifies "clean afterwards" — refuse
+            # upfront anything that would falsify that (v0.11 review sweep)
+            _refuse_unaccounted_markup(self._document)
         resolved = 0
-        # content revisions first, then paragraph marks (mark resolution can
-        # remove whole paragraphs and must see post-content state)
-        ordered = sorted(selected, key=lambda item: item.is_paragraph_mark)
-        for revision in ordered:
+        # moves first (their range brackets must still be intact — a row
+        # removal in the same batch could take a move site with it), then
+        # other content, then paragraph marks (mark resolution can remove
+        # whole paragraphs and must see post-content state)
+        def _order(item: Revision) -> int:
+            if item.revision_type in ("move_from", "move_to"):
+                return 0
+            return 2 if item.is_paragraph_mark else 1
+
+        for revision in sorted(selected, key=_order):
             _resolve_one(  # noqa: SLF001
                 revision._element, accept=accept, document=self._document
             )
@@ -221,10 +301,236 @@ class Revisions(Sequence[Revision]):
     def to_dict(self) -> dict:
         return {
             "schema": "paper_revisions",
-            "version": 2,  # v2: move/format_change types + census (v0.1 H1-H3)
+            # v2: move/format_change types + census (v0.1 H1-H3)
+            # v3: row_insertion/row_deletion + named exotic types; format
+            #     changes and row revisions resolvable (v0.11 Phase 1)
+            "version": 3,
             "revisions": [revision.to_dict() for revision in self._items],
             "remaining_unsupported": self.remaining_unsupported(),
         }
+
+
+# ---------------------------------------------------------------------------
+# move units (Phase 2): w:moveFrom/w:moveTo paired by range-marker w:name
+# ---------------------------------------------------------------------------
+
+_MOVE_FROM_RANGE_START = qn("w:moveFromRangeStart")
+_MOVE_FROM_RANGE_END = qn("w:moveFromRangeEnd")
+_MOVE_TO_RANGE_START = qn("w:moveToRangeStart")
+_MOVE_TO_RANGE_END = qn("w:moveToRangeEnd")
+_ID = qn("w:id")
+_NAME = qn("w:name")
+
+
+class _MoveSite:
+    """One side of a tracked move: its range brackets, run wrappers
+    (`w:moveFrom`/`w:moveTo`) and paragraph-mark stamps, in one story."""
+
+    def __init__(self, story: str, name: str, start: "_Element") -> None:
+        self.story = story
+        self.name = name
+        self.start = start
+        self.end: "Optional[_Element]" = None
+        self.wrappers: "List[_Element]" = []
+        self.mark_stamps: "List[_Element]" = []
+
+    @property
+    def elements(self) -> "List[_Element]":
+        markers = [self.start] + ([self.end] if self.end is not None else [])
+        return markers + self.wrappers + self.mark_stamps
+
+
+class _MoveUnit:
+    """A complete tracked move: source and destination site, same name."""
+
+    def __init__(self, from_site: _MoveSite, to_site: _MoveSite) -> None:
+        self.name = from_site.name
+        self.from_site = from_site
+        self.to_site = to_site
+
+    @property
+    def elements(self) -> "List[_Element]":
+        return self.from_site.elements + self.to_site.elements
+
+
+def _scan_story_moves(
+    story: str,
+    root: "_Element",
+    sites: "List[_MoveSite]",
+    orphans: "List[Tuple[_Element, str]]",
+) -> None:
+    """Collect move sites in document order; anything unpaired is an orphan."""
+    open_site: dict = {"from": None, "to": None}
+    directions = {
+        _MOVE_FROM_RANGE_START: ("from", "start"),
+        _MOVE_TO_RANGE_START: ("to", "start"),
+        _MOVE_FROM_RANGE_END: ("from", "end"),
+        _MOVE_TO_RANGE_END: ("to", "end"),
+        _MOVE_FROM: ("from", "content"),
+        _MOVE_TO: ("to", "content"),
+    }
+
+    def walk(element: "_Element") -> None:
+        for child in _first_choice_children(element):
+            role = directions.get(child.tag)
+            if role is not None:
+                direction, kind = role
+                site = open_site[direction]
+                if kind == "start":
+                    name = child.get(_NAME)
+                    if site is not None:
+                        # overlapping/nested ranges: wrapper attribution is
+                        # ambiguous — orphan BOTH ranges, never guess
+                        orphans.append((child, "overlapping move ranges"))
+                        orphans.extend(
+                            (element, "overlapping move ranges")
+                            for element in site.elements
+                        )
+                        open_site[direction] = None
+                    elif not name:
+                        orphans.append((child, "move range without a w:name"))
+                    else:
+                        open_site[direction] = _MoveSite(story, name, child)
+                elif kind == "end":
+                    if site is not None and child.get(_ID) == site.start.get(_ID):
+                        site.end = child
+                        sites.append(site)
+                        open_site[direction] = None
+                    else:
+                        orphans.append((child, "move range end without its start"))
+                else:  # content: a wrapper or a paragraph-mark stamp
+                    if site is None:
+                        orphans.append(
+                            (child, "move content outside any move range")
+                        )
+                    elif _is_paragraph_mark_revision(child):
+                        site.mark_stamps.append(child)
+                    else:
+                        site.wrappers.append(child)
+            walk(child)
+
+    walk(root)
+    for direction in ("from", "to"):
+        if open_site[direction] is not None:
+            orphans.append(
+                (open_site[direction].start, "move range start without its end")
+            )
+
+
+def _move_units(
+    document: "Document",
+) -> "Tuple[List[_MoveUnit], List[Tuple[_Element, str]]]":
+    """All well-formed move units, plus every orphaned move element."""
+    sites: "List[_MoveSite]" = []
+    orphans: "List[Tuple[_Element, str]]" = []
+    for story, root in _story_elements(document):
+        _scan_story_moves(story, root, sites, orphans)
+    by_name: dict = {}
+    for site in sites:
+        direction = "from" if site.start.tag == _MOVE_FROM_RANGE_START else "to"
+        by_name.setdefault(site.name, {"from": [], "to": []})[direction].append(site)
+    units: "List[_MoveUnit]" = []
+    for name, pair in sorted(by_name.items()):
+        froms, tos = pair["from"], pair["to"]
+        if len(froms) != 1 or len(tos) != 1:
+            reason = (
+                f"move {name!r} has {len(froms)} source and {len(tos)}"
+                " destination range(s); expected exactly one of each"
+            )
+            for site in froms + tos:
+                orphans.extend((element, reason) for element in site.elements)
+            continue
+        if froms[0].story != tos[0].story:
+            reason = (
+                f"move {name!r} crosses stories ({froms[0].story} ->"
+                f" {tos[0].story}); cross-story moves are not resolvable"
+            )
+            for site in froms + tos:
+                orphans.extend((element, reason) for element in site.elements)
+            continue
+        units.append(_MoveUnit(froms[0], tos[0]))
+    return units, orphans
+
+
+def _resolve_move(
+    node: "_Element", *, accept: bool, document: "Optional[Document]"
+) -> None:
+    if document is None:
+        raise UnsupportedStructureError(
+            "cannot resolve a tracked move without its document context"
+        )
+    units, orphans = _move_units(document)
+    for unit in units:
+        if any(element is node for element in unit.elements):
+            _resolve_move_unit(unit, accept=accept, document=document)
+            return
+    for element, reason in orphans:
+        if element is node:
+            raise UnsupportedStructureError(
+                f"cannot resolve this tracked move: {reason}; nothing was"
+                " changed. Resolve it in Word instead"
+            )
+    raise UnsupportedStructureError(
+        "cannot resolve this tracked move: its range markers were not found;"
+        " nothing was changed. Resolve it in Word instead"
+    )
+
+
+def _resolve_move_unit(
+    unit: _MoveUnit, *, accept: bool, document: "Optional[Document]"
+) -> None:
+    """Apply or undo a move as ONE unit (never one site alone).
+
+    Accept: destination content becomes plain, source range disappears.
+    Reject: source content becomes plain again, destination disappears.
+    Mark stamps ride the existing paragraph-mark machinery (`w:moveFrom` is
+    del-like, `w:moveTo` ins-like), AFTER range markers are removed so an
+    emptied source/destination paragraph is recognized as empty.
+    """
+    keep_site = unit.to_site if accept else unit.from_site
+    drop_site = unit.from_site if accept else unit.to_site
+    for wrapper in keep_site.wrappers:
+        if wrapper.getparent() is not None:
+            _unwrap(wrapper)
+    orphaned_comments: "List[int]" = []
+    for wrapper in drop_site.wrappers:
+        if wrapper.getparent() is not None:
+            orphaned_comments.extend(_comment_ids_inside(wrapper))
+            wrapper.getparent().remove(wrapper)
+    for site in (unit.from_site, unit.to_site):
+        for marker in (site.start, site.end):
+            if marker is not None and marker.getparent() is not None:
+                marker.getparent().remove(marker)
+    for site in (unit.from_site, unit.to_site):
+        for stamp in site.mark_stamps:
+            if stamp.getparent() is not None:
+                _resolve_paragraph_mark(stamp, accept=accept)
+    _cleanup_comment_anchors(document, orphaned_comments)
+
+
+def _validate_moves(selected: "List[Revision]", document: "Document") -> None:
+    """Refuse BEFORE mutating when any selected move is orphaned, duplicated
+    or cross-story (refusal atomicity for the batch)."""
+    move_nodes = [
+        revision._element  # noqa: SLF001
+        for revision in selected
+        if revision.revision_type in ("move_from", "move_to")
+    ]
+    if not move_nodes:
+        return
+    units, orphans = _move_units(document)
+    unit_elements = {id(e) for unit in units for e in unit.elements}
+    orphan_reasons = {id(element): reason for element, reason in orphans}
+    for node in move_nodes:
+        if id(node) in unit_elements:
+            continue
+        reason = orphan_reasons.get(
+            id(node), "its range markers were not found"
+        )
+        raise UnsupportedStructureError(
+            f"selected revisions include an unresolvable tracked move:"
+            f" {reason}; nothing was changed. Resolve it in Word instead"
+        )
 
 
 def _iter_revision_nodes(
@@ -256,17 +562,131 @@ def _enumerate_revisions(document: "Document") -> Iterator[Revision]:
                         story, kind, index, element, "current",
                         in_sdt=in_sdt, in_txbx=in_txbx,
                     ).anchor
+                revision_type = _revision_type_of(node)
+                text = _node_text(node)
+                if not text and node.tag in (_RPR_CHANGE, _PPR_CHANGE):
+                    text = _applies_to_text(node)
                 yield Revision(
-                    revision_type=_REVISION_TYPES[node.tag],
+                    revision_type=revision_type,
                     author=node.get(_AUTHOR) or "",
                     date=_parse_date(node.get(_DATE)),
-                    text=_node_text(node),
+                    text=text,
                     story=story,
                     anchor=block_anchor,
                     is_paragraph_mark=_is_paragraph_mark_revision(node),
                     _element=node,
                     _document=document,
                 )
+        # BODY-level w:sectPr (the final section) lives outside every block;
+        # a tracked section-property change there must still be enumerated —
+        # invisible-to-census markup would let accept_all report a clean
+        # document while w:sectPrChange remains (v0.11 review sweep). The
+        # synthetic index -1 anchor marks "story level, not a block".
+        for sect_pr in root.iter(_SECT_PR):
+            parent = sect_pr.getparent()
+            if parent is not None and parent.tag == _PPR:
+                continue  # paragraph-level section break: reached via its block
+            for node in _iter_revision_nodes(sect_pr, skip_text_boxes=False):
+                yield Revision(
+                    revision_type=_revision_type_of(node),
+                    author=node.get(_AUTHOR) or "",
+                    date=_parse_date(node.get(_DATE)),
+                    text="",
+                    story=story,
+                    anchor=Anchor(story=story, index=-1, content_hash=content_hash("")),
+                    is_paragraph_mark=False,
+                    _element=node,
+                    _document=document,
+                )
+
+
+#: every tag that constitutes revision markup, for the post-resolution rescan
+#: (enumerated types plus the range brackets that resolution must sweep up)
+_MARKUP_SCAN_TAGS = tuple(_REVISION_TYPES) + tuple(
+    qn(tag)
+    for tag in (
+        "w:moveFromRangeStart", "w:moveFromRangeEnd",
+        "w:moveToRangeStart", "w:moveToRangeEnd",
+        "w:customXmlInsRangeEnd", "w:customXmlDelRangeEnd",
+        "w:customXmlMoveFromRangeEnd", "w:customXmlMoveToRangeEnd",
+    )
+)
+
+
+def _remaining_markup(document: "Document") -> dict:
+    """{local-tag-name: count} of ALL revision markup left ANYWHERE — the
+    full serialized space, including mc:Fallback branches (which traversal
+    skips but a saved file still carries). The invariant oracle: after a
+    successful `accept_all()`/`reject_all()` this is empty — "resolved"
+    while markup remains anywhere would be false state.
+    """
+    counts: dict = {}
+    for _story, root in _story_elements(document):
+        for node in root.iter(*_MARKUP_SCAN_TAGS):
+            name = node.tag.rsplit("}", 1)[-1]
+            counts[name] = counts.get(name, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+_MC_FALLBACK = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Fallback"
+
+
+def _fallback_markup(document: "Document") -> dict:
+    """Revision markup hiding inside mc:Fallback branches — invisible to
+    traversal (first-Choice-only) but alive in the saved file."""
+    counts: dict = {}
+    for _story, root in _story_elements(document):
+        for fallback in root.iter(_MC_FALLBACK):
+            for node in fallback.iter(*_MARKUP_SCAN_TAGS):
+                name = node.tag.rsplit("}", 1)[-1]
+                counts[name] = counts.get(name, 0) + 1
+    return dict(sorted(counts.items()))
+
+
+def _refuse_unaccounted_markup(document: "Document") -> None:
+    """Refuse an unfiltered resolution that could not end clean: fallback
+    markup, orphaned move markup, or markup enumeration cannot reach would
+    all survive a 'successful' accept_all — reporting resolved-and-clean
+    while markup remains is false state (v0.11 review sweep)."""
+    fallback = _fallback_markup(document)
+    if fallback:
+        raise UnsupportedStructureError(
+            f"revision markup lives inside mc:AlternateContent fallback"
+            f" branches ({fallback}); this package resolves the primary"
+            " content only, so the saved file would still carry it. Nothing"
+            " was changed — resolve this document in Word"
+        )
+    units, orphans = _move_units(document)
+    if orphans:
+        reasons = sorted({reason for _element, reason in orphans})
+        raise UnsupportedStructureError(
+            "the document carries move markup this package cannot pair"
+            f" ({'; '.join(reasons)}); nothing was changed. Resolve it in"
+            " Word instead"
+        )
+    accounted = {id(r._element) for r in _enumerate_revisions(document)}  # noqa: SLF001
+    for unit in units:
+        accounted.update(id(element) for element in unit.elements)
+    unaccounted: dict = {}
+    for _story, root in _story_elements(document):
+        for node in root.iter(*_MARKUP_SCAN_TAGS):
+            if id(node) not in accounted:
+                name = node.tag.rsplit("}", 1)[-1]
+                unaccounted[name] = unaccounted.get(name, 0) + 1
+    if unaccounted:
+        raise UnsupportedStructureError(
+            f"the document carries revision markup this package cannot"
+            f" enumerate ({dict(sorted(unaccounted.items()))}); nothing was"
+            " changed. Resolve it in Word instead"
+        )
+
+
+def _is_in_story(node: "_Element", document: "Document") -> bool:
+    root_ids = {id(root) for _story, root in _story_elements(document)}
+    top = node
+    while top.getparent() is not None:
+        top = top.getparent()
+    return id(top) in root_ids
 
 
 def _comment_ids_inside(node: "_Element"):
@@ -309,6 +729,18 @@ def _resolve_one(
 ) -> None:
     if node.getparent() is None:
         return  # already resolved via an enclosing operation
+    if document is not None and not _is_in_story(node, document):
+        return  # its subtree was detached by an enclosing resolution
+    revision_type = _revision_type_of(node)
+    if revision_type in ("move_from", "move_to"):
+        _resolve_move(node, accept=accept, document=document)
+        return
+    if revision_type == "format_change":
+        _resolve_format_change(node, accept=accept)
+        return
+    if revision_type in ("row_insertion", "row_deletion"):
+        _resolve_row_revision(node, accept=accept, document=document)
+        return
     if _is_paragraph_mark_revision(node):
         _resolve_paragraph_mark(node, accept=accept)
         return
@@ -343,7 +775,87 @@ def _resolve_deletion(node: "_Element", *, accept: bool) -> None:
     else:
         for text_elm in node.iter(_DEL_TEXT):
             text_elm.tag = _T
+        for text_elm in node.iter(_DEL_INSTR_TEXT):
+            text_elm.tag = _INSTR_TEXT
         _unwrap(node)
+
+
+#: children of a paragraph-mark `w:rPr` (CT_ParaRPr) that are revision
+#: bookkeeping, not formatting — a format-change reject must preserve them.
+_PARA_RPR_STAMPS = (_INS, _DEL, _MOVE_FROM, _MOVE_TO)
+
+
+def _resolve_format_change(node: "_Element", *, accept: bool) -> None:
+    """Resolve `w:rPrChange`/`w:pPrChange` (run, paragraph or paragraph mark).
+
+    Accept keeps the current properties and drops the stored previous ones;
+    reject swaps the stored previous properties back in. On a paragraph-mark
+    `w:rPr` the revision stamps (`w:ins`/`w:del`/`w:moveFrom`/`w:moveTo`)
+    are bookkeeping, not formatting, and survive a reject; on a `w:pPr` the
+    mark's `w:rPr` and any `w:sectPr` likewise stay.
+    """
+    parent = node.getparent()
+    if accept:
+        parent.remove(node)
+        if len(parent) == 0:
+            parent.getparent().remove(parent)
+        return
+    if node.tag == _RPR_CHANGE:
+        stored = node.find(_RPR)
+        kept = [child for child in parent if child.tag in _PARA_RPR_STAMPS]
+    else:  # w:pPrChange stores a CT_PPrBase (never rPr/sectPr)
+        stored = node.find(_PPR)
+        kept = [child for child in parent if child.tag in (_RPR, _SECT_PR)]
+    restored = [copy.deepcopy(child) for child in stored] if stored is not None else []
+    # CT_ParaRPr puts revision stamps first; CT_PPr puts rPr/sectPr last
+    new_children = kept + restored if node.tag == _RPR_CHANGE else restored + kept
+    for child in list(parent):
+        parent.remove(child)
+    for child in new_children:
+        parent.append(child)
+    if len(parent) == 0:
+        parent.getparent().remove(parent)
+
+
+def _resolve_row_revision(
+    node: "_Element", *, accept: bool, document: "Optional[Document]" = None
+) -> None:
+    """Resolve a `w:trPr` row marker (`w:ins` = row inserted with tracking,
+    `w:del` = row deleted with tracking).
+
+    Keeping the row = remove just the marker. Removing the row = remove the
+    whole `w:tr` (the cell-level content revisions inside it are subsumed,
+    exactly as Word's Accept/Reject All treats them). Removing a table's
+    LAST row removes the table itself — Word's semantic for a fully
+    tracked-deleted table; a zero-row `w:tbl` would be invalid XML. When the
+    table was its container's only block, an empty paragraph takes its place
+    (a `w:tc`/body must keep one block).
+    """
+    tr_pr = node.getparent()
+    row = tr_pr.getparent()
+    keeps_row = (node.tag == _INS and accept) or (node.tag == _DEL and not accept)
+    if keeps_row:
+        tr_pr.remove(node)
+        if len(tr_pr) == 0:
+            row.remove(tr_pr)
+        return
+    table = row.getparent()
+    if sum(1 for child in table if child.tag == _TR) == 1:
+        orphaned = _comment_ids_inside(table)
+        parent = table.getparent()
+        siblings = [
+            child for child in parent if child.tag in (_P, _TBL) and child is not table
+        ]
+        if not siblings:
+            from docx.oxml.parser import OxmlElement
+
+            table.addprevious(OxmlElement("w:p"))
+        parent.remove(table)
+        _cleanup_comment_anchors(document, orphaned)
+        return
+    orphaned = _comment_ids_inside(row)
+    table.remove(row)
+    _cleanup_comment_anchors(document, orphaned)
 
 
 def _paragraph_of_mark(node: "_Element") -> "Optional[_Element]":
@@ -370,8 +882,11 @@ def _next_paragraph_sibling(paragraph: "_Element") -> "Optional[_Element]":
     while node is not None:
         if node.tag == _P:
             return node
-        if node.tag == qn("w:tbl"):
-            return None  # merging across a table is not a paragraph join
+        if node.tag in (qn("w:tbl"), qn("w:sdt")):
+            # merging across a table or INTO a block-level content control
+            # is not a paragraph join — hopping content past it would
+            # silently reorder document text (v0.11 review sweep)
+            return None
         node = node.getnext()
     return None
 
@@ -390,7 +905,9 @@ def _resolve_paragraph_mark(node: "_Element", *, accept: bool) -> None:
       a mark-INSERTED split merges the same way.
     """
     paragraph = _paragraph_of_mark(node)
-    is_deletion = node.tag == _DEL
+    # w:moveFrom stamps are del-like (the mark moved AWAY from here),
+    # w:moveTo stamps ins-like — same break-change algebra
+    is_deletion = node.tag in (_DEL, _MOVE_FROM)
     applying_break_change = (accept and is_deletion) or (not accept and not is_deletion)
 
     r_pr = node.getparent()

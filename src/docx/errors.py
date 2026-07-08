@@ -53,3 +53,15 @@ class BoundaryViolationError(PaperRefusal):
 
 class RelationshipPolicyError(PaperRefusal):
     """The operation would create or modify a package relationship unsafely."""
+
+
+class DocumentProtectedError(PaperRefusal):
+    """The document enforces an editing restriction this operation ignores.
+
+    Word honors `w:documentProtection` (read-only, forms-only, comments-only,
+    tracked-changes-enforced); silently editing a locked template reports
+    false state. Protection is ADVISORY, not security — after reviewing why
+    the document is locked, call
+    `docx.protection.acknowledge_protection(document)` to proceed. paper-docx
+    never strips the protection setting itself. (v0.11 Phase 3.)
+    """

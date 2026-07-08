@@ -51,8 +51,10 @@ source_suffix = ".rst"
 master_doc = "index"
 
 # General information about the project.
-project = "python-docx"
-copyright = "2013, Steve Canny"
+# paper-docx is a strict-superset fork; attribution is appended, never
+# erased (same discipline as LICENSE and PAPER.md).
+project = "paper-docx"
+copyright = "2013, Steve Canny (python-docx); 2026, Paper Instruments (paper-docx fork)"
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -200,6 +202,97 @@ rst_epilog = """
 .. |True| replace:: :class:`True`
 
 .. |ValueError| replace:: :class:`ValueError`
+
+.. ---------------------------------------------------------------------------
+.. paper-docx additions. One substitution per fork type, so a docstring or
+.. fork page can cross-reference it (leading-dot form resolves against the
+.. autodoc'd page in docs/api/paper-*.rst). Grouped by module; functions are
+.. referenced inline, so only types appear here — same convention as above.
+.. ---------------------------------------------------------------------------
+
+.. |PaperRefusal| replace:: :exc:`.PaperRefusal`
+
+.. |AmbiguousTargetError| replace:: :exc:`.AmbiguousTargetError`
+
+.. |TargetNotFoundError| replace:: :exc:`.TargetNotFoundError`
+
+.. |UnsupportedStructureError| replace:: :exc:`.UnsupportedStructureError`
+
+.. |BoundaryViolationError| replace:: :exc:`.BoundaryViolationError`
+
+.. |RelationshipPolicyError| replace:: :exc:`.RelationshipPolicyError`
+
+.. |DocumentProtectedError| replace:: :exc:`.DocumentProtectedError`
+
+.. |Anchor| replace:: :class:`.Anchor`
+
+.. |Block| replace:: :class:`.Block`
+
+.. |Outline| replace:: :class:`.Outline`
+
+.. |TableShape| replace:: :class:`.TableShape`
+
+.. |Span| replace:: :class:`.Span`
+
+.. |ReplaceResult| replace:: :class:`.ReplaceResult`
+
+.. |ReplaceAllResult| replace:: :class:`.ReplaceAllResult`
+
+.. |TextRun| replace:: :class:`.TextRun`
+
+.. |RichParagraph| replace:: :class:`.RichParagraph`
+
+.. |ListBlock| replace:: :class:`.ListBlock`
+
+.. |TableBlock| replace:: :class:`.TableBlock`
+
+.. |BlockEditResult| replace:: :class:`.BlockEditResult`
+
+.. |Revision| replace:: :class:`.Revision`
+
+.. |Revisions| replace:: :class:`.Revisions`
+
+.. |NumberingReport| replace:: :class:`.NumberingReport`
+
+.. |NumberingDefinition| replace:: :class:`.NumberingDefinition`
+
+.. |NumberingLevel| replace:: :class:`.NumberingLevel`
+
+.. |NumberedParagraph| replace:: :class:`.NumberedParagraph`
+
+.. |ControlInfo| replace:: :class:`.ControlInfo`
+
+.. |Control| replace:: :class:`.Control`
+
+.. |PackageDiff| replace:: :class:`.PackageDiff`
+
+.. |PartDiff| replace:: :class:`.PartDiff`
+
+.. |PatchSaveResult| replace:: :class:`.PatchSaveResult`
+
+.. |PackageDiagnosis| replace:: :class:`.PackageDiagnosis`
+
+.. |TextDiff| replace:: :class:`.TextDiff`
+
+.. |StoryTextDiff| replace:: :class:`.StoryTextDiff`
+
+.. |CompareResult| replace:: :class:`.CompareResult`
+
+.. |CompareFinding| replace:: :class:`.CompareFinding`
+
+.. |ScrubReport| replace:: :class:`.ScrubReport`
+
+.. |ProtectionStatus| replace:: :class:`.ProtectionStatus`
+
+.. |CompositionReport| replace:: :class:`.CompositionReport`
+
+.. |CompositionFinding| replace:: :class:`.CompositionFinding`
+
+.. |BookmarkInfo| replace:: :class:`.BookmarkInfo`
+
+.. |EffectiveFormat| replace:: :class:`.EffectiveFormat`
+
+.. |ResolvedValue| replace:: :class:`.ResolvedValue`
 """
 
 

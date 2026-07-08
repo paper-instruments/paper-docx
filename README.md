@@ -1,10 +1,11 @@
 # paper-docx
 
 **A drop-in fork of [`python-docx`](https://github.com/python-openxml/python-docx)
-that adds the editing surface real document work needs: complete visibility
-into a document, find-and-replace that survives Word's run fragmentation,
-real tracked changes, and saves that touch only what you changed — all behind
-typed, atomic refusals instead of silent corruption.**
+that turns a document *generator* into a document *collaborator*: it sees
+everything Word displays, edits real-world text without breaking formatting,
+proposes and resolves genuine tracked changes, compares and composes whole
+documents, and finalizes files for delivery — all behind typed, atomic
+refusals instead of silent corruption.**
 
 ```python
 import docx                     # the import name never changes
@@ -14,6 +15,38 @@ doc = docx.Document("contract.docx")
 Everything `python-docx` did, this package still does, unchanged — upstream's
 own pytest and behave suites run green on every commit. What follows is what
 it does *now* that stock `python-docx` cannot.
+
+## The shortest demonstration
+
+Two versions of a document in, a native Word redline out — with a guarantee.
+This is self-contained; paste and run it:
+
+```python
+import tempfile, docx
+from docx.package import compare
+
+tmp = tempfile.mkdtemp()
+a = docx.Document()
+a.add_paragraph("Payment is due within thirty calendar days of the invoice date.")
+a.save(f"{tmp}/v1.docx")
+b = docx.Document()
+b.add_paragraph("Payment is due within thirty business days of the invoice date.")
+b.save(f"{tmp}/v2.docx")
+
+# generate real w:ins/w:del markup that transforms v1 into v2
+result = compare(f"{tmp}/v1.docx", f"{tmp}/v2.docx", author="Reviewer")
+[(r.revision_type, r.text) for r in result.document.revisions]
+# [('deletion', 'calendar'), ('insertion', 'business')]
+
+# the algebra is guaranteed and tested: accepting the redline yields exactly v2
+result.document.revisions.accept_all()
+result.document.paragraphs[0].text
+# 'Payment is due within thirty business days of the invoice date.'
+```
+
+`compare` emits markup Word renders as tracked changes; `accept_all(compare(a, b))`
+reproduces `b` and `reject_all` reproduces `a`, across every part of the
+document. That round-trip guarantee is the whole idea, applied everywhere.
 
 ## Why this fork exists
 
@@ -31,8 +64,11 @@ professional, agent-driven document work lives:
 - **It can't edit real-world text.** Word fragments most text across
   multiple runs (`$75`&#8203;`–`&#8203;`100/hr` is typically three runs), so there is no
   way to find or replace it without destroying formatting.
-- **It has no tracked changes.** No way to propose a redline, and no way to
-  accept or reject one.
+- **It has no tracked changes** — no way to propose a redline, resolve one,
+  or generate one by comparing two documents.
+- **It can't finalize or compose.** No way to accept/scrub a file for
+  delivery, and no way to assemble one document from others without
+  corrupting styles and numbering.
 - **Its saves churn the whole package**, so reviewing "what did this edit
   actually change?" is impossible at the file level.
 
@@ -41,126 +77,105 @@ surgery, whose dominant failure mode is **silent corruption**: files that
 open fine and are quietly wrong. This fork replaces that surgery with
 first-class APIs whose failure mode is a loud, typed refusal.
 
-## What was added
+## What it does
 
-### See the whole document — `docx.story`
+Grouped into three tiers. One tight bullet per organ — full signatures,
+return types, and refusal conditions live in
+[`API-PROPOSAL.md`](API-PROPOSAL.md) and [`PAPER.md`](PAPER.md).
 
-Opt-in traversal that covers every story part (body, headers, footers,
-footnotes, endnotes, comments) and every region standard traversal is blind
-to, with stable anchors and a choice of *views* — the document as it stands
-(`"current"`), as it was before pending revisions (`"original"`), or
-everything at once (`"all"`).
+### Perceive and edit one document
 
-```python
-from docx.story import outline
+- **`docx.story`** — visibility-complete traversal of every story part (body,
+  headers, footers, footnotes, endnotes, comments) and every region standard
+  traversal is blind to, under a *view* (`"current"` / `"original"` / `"all"`).
+  `outline(doc)` confesses what it couldn't read.
+- **`docx.search`** — normalized, run-fragmentation-tolerant find. `find_one`
+  returns a `Span` you can `replace` surgically (untouched runs keep formatting
+  byte-for-byte), `replace(..., tracked=True)` as a minimal redline, or
+  `comment` on. `replace_all` does it in one pass.
+- **`docx.blocks`** — insert, delete, or replace whole paragraphs relative to
+  a content anchor, plain or as a tracked redline that stamps paragraph marks
+  so Word accepts/rejects them exactly.
+- **`docx.tableops` / `docx.numbering`** — guarded cell/row edits and list
+  numbering (apply existing definitions or author real bullet/decimal ones),
+  refusing loudly on merged cells, nested tables, or undefined numbering.
+- **`docx.controls`** — fill content controls type-correctly, clearing
+  placeholder state so Word treats them as genuinely filled.
+- **`docx.bookmarks` / `docx.fields`** — create bookmarks on a span; author
+  page numbers, dates, cross-references, and a TOC — as *formulas* with
+  placeholder results, never computed values.
+- **`docx.formatting`** — read-only: what formatting does this text *actually*
+  carry, resolved through defaults → styles → direct with correct toggle
+  semantics, each value naming the layer it came from.
 
-o = outline(doc)
-o.blind_region_counts                # {"tracked_insertions": 2, "text_boxes": 1, ...}
-[b.text for b in o.blocks if b.in_text_box]      # text upstream can't see
-[b.text for b in o.blocks if b.story == "word/footnotes.xml"]
-```
+### Review, resolve, and finalize
 
-### Find and edit anything — `docx.search`
+- **`doc.revisions`** — enumerate every tracked change across every story
+  part and resolve it: insertions, deletions, run/paragraph format changes,
+  table-row revisions, and moves (as paired units). Exotic markup is
+  enumerated and refused *by name*, never silently passed.
+- **`doc.finalize()` / `doc.scrub()`** — resolve all revisions (or refuse,
+  naming what blocked it), then strip reviewing residue (comments, metadata,
+  RSIDs), returning a `ScrubReport` that itemizes exactly what left the file.
+- **`docx.protection`** — every mutating API refuses with
+  `DocumentProtectedError` on a Restrict-Editing setting rather than silently
+  editing a locked template; one explicit override, and the setting is never
+  stripped.
 
-Matching is normalized (smart quotes, dashes, exotic spaces, case) and
-assembles across fragmented runs, so you can quote text the way a person —
-or a model — actually quotes it. The returned `Span` maps visible text back
-to the exact XML that holds it, and `replace` preserves every untouched
-run's formatting byte-for-byte.
+### Work across documents
 
-```python
-from docx.search import find_one
+- **`docx.package.compare`** — generate a native tracked-change redline from
+  two documents, with the tested accept/reject algebra shown above.
+- **`docx.package.patch_save` / `diff_package` / `text_diff`** — a
+  compare-based narrow save (unchanged parts keep their original bytes, so a
+  file-level diff shows your edit and nothing else) plus the diffs that prove
+  it. `diagnose` triages an unopenable file into a typed verdict.
+- **`docx.composition`** — copy formatted content between documents without
+  corruption, reconciling styles, numbering, media, hyperlinks, and
+  bookmarks; the returned `CompositionReport` declares every part it touched.
+- **`docx.errors`** — every refusal is a typed `PaperRefusal` subclass, so a
+  caller tells a safe refusal apart from a bug. A refused edit is a success
+  mode; a quietly wrong file is the failure this package eliminates.
 
-span = find_one(doc, 'rate: $75-100/hr')          # matches “rate: $75–100/hr”
-span.replace("rate: $85–110/hr")                  # surgical; formatting intact
-```
+## The honest ceiling
 
-### Real tracked changes — `tracked=True` and `doc.revisions`
+What it deliberately does *not* do — each a trust signal, not an apology:
 
-Redlines are genuine `w:ins`/`w:del` markup that Word renders natively. The
-mark is minimal (common prefix/suffix trimmed), deleted text keeps each
-source run's formatting so rejection restores the document exactly, and the
-whole algebra is tested: *accept(tracked edit) ≡ plain edit* and
-*reject(tracked edit) ≡ original*.
+- **It never computes field values or paginates.** It authors formulas and
+  sets the update-on-open flag; a renderer (Word, or headless LibreOffice)
+  computes them.
+- **`compare` emits insertions and deletions only** — no move synthesis, no
+  cross-story move detection. Formatting-only, image, and object differences
+  are *reported*, not redlined.
+- **No OLE authoring**, and composition refuses embedded objects (typed).
+- **No protection stripping, and no decryption** of password-protected files
+  — the encrypted container gets a typed refusal.
+- **No document-QA / `check()` API.** Judging arbitrary documents is harness
+  territory and stays out of the package; load- and edit-time failures on bad
+  input speak as typed, specific refusals, never raw tracebacks.
+- **The format resolver declares what it can't resolve** (table-style
+  conditional formatting, theme fonts, numbering-mark properties) rather than
+  guess.
 
-```python
-find_one(doc, "forty-two units").replace(
-    "forty-seven units", tracked=True, author="Alice Editor")
+## How it stays trustworthy
 
-for rev in doc.revisions:                          # every story part
-    print(rev.revision_type, rev.author, repr(rev.text))
-doc.revisions.reject_all(author="Bob Reviewer")    # or accept_all()
-```
-
-### Clause-level edits — `docx.blocks`
-
-Insert, delete, or replace whole paragraphs relative to a content anchor —
-plain or as a tracked redline that preserves paragraph properties and marks
-paragraph breaks correctly, so accepting/rejecting behaves exactly like Word.
-
-```python
-from docx.blocks import insert_section_after, tracked_replace_paragraphs
-
-insert_section_after(doc, "Scope of Services",
-                     heading="Confidentiality", paragraphs=["Each party shall…"])
-tracked_replace_paragraphs(doc, "The term of this agreement",
-                           ["The term is twenty-four (24) months."],
-                           author="Alice Editor")
-```
-
-### Saves you can review — `docx.package`
-
-A compare-based narrow save: parts you didn't semantically change keep their
-**original bytes**, so a file-level diff of your edit shows your edit and
-nothing else. A no-op round trip is byte-identical. Plus a semantic package
-diff to prove it.
-
-```python
-from docx.package import patch_save, diff_package
-
-patch_save("contract.docx", doc, "contract-redlined.docx")
-diff_package("contract.docx", "contract-redlined.docx").semantic_changed_parts()
-# ('word/document.xml',)
-```
-
-### Guarded structure ops — `docx.tableops`, `docx.numbering`
-
-Table cell/row edits and list-numbering application that refuse loudly on
-structures they can't handle safely (merged cells, nested tables, undefined
-numbering) instead of guessing.
-
-### Refusals you can catch — `docx.errors`
-
-Every mutating API validates fully **before** touching anything. A refusal
-means the document — in memory and on disk — is exactly as it was, and the
-exception type tells you why:
-
-```python
-from docx.errors import PaperRefusal, AmbiguousTargetError
-
-try:
-    find_one(doc, "the")                # matches everywhere
-except AmbiguousTargetError:
-    ...                                 # disambiguate with nth=, near=, story=
-except PaperRefusal:
-    ...                                 # any safe refusal, distinct from bugs
-```
-
-A refused edit is a success mode. A quietly wrong file is the failure this
-package exists to eliminate.
-
-## Design principles
-
-- **Strict superset.** v0 changes zero existing behavior; new capability is
-  new, explicitly named API. Upstream's full test suites gate every change.
+- **Strict superset.** No existing behavior changes; new capability is new,
+  explicitly named API. Upstream's full pytest (1609) and behave (650
+  scenarios) suites gate every commit. The one sanctioned exception —
+  protection-aware refusals on the fork's *own* APIs — is documented in
+  `PAPER.md`; upstream APIs are untouched.
 - **Refusal atomicity.** Validate fully, then mutate. Every documented
-  refusal is tested to leave output bytes identical to input bytes.
-- **Whitespace is content.** No comparison or rewrite path ever normalizes
+  refusal is tested to leave the document — in memory and on disk — byte-for-byte
+  as it was.
+- **Whitespace is content.** No comparison or rewrite path normalizes
   meaningful text whitespace — a trailing space in `w:t` is a real character.
-- **Provenance-tested.** The frozen fixture corpus (`tests/paper/fixtures/`)
-  spans generated and LibreOffice-authored files, with hand-verified ground
-  truth, hash-frozen manifests, and a LibreOffice headless load oracle;
+- **Provenance-tested.** A frozen, hash-manifested fixture corpus
+  (`tests/paper/fixtures/`) spanning generated and LibreOffice-authored files,
+  with hand-verified ground truth and a LibreOffice headless load oracle;
   desktop-Word fixtures are tracked in `FIXTURE-REQUESTS.md`.
+- **Adversarially reviewed.** Each release wave is attacked by a multi-agent
+  sweep whose only bar is silent corruption / false state / broken invariant;
+  every confirmed finding is fixed with a regression test before ship.
 
 ## Naming
 
@@ -190,17 +205,43 @@ Verify the fork sentinel:
 python -c "import docx; print(docx.__paper_version__)"
 ```
 
+## Repository map
+
+```
+src/docx/            the package (import name `docx`), upstream + fork organs:
+  errors.py            PaperRefusal hierarchy (typed, atomic refusals)
+  story.py             visibility-complete traversal, views, anchors
+  search.py            normalized find + Span (surgical / tracked replace, comment)
+  blocks.py            clause-level insert/delete/replace, tracked
+  revision.py          Document.revisions — enumerate + resolve
+  tableops.py          guarded table cell/row ops
+  numbering.py         list reporting, application, and authoring
+  controls.py          content-control enumeration and filling
+  commentops.py        comment threads (reply, resolve, anchored text)
+  bookmarks.py         bookmark enumerate / create / delete
+  fields.py            field authoring (page, date, cross-ref, TOC)
+  formatting.py        effective-format resolver (provenance-bearing)
+  protection.py        Restrict-Editing awareness + override
+  scrubbing.py         finalize / scrub (Document.finalize / .scrub)
+  composition.py       cross-document composition
+  package.py           kernel: xml_equivalent, diff_package, patch_save,
+                        diagnose, text_diff, compare (impl in _paperpkg/_compare)
+docs/                Sphinx docs — see docs/user/paper-additions.rst
+tests/paper/         contract harness + frozen fixture corpus
+```
+
 ## Going deeper
 
-- [`API-PROPOSAL.md`](API-PROPOSAL.md) — the full approved v0 surface:
-  signatures, return types, refusal conditions (mechanically enforced by
+- [`docs/`](docs/) — Sphinx reference; start at `docs/user/paper-additions.rst`
+  and the `api/paper-*.rst` pages (everything inherited works as documented at
+  the [python-docx docs](https://python-docx.readthedocs.io/)).
+- [`API-PROPOSAL.md`](API-PROPOSAL.md) — the full approved surface across all
+  waves: signatures, return types, refusal conditions (mechanically enforced by
   `tests/paper/test_api_surface.py`).
 - [`ARCHITECTURE-NOTES.md`](ARCHITECTURE-NOTES.md) — how the codebase is
   layered and where each organ lives.
-- [`PAPER.md`](PAPER.md) — fork lineage, baseline test results, sanctioned
-  deviations (none), upstream merge policy.
-- Upstream [python-docx documentation](https://python-docx.readthedocs.io/)
-  — everything inherited works as documented there.
+- [`PAPER.md`](PAPER.md) — fork lineage, baseline test results, every
+  refusal→capability conversion, and upstream merge policy.
 
 `python-docx` is by Steve Canny and contributors (MIT); this fork exists
 because that foundation was worth building on.

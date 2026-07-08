@@ -28,6 +28,7 @@ from docx.errors import (
 )
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
+from docx.protection import _refuse_if_protected
 from docx.story import (
     VIEWS,
     Anchor,
@@ -324,6 +325,7 @@ class Span:
         """
         if not author:
             raise ValueError("author is required")
+        _refuse_if_protected(self._document, "anchor a comment")
         if self.story != "word/document.xml":
             raise UnsupportedStructureError(
                 "comments anchor in the main document story in v0.1"
@@ -647,6 +649,7 @@ class Span:
         if tracked and not author:
             raise ValueError("author is required when tracked=True")
         _validate_writable_text(new_text, argument="new_text")
+        _refuse_if_protected(self._document, "replace text")
         self._validate_fresh()
         if any(atom.is_synthetic for atom in self._atoms) or self.crosses_paragraphs:
             # spans matched ACROSS a tab/break/paragraph boundary may still
@@ -1277,6 +1280,7 @@ def replace_all(
     if tracked and not author:
         raise ValueError("author is required when tracked=True")
     _validate_writable_text(new_text, argument="new_text")
+    _refuse_if_protected(document, "replace text")
     spans = find_text(document, needle, story=story, view=view)
     by_story: "dict[str, List[Span]]" = {}
     for span in spans:

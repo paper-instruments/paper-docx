@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Optional, Tuple
 from docx.errors import TargetNotFoundError
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml.ns import qn
+from docx.protection import _refuse_if_protected
 from docx.story import _build_block, _iter_block_elements, _story_elements
 
 if TYPE_CHECKING:
@@ -178,6 +179,7 @@ def apply_numbering(paragraph: "Paragraph", *, num_id: int, level: int = 0) -> N
     `ensure_decimal_definition`).
     """
     document = _document_of_paragraph(paragraph)
+    _refuse_if_protected(document, "apply numbering")
     report_definitions = _definitions(_numbering_root(document))
     definition = next((d for d in report_definitions if d.num_id == num_id), None)
     if definition is None:
@@ -225,6 +227,7 @@ def apply_list_style(paragraph: "Paragraph", style_name: str) -> None:
     numbering binding apply as plain styles.
     """
     document = _document_of_paragraph(paragraph)
+    _refuse_if_protected(document, "apply a list style")
     defined = {style.name for style in document.styles}
     if style_name not in defined:
         raise TargetNotFoundError(
@@ -365,12 +368,14 @@ def ensure_bullet_definition(document: "Document") -> int:
     """The numId of a real bullet-list definition, creating one when the
     document has none (v0.1 V2 — closes the 'cannot make a real bullet'
     gap). Idempotent: repeated calls return the same definition."""
+    _refuse_if_protected(document, "author a numbering definition")
     return _ensure_definition(document, "bullet")
 
 
 def ensure_decimal_definition(document: "Document") -> int:
     """The numId of a real decimal-list definition, created on demand.
     Idempotent, like `ensure_bullet_definition`."""
+    _refuse_if_protected(document, "author a numbering definition")
     return _ensure_definition(document, "decimal")
 
 
@@ -382,6 +387,7 @@ def restart_numbering(document: "Document", *, num_id: int) -> int:
     returned numId. Anything fancier (mid-list overrides, custom level text)
     stays out of scope and refuses via the ordinary numId validation.
     """
+    _refuse_if_protected(document, "restart numbering")
     numbering = _numbering_root(document)
     definition = None
     if numbering is not None:

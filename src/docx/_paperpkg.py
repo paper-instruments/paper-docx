@@ -128,7 +128,7 @@ def xml_equivalent(a: bytes, b: bytes) -> bool:
     processing instructions are compared too.
 
     Raises `lxml.etree.XMLSyntaxError` on malformed input and
-    |UnsupportedXmlError| on DTD-bearing input — this function never guesses.
+    ``UnsupportedXmlError`` on DTD-bearing input — this function never guesses.
 
     Known limit (documented in API-PROPOSAL.md): attribute VALUES holding
     QNames compare textually, so a prefix rebound to a different URI while

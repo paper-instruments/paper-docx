@@ -11,7 +11,10 @@ Google Docs — pending), `libreoffice/` (exported from LibreOffice),
 **Taxonomy buckets**: `minimal-clean/`, `feature-isolated/` (one feature per
 file), `gauntlet/` (everything ugly combined), `corrupt/`
 (corrupt-by-construction, negative tests only — never opened by
-`docx.Document()` or fed to LibreOffice in tests), `large/` (perf smoke).
+`docx.Document()` or fed to LibreOffice in tests), `large/` (perf smoke),
+`redline/` (document-PAIR ground truth for the v0.11 revision pipeline:
+`multiround.docx` + its hand-computed accepted state, and the
+`compare-original`/`compare-revised` pair for the compare engine).
 
 **Freeze rules**
 
