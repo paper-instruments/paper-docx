@@ -258,6 +258,6 @@ class DescribeBlindRegionCounts:
         assert counts == {
             "tracked_insertions": 2,
             "tracked_deletions": 1,
-            "content_controls": 2,
+            "content_controls": 3,  # block + inline + placeholder form control
             "text_boxes": 1,
         }
