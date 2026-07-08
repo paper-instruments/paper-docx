@@ -1,11 +1,22 @@
 
-python-docx
-===========
+paper-docx
+==========
 
 Release v\ |version| (:ref:`Installation <install>`)
 
-*python-docx* is a Python library for creating and updating Microsoft Word
-(.docx) files.
+*paper-docx* is a drop-in fork of `python-docx`_ (the import name stays
+``docx``) that adds the editing surface real document work needs — complete
+visibility into a document, find-and-replace that survives Word's run
+fragmentation, real tracked changes and their resolution, compare, scrub, and
+cross-document composition — all behind typed, atomic refusals instead of
+silent corruption. Everything documented for python-docx below still works,
+unchanged; the fork additions are collected under
+:ref:`Paper additions <paper_additions>`.
+
+.. _python-docx: https://github.com/python-openxml/python-docx
+
+The rest of this page is the inherited python-docx documentation: a Python
+library for creating and updating Microsoft Word (.docx) files.
 
 
 What it can do
@@ -73,6 +84,7 @@ User Guide
 
    user/install
    user/quickstart
+   user/paper-additions
    user/documents
    user/tables
    user/text
@@ -102,6 +114,33 @@ API Documentation
    api/dml
    api/shared
    api/enum/index
+
+
+Paper additions — API reference
+-------------------------------
+
+Reference pages for the surface the fork adds. See
+:ref:`Paper additions <paper_additions>` for the narrative overview.
+
+.. toctree::
+   :maxdepth: 1
+
+   api/paper-story
+   api/paper-search
+   api/paper-blocks
+   api/paper-revisions
+   api/paper-tableops
+   api/paper-numbering
+   api/paper-controls
+   api/paper-commentops
+   api/paper-package
+   api/paper-scrubbing
+   api/paper-protection
+   api/paper-composition
+   api/paper-bookmarks
+   api/paper-fields
+   api/paper-formatting
+   api/paper-errors
 
 
 Contributor Guide
