@@ -2,6 +2,34 @@
 
 Based on upstream tag `v1.2.0`, forked 2026-07-07, marker tag `paper-base`.
 
+## v0 Additions (2026-07-07)
+
+Purely additive per CONVENTIONS §1.1; exact signatures and refusal conditions
+in `API-PROPOSAL.md` (enforced mechanically by
+`tests/paper/test_api_surface.py`). New public surface:
+
+- `docx.errors` — `PaperRefusal` hierarchy (safe refusals, distinct from bugs).
+- `docx.package` — kernel re-exports (§7): `xml_equivalent`, `diff_package`,
+  `patch_save` (implementation in `docx/_paperpkg.py`).
+- `docx.story` — visibility-complete traversal: `story_parts`, `iter_blocks`,
+  `outline`; new `FootnotesPart`/`EndnotesPart` registered.
+- `docx.search` — `normalize_text`, `find_text`, `find_one`, `Span.replace`
+  (surgical and tracked; revision vocabulary in `docx/oxml/revision.py`).
+- `docx.blocks` — `insert_section_after`, `tracked_delete_paragraphs`,
+  `tracked_replace_paragraphs` (same-parent rule; paragraph-mark stamping).
+- `Document.revisions` (`docx.revision`) — enumeration + accept/reject, all
+  or by author; tracked-edit algebra invariants tested.
+- `docx.tableops` / `docx.numbering` — guarded table ops and
+  apply-existing-numbering.
+
+Upstream files touched (additive only): `docx/package.py` (re-export block),
+`docx/__init__.py` (2 part registrations), `docx/document.py` (`revisions`
+property), `docx/oxml/__init__.py` (3 tag registrations).
+
+Test infrastructure: `tests/paper/` (contract harness, frozen 23-fixture
+corpus with `MANIFEST.sha256`, sidecars, LO smoke). Human follow-ups tracked
+in `FIXTURE-REQUESTS.md`.
+
 ## Baseline Test Runs
 
 Environment: CPython 3.13.5 via `uv`; test dependencies installed from upstream

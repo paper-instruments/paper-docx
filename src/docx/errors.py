@@ -1,0 +1,55 @@
+"""Typed refusals for paper-docx safe-editing APIs.
+
+Every mutating paper API is validate-fully-then-mutate: a raised
+|PaperRefusal| guarantees the in-memory XML tree and any file on disk are
+exactly as they were. Callers can therefore catch "safe refusal" distinctly
+from "bug" — programmer errors remain `TypeError`/`ValueError`.
+"""
+
+from __future__ import annotations
+
+
+class PaperRefusal(Exception):
+    """Base for every safe refusal raised by paper-docx APIs.
+
+    A refused operation mutated nothing, in memory or on disk. The message
+    states what was found and why it was unsafe to proceed.
+    """
+
+
+class AmbiguousTargetError(PaperRefusal):
+    """The target specification matches more than one location.
+
+    Disambiguate with `nth=`, `near=`, or `story=` rather than letting the
+    library guess.
+    """
+
+
+class TargetNotFoundError(PaperRefusal):
+    """No location matches the target specification.
+
+    Also raised when a previously-valid anchor or span has gone stale — the
+    underlying content changed since it was captured.
+    """
+
+
+class UnsupportedStructureError(PaperRefusal):
+    """The target involves structure this operation does not safely support.
+
+    Examples: text inside a tracked deletion or field instruction; a table
+    with merged or nested cells; numbering that would require authoring new
+    definitions.
+    """
+
+
+class BoundaryViolationError(PaperRefusal):
+    """The operation would cross a structural boundary it must respect.
+
+    Examples: a character-level replacement spanning a paragraph boundary or
+    entering/leaving a content control; a block operation selecting
+    paragraphs that do not share one parent.
+    """
+
+
+class RelationshipPolicyError(PaperRefusal):
+    """The operation would create or modify a package relationship unsafely."""

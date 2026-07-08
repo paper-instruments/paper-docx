@@ -1,0 +1,31 @@
+{
+  "fixture": "header-footer-sections.docx",
+  "provenance": {
+    "app": "LibreOffice",
+    "version": "26.2.4.2",
+    "notes": "Headless `soffice --convert-to docx` round-trip of generated/feature-isolated/header-footer-sections.docx; LibreOffice re-authored every part, so markup shapes are LibreOffice's own. LibreOffice exported twelve header/footer parts, most empty, and duplicated the first-page header definition."
+  },
+  "features": [
+    "multiple-sections",
+    "headers",
+    "footers",
+    "first-page-header"
+  ],
+  "ground_truth": {
+    "section_count": 2,
+    "nonempty_header_texts_sorted": [
+      "First-page header for section one",
+      "First-page header for section one",
+      "Header for section one",
+      "Header for section two"
+    ],
+    "nonempty_footer_texts_sorted": [
+      "Footer for section one",
+      "Footer for section two"
+    ],
+    "header_footer_part_count": 12,
+    "different_first_page_section1": true
+  },
+  "verified_by": "UNVERIFIED — agent-authored (Claude), machine-cross-checked; human sign-off pending",
+  "date": "2026-07-07"
+}

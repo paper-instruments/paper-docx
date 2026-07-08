@@ -249,3 +249,10 @@ register_element_cls("w:spacing", CT_Spacing)
 register_element_cls("w:tab", CT_TabStop)
 register_element_cls("w:tabs", CT_TabStops)
 register_element_cls("w:widowControl", CT_OnOff)
+
+# -- paper-docx additions (v0): tracked-change (revision) vocabulary. --
+from docx.oxml.revision import CT_RunTrackChange  # noqa: E402
+
+register_element_cls("w:del", CT_RunTrackChange)
+register_element_cls("w:delText", CT_Text)
+register_element_cls("w:ins", CT_RunTrackChange)

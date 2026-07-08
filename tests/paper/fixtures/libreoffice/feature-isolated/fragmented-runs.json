@@ -1,0 +1,26 @@
+{
+  "fixture": "fragmented-runs.docx",
+  "provenance": {
+    "app": "LibreOffice",
+    "version": "26.2.4.2",
+    "notes": "Headless `soffice --convert-to docx` round-trip of generated/feature-isolated/fragmented-runs.docx; LibreOffice re-authored every part, so markup shapes are LibreOffice's own. LibreOffice merged same-format adjacent runs: 8 runs became 5; visible text survived verbatim including all special characters."
+  },
+  "features": [
+    "fragmented-runs",
+    "smart-quotes",
+    "en-dash",
+    "em-dash",
+    "no-break-space",
+    "preserved-spaces",
+    "formatting-transitions"
+  ],
+  "ground_truth": {
+    "rate_paragraph": {
+      "text": "Consulting rate: $75–100/hr on a “full-service” basis — travel time billed at $37.50/hr.",
+      "run_count": 5
+    },
+    "nbsp_paragraph_text": "Net 30 payment terms apply, with a 10 % late surcharge."
+  },
+  "verified_by": "UNVERIFIED — agent-authored (Claude), machine-cross-checked; human sign-off pending",
+  "date": "2026-07-07"
+}

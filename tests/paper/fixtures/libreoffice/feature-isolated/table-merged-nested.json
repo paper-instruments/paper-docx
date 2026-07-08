@@ -1,0 +1,52 @@
+{
+  "fixture": "table-merged-nested.docx",
+  "provenance": {
+    "app": "LibreOffice",
+    "version": "26.2.4.2",
+    "notes": "Headless `soffice --convert-to docx` round-trip of generated/feature-isolated/table-merged-nested.docx; LibreOffice re-authored every part, so markup shapes are LibreOffice's own. Merge structure survived exactly."
+  },
+  "features": [
+    "table",
+    "merged-cells-horizontal",
+    "merged-cells-vertical",
+    "nested-table"
+  ],
+  "ground_truth": {
+    "outer_table": {
+      "rows": 3,
+      "cols": 3
+    },
+    "horizontal_merge": {
+      "row": 0,
+      "merged_grid_cols": [
+        0,
+        1
+      ],
+      "grid_span_count": 1
+    },
+    "vertical_merge": {
+      "grid_col": 2,
+      "rows": [
+        1,
+        2
+      ],
+      "v_merge_count": 2
+    },
+    "nested_table": {
+      "host_cell": {
+        "row": 2,
+        "col": 0
+      },
+      "rows": 2,
+      "cols": 2,
+      "cell_texts": [
+        "N00",
+        "N01",
+        "N10",
+        "N11"
+      ]
+    }
+  },
+  "verified_by": "UNVERIFIED — agent-authored (Claude), machine-cross-checked; human sign-off pending",
+  "date": "2026-07-07"
+}

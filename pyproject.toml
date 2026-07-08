@@ -7,9 +7,9 @@ name = "paper-docx"
 version = "0.1.0"
 authors = [
     {name = "Steve Canny", email = "stcanny@gmail.com"},
-    {name = "The LLM Data Company"},
+    {name = "Paper Instruments"},
 ]
-maintainers = [{name = "The LLM Data Company"}]
+maintainers = [{name = "Paper Instruments"}]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
@@ -126,4 +126,3 @@ select = [
 [tool.ruff.lint.isort]
 known-first-party = ["docx"]
 known-local-folder = ["helpers"]
-
