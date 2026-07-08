@@ -40,9 +40,21 @@ def _canonical(signature: inspect.Signature) -> str:
 
 
 def _resolve(module_name: str, attr_path: str):
+    """The object at `module_name.attr_path`, with phase-aware skipping.
+
+    A module missing entirely, or present but exposing NONE of its approved
+    names (e.g. upstream `docx.package` before the kernel lands), means the
+    phase hasn't shipped -> skip. A module exposing SOME approved names but
+    not the requested one is a broken surface -> fail.
+    """
     module = pytest.importorskip(
         module_name, reason=f"{module_name} not yet implemented (see API-PROPOSAL.md)"
     )
+    approved_names = {
+        attr.split(".")[0] for mod, attr, _ in APPROVED_SIGNATURES if mod == module_name
+    }
+    if not any(hasattr(module, name) for name in approved_names):
+        pytest.skip(f"{module_name} surface not yet implemented (see API-PROPOSAL.md)")
     target = module
     for piece in attr_path.split("."):
         if not hasattr(target, piece):
