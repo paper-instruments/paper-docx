@@ -250,15 +250,10 @@ def _compose(
     )
 
     report = CompositionReport()
+    # ALL refusal conditions run before any mutation (refusal atomicity):
+    # importing styles/numbering/media first would leave orphaned
+    # definitions behind when the destination anchor turns out invalid
     _refuse_unsupported_content(range_elements)
-    clones = [copy.deepcopy(element) for element in range_elements]
-    _reconcile_styles(document, source, clones, styles_mode, report)
-    _remap_numbering(document, source, clones, report)
-    _copy_media(document, source, clones, report)
-    _recreate_hyperlinks(document, source, clones, report)
-    _reconcile_bookmarks(document, clones, report)
-    _reallocate_sdt_ids(document, clones)
-
     if anchor_is_element:
         story, anchor_p = "word/document.xml", anchor
     else:
@@ -273,6 +268,15 @@ def _compose(
             r for s, r in _story_elements_of(document) if s == story
         )
         _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
+    _refuse_missing_numbering_part(document, range_elements)
+
+    clones = [copy.deepcopy(element) for element in range_elements]
+    _reconcile_styles(document, source, clones, styles_mode, report)
+    _remap_numbering(document, source, clones, report)
+    _copy_media(document, source, clones, report)
+    _recreate_hyperlinks(document, source, clones, report)
+    _reconcile_bookmarks(document, clones, report)
+    _reallocate_sdt_ids(document, clones)
 
     _pad_adjacent_tables(anchor_p, clones)
     _insert_after(anchor_p, clones)
@@ -292,6 +296,23 @@ def _story_elements_of(document: "Document"):
     from docx.story import _story_elements
 
     return _story_elements(document)
+
+
+def _refuse_missing_numbering_part(
+    document: "Document", range_elements: "List[_Element]"
+) -> None:
+    """Pre-mutation check for the numbering remap's only failure mode."""
+    needs_numbering = any(
+        int(node.get(_VAL) or 0) > 0
+        for element in range_elements
+        for node in element.iter(qn("w:numId"))
+    )
+    if needs_numbering and _numbering_root_of(document) is None:
+        raise UnsupportedStructureError(
+            "the destination document has no numbering part; create a list"
+            " definition first (ensure_bullet_definition /"
+            " ensure_decimal_definition)"
+        )
 
 
 def _refuse_unsupported_content(range_elements: "List[_Element]") -> None:
@@ -489,12 +510,6 @@ def _remap_numbering(
         return
     source_root = _numbering_root_of(source)
     destination_root = _numbering_root_of(document)
-    if destination_root is None:
-        raise UnsupportedStructureError(
-            "the destination document has no numbering part; create a list"
-            " definition first (ensure_bullet_definition /"
-            " ensure_decimal_definition)"
-        )
     numbering_map: "Dict[int, int]" = {}
     for num_id in referenced:
         source_num = _find_num(source_root, num_id)

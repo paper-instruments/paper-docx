@@ -155,6 +155,11 @@ def insert_toc_after(
         raise TargetNotFoundError(
             f"a TOC inserts into the main document body (anchor is in {story})"
         )
+    from docx.blocks import _refuse_paragraph_in_open_field
+    from docx.story import _story_elements
+
+    root = next(r for s, r in _story_elements(document) if s == story)
+    _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
     paragraph = OxmlElement("w:p")
 
     def _fld_char(fld_type: str, *, dirty: bool = False) -> "_Element":
