@@ -116,9 +116,6 @@ class DescribeMultiRoundRedlineJob:
 class DescribeFormFillJob:
     """Template filling: placeholder controls, tokens, boxed and tabled text."""
 
-    @pytest.mark.xfail(
-        strict=True, reason="placeholder-state clearing lands in Phase 0c (H5)"
-    )
     def it_fills_a_placeholder_control_so_word_sees_it_filled(self, tmp_path: Path):
         path = _copy(PLACEHOLDER, tmp_path)
         doc = docx.Document(str(path))

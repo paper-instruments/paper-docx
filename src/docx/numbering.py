@@ -193,13 +193,47 @@ def apply_numbering(paragraph: "Paragraph", *, num_id: int, level: int = 0) -> N
     num_pr.get_or_add_numId().val = num_id
 
 
+def _style_numbering_binding(document: "Document", style_name: str) -> Optional[int]:
+    """The numId `style_name` binds (following the basedOn chain), or None.
+
+    numId 0 means "no numbering" per ECMA-376 and reads as no binding.
+    """
+    style = document.styles[style_name]
+    seen = set()
+    while style is not None and style.style_id not in seen:
+        seen.add(style.style_id)
+        values = style.element.xpath("./w:pPr/w:numPr/w:numId/@w:val")
+        if values:
+            num_id = int(values[0])
+            return num_id if num_id != 0 else None
+        style = style.base_style
+    return None
+
+
 def apply_list_style(paragraph: "Paragraph", style_name: str) -> None:
     """Apply the existing paragraph style named `style_name` (e.g. a list
-    style like "List Bullet") — |TargetNotFoundError| when undefined."""
+    style like "List Bullet") — |TargetNotFoundError| when undefined.
+
+    When the style binds a numbering definition, that definition must
+    actually resolve in word/numbering.xml; otherwise this call refuses
+    rather than producing the classic FAKE bullet (a list-styled paragraph
+    that renders with no marker — v0.1 honesty recall, H7). Styles with no
+    numbering binding apply as plain styles.
+    """
     document = _document_of_paragraph(paragraph)
     defined = {style.name for style in document.styles}
     if style_name not in defined:
         raise TargetNotFoundError(
             f"style {style_name!r} is not defined in this document"
         )
+    bound_num_id = _style_numbering_binding(document, style_name)
+    if bound_num_id is not None:
+        definitions = _definitions(_numbering_root(document))
+        if not any(d.num_id == bound_num_id for d in definitions):
+            raise TargetNotFoundError(
+                f"style {style_name!r} binds numbering definition"
+                f" numId={bound_num_id}, which does not resolve in this"
+                " document — applying it would render a fake, marker-less"
+                " list; add a real definition first"
+            )
     paragraph.style = style_name

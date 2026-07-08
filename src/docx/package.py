@@ -114,9 +114,11 @@ class ImageParts:
 # -- Implementation lives in `docx/_paperpkg.py` so this upstream module's diff
 # -- stays minimal; the pinned public import path is `docx.package.*`.
 from docx._paperpkg import (  # noqa: E402
+    PackageDiagnosis,
     PackageDiff,
     PartDiff,
     PatchSaveResult,
+    diagnose,
     diff_package,
     patch_save,
     xml_equivalent,

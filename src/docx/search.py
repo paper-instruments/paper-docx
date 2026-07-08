@@ -368,6 +368,14 @@ class Span:
                 "span crosses a content-control boundary; edit inside or"
                 " outside the control, not across it"
             )
+        hollowed = _hollowed_bookmarks(self._atoms)
+        if hollowed:
+            raise UnsupportedStructureError(
+                f"replacing this span would hollow out bookmark(s) {hollowed}"
+                " — the targets of REF/PAGEREF cross-references and TOC"
+                " entries; narrow the span to inside the bookmark, or remove"
+                " the bookmark deliberately first"
+            )
 
     # -- replace ----------------------------------------------------------
 
@@ -387,15 +395,34 @@ class Span:
         prefix/suffix trimmed) stamped with `author`, `date` (default: the
         injectable clock) and a unique revision id.
 
+        Filling a content control that still shows placeholder text clears
+        the placeholder state (`w:showingPlcHdr` + `PlaceholderText` style)
+        so Word treats the control as genuinely filled.
+
         All refusal conditions are checked before any mutation (§1.3).
         """
         if tracked and not author:
             raise ValueError("author is required when tracked=True")
+        _validate_writable_text(new_text, argument="new_text")
         self._validate_fresh()
         self._validate_replaceable()
+        if not tracked:
+            for atom in self._atoms:
+                if atom.in_insert:
+                    raise UnsupportedStructureError(
+                        "span intersects a pending tracked insertion; an"
+                        " untracked edit there would silently rewrite text the"
+                        " revision history attributes to its author — accept or"
+                        " reject the revision first, or use tracked=True"
+                    )
+        placeholder_sdts = _placeholder_controls_of(self._atoms)
         if tracked:
-            return self._tracked_replace(new_text, author=author, date=date)  # type: ignore[arg-type]
-        return self._plain_replace(new_text)
+            result = self._tracked_replace(new_text, author=author, date=date)  # type: ignore[arg-type]
+        else:
+            result = self._plain_replace(new_text)
+        for sdt in placeholder_sdts:
+            _clear_placeholder_state(sdt)
+        return result
 
     def _plain_replace(self, new_text: str) -> ReplaceResult:
         first, last = self._atoms[0], self._atoms[-1]
@@ -623,6 +650,98 @@ def _next_revision_id(document: "Document") -> int:
             except ValueError:
                 continue
     return highest + 1
+
+
+_CONTROL_CHARS = ("\n", "\r", "\t", "\x0b", "\x0c")
+_SDT_PR = qn("w:sdtPr")
+_SHOWING_PLC_HDR = qn("w:showingPlcHdr")
+_R_STYLE = qn("w:rStyle")
+_BOOKMARK_START = qn("w:bookmarkStart")
+_BOOKMARK_END = qn("w:bookmarkEnd")
+_W_ID = qn("w:id")
+_W_NAME = qn("w:name")
+
+
+def _validate_writable_text(value: str, *, argument: str) -> None:
+    """Refuse control characters in text written into `w:t` (programmer error).
+
+    A raw newline/tab inside `w:t` is not a break in Word, but this package's
+    own read-back would render it as one — the classic verified-but-false
+    structure. The search side refuses spans crossing `w:br`/`w:tab` for the
+    mirror reason: replacing across one would silently drop it.
+    """
+    found = sorted({c for c in value if c in _CONTROL_CHARS})
+    if found:
+        raise ValueError(
+            f"{argument} contains control character(s) {found!r}: Word does"
+            " not render them as breaks inside w:t — pass separate"
+            " paragraphs (or a rich block list) instead"
+        )
+
+
+def _placeholder_controls_of(atoms: "Sequence[_Atom]"):
+    """Distinct content controls of `atoms` still showing placeholder text."""
+    controls = []
+    for atom in atoms:
+        if atom.sdt is None or any(existing is atom.sdt for existing in controls):
+            continue
+        sdt_pr = atom.sdt.find(_SDT_PR)
+        if sdt_pr is not None and sdt_pr.find(_SHOWING_PLC_HDR) is not None:
+            controls.append(atom.sdt)
+    return controls
+
+
+def _clear_placeholder_state(sdt: "_Element") -> None:
+    """The control was really filled: drop `w:showingPlcHdr` and the
+    `PlaceholderText` run style so Word stops treating it as empty."""
+    sdt_pr = sdt.find(_SDT_PR)
+    if sdt_pr is not None:
+        showing = sdt_pr.find(_SHOWING_PLC_HDR)
+        if showing is not None:
+            sdt_pr.remove(showing)
+    for r_style in sdt.findall(f".//{_R_STYLE}"):
+        if r_style.get(qn("w:val")) == "PlaceholderText":
+            r_style.getparent().remove(r_style)
+
+
+def _hollowed_bookmarks(atoms: "Sequence[_Atom]") -> "List[str]":
+    """Names of non-point bookmarks wholly inside the span's atom window.
+
+    Their text lives in atoms the replace will consume, while the replacement
+    lands outside the marker pair — the bookmark would silently become empty.
+    Point bookmarks (`_GoBack`, cursor markers) hold no text and are
+    transparent by design (they must be, or Word's ubiquitous noise would
+    refuse everything).
+    """
+    paragraph = atoms[0].paragraph
+    if paragraph is None:
+        return []
+    stream = list(paragraph.iter())
+    try:
+        first_pos = stream.index(atoms[0].element)
+        last_pos = stream.index(atoms[-1].element)
+    except ValueError:
+        return []
+    window = stream[first_pos + 1 : last_pos]
+    starts = {}
+    hollowed = []
+    for position, node in enumerate(window):
+        if node.tag == _BOOKMARK_START:
+            starts[node.get(_W_ID)] = (position, node.get(_W_NAME) or "")
+        elif node.tag == _BOOKMARK_END:
+            entry = starts.get(node.get(_W_ID))
+            if entry is None:
+                continue
+            start_pos, name = entry
+            if name == "_GoBack":
+                continue
+            has_text = any(
+                inner.tag in (_T, _DEL_TEXT) and (inner.text or "")
+                for inner in window[start_pos + 1 : position]
+            )
+            if has_text:
+                hollowed.append(name)
+    return hollowed
 
 
 def _set_preserved_text(element: "_Element", text: str) -> None:

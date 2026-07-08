@@ -33,7 +33,7 @@ from docx.errors import (
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
 from docx.oxml.revision import CT_RunTrackChange
-from docx.search import Span, find_one
+from docx.search import Span, _validate_writable_text, find_one
 from docx.story import Anchor, Block, _iter_block_elements, _story_elements
 
 if TYPE_CHECKING:
@@ -317,6 +317,9 @@ def insert_section_after(
     """
     if tracked and not author:
         raise ValueError("author is required when tracked=True")
+    _validate_writable_text(heading, argument="heading")
+    for index, text in enumerate(paragraphs):
+        _validate_writable_text(text, argument=f"paragraphs[{index}]")
     heading_style_id = _validated_style_id(document, heading_style, argument="heading_style")
     body_style_id = _validated_style_id(document, body_style, argument="body_style")
     story, anchor_p = _resolve_anchor_paragraph(document, anchor)
@@ -396,6 +399,8 @@ def tracked_replace_paragraphs(
     """Tracked-delete a paragraph range and tracked-insert replacements after it."""
     if not author:
         raise ValueError("author is required")
+    for index, text in enumerate(replacement_paragraphs):
+        _validate_writable_text(text, argument=f"replacement_paragraphs[{index}]")
     body_style_id = _validated_style_id(document, body_style, argument="body_style")
     story, selected = _select_paragraph_range(document, start_anchor, end_anchor, count)
     for paragraph in selected:
