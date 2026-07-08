@@ -314,6 +314,173 @@ class DescribeParagraphMarkResolution:
             assert _rescan(reopened) == {}
 
 
+def _story_texts(document) -> dict:
+    from docx.story import iter_blocks
+
+    texts: dict = {}
+    for block in iter_blocks(document):
+        texts.setdefault(block.story, []).append(block.text)
+    return texts
+
+
+TRACKED_MOVES = "generated/feature-isolated/tracked-moves.docx"
+MOVED_TEXT_V01 = "The indemnity clause relocated by tracked move."
+
+
+class DescribeMoveResolution:
+    """Phase 2: moves resolve as paired units, never one site alone."""
+
+    def it_accepts_the_multiround_redline_to_match_the_ground_truth(
+        self, tmp_path: Path
+    ):
+        document = _doc(MULTIROUND)
+        assert document.revisions.accept_all() == 20
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        assert _rescan(reopened) == {}
+        assert len(reopened.revisions) == 0
+        assert _story_texts(reopened) == _story_texts(_doc(MULTIROUND_ACCEPTED))
+
+    def it_rejects_the_multiround_redline_back_to_the_original(
+        self, tmp_path: Path
+    ):
+        document = _doc(MULTIROUND)
+        assert document.revisions.reject_all() == 20
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        assert _rescan(reopened) == {}
+        moved = "The indemnity clause shall survive termination of this agreement."
+        assert _body_texts(reopened) == [
+            "Engagement letter, revised across two rounds.",
+            "This agreement is made between the parties.",
+            moved,  # restored at the SOURCE
+            "Middle paragraph between the move sites.",
+            # destination paragraph is gone entirely
+            "Payment is due within thirty days of invoice.",
+            "Delivery follows the schedule in Exhibit A.",
+            "Item\nAmount\nOld charge\n$50",
+            "This sentence continues ",  # mark deletion rejected: no merge
+            "onto the following line.",
+            "A tracked split divides this once-single sentence.",  # split undone
+            "Signed at .",  # Alice's insertion rejected; comment went with it
+            "Closing paragraph after all tracked activity.",
+        ]
+
+    def it_removes_the_rejected_insertions_comment_entirely(self, tmp_path: Path):
+        document = _doc(MULTIROUND)
+        document.revisions.reject_all()
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        xml = reopened.element.xml
+        assert "commentRangeStart" not in xml and "commentReference" not in xml
+
+    def it_resolves_a_move_pair_from_the_source_site(self, tmp_path: Path):
+        document = _doc(TRACKED_MOVES)
+        move_from = next(
+            r for r in document.revisions if r.revision_type == "move_from"
+        )
+        move_from.accept()  # resolving EITHER site resolves the pair
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        assert _rescan(reopened) == {}
+        body = "\n".join(_body_texts(reopened))
+        assert body.count(MOVED_TEXT_V01) == 1
+        # destination follows the middle paragraph; source paragraph emptied
+        # (no mark stamps in this fixture, so the empty shell remains)
+        texts = _body_texts(reopened)
+        assert texts.index("Paragraph between the move ends.") < texts.index(
+            MOVED_TEXT_V01
+        )
+
+    def it_rejects_a_move_pair_from_the_destination_site(self, tmp_path: Path):
+        document = _doc(TRACKED_MOVES)
+        move_to = next(
+            r for r in document.revisions if r.revision_type == "move_to"
+        )
+        move_to.reject()
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        assert _rescan(reopened) == {}
+        texts = _body_texts(reopened)
+        assert "\n".join(texts).count(MOVED_TEXT_V01) == 1
+        assert texts.index(MOVED_TEXT_V01) < texts.index(
+            "Paragraph between the move ends."
+        )
+
+    def it_reports_moves_as_resolvable_in_the_census(self):
+        assert _doc(TRACKED_MOVES).revisions.remaining_unsupported() == {}
+
+    def it_refuses_an_orphaned_move_atomically(self):
+        document = _doc(TRACKED_MOVES)
+        body = document.element.body
+        destination = next(
+            p
+            for p in body.findall(
+                "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p"
+            )
+            if p.find(
+                "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}moveTo"
+            )
+            is not None
+        )
+        body.remove(destination)
+        before = document.element.xml
+        with pytest.raises(UnsupportedStructureError, match="move"):
+            document.revisions.accept_all()
+        assert document.element.xml == before
+
+    def it_refuses_a_cross_story_move(self):
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        w = nsdecls("w")
+        document = _doc("generated/feature-isolated/header-footer-sections.docx")
+        body_p = document.paragraphs[0]._p
+        body_p.addprevious(
+            parse_xml(
+                f'<w:moveFromRangeStart {w} w:id="801" w:author="A"'
+                ' w:date="2026-06-01T09:30:00Z" w:name="crossMove"/>'
+            )
+        )
+        body_p.append(
+            parse_xml(
+                f'<w:moveFrom {w} w:id="802" w:author="A"'
+                ' w:date="2026-06-01T09:30:00Z">'
+                "<w:r><w:t>wandering text</w:t></w:r></w:moveFrom>"
+            )
+        )
+        body_p.addnext(parse_xml(f'<w:moveFromRangeEnd {w} w:id="801"/>'))
+        header_p = document.sections[0].header.paragraphs[0]._p
+        header_p.addprevious(
+            parse_xml(
+                f'<w:moveToRangeStart {w} w:id="803" w:author="A"'
+                ' w:date="2026-06-01T09:30:00Z" w:name="crossMove"/>'
+            )
+        )
+        header_p.append(
+            parse_xml(
+                f'<w:moveTo {w} w:id="804" w:author="A"'
+                ' w:date="2026-06-01T09:30:00Z">'
+                "<w:r><w:t>wandering text</w:t></w:r></w:moveTo>"
+            )
+        )
+        header_p.addnext(parse_xml(f'<w:moveToRangeEnd {w} w:id="803"/>'))
+        with pytest.raises(UnsupportedStructureError, match="crosses stories"):
+            document.revisions.accept_all()
+
+
+class DescribeGauntletResolution:
+    """Release-level: the everything-document resolves completely, both ways."""
+
+    @pytest.mark.parametrize("accept", [True, False], ids=["accept", "reject"])
+    def it_resolves_the_entire_gauntlet_to_zero_markup(
+        self, accept: bool, tmp_path: Path
+    ):
+        document = _doc(GAUNTLET)
+        resolver = (
+            document.revisions.accept_all if accept else document.revisions.reject_all
+        )
+        assert resolver() > 0
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        assert _rescan(reopened) == {}
+        assert len(reopened.revisions) == 0
+
+
 class DescribeExoticTypesStayRefused:
     """Phase 1: everything not resolved is enumerated and refused BY NAME."""
 

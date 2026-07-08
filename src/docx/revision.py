@@ -89,9 +89,19 @@ def _revision_type_of(node: "_Element") -> str:
     return _REVISION_TYPES[node.tag]
 
 
-#: the only revision types accept()/reject() know how to resolve correctly
+#: the only revision types accept()/reject() know how to resolve correctly.
+#: move_from/move_to resolve as PAIRED UNITS: accepting or rejecting either
+#: site of a move resolves both (never one side alone).
 RESOLVABLE_TYPES = frozenset(
-    {"insertion", "deletion", "format_change", "row_insertion", "row_deletion"}
+    {
+        "insertion",
+        "deletion",
+        "format_change",
+        "row_insertion",
+        "row_deletion",
+        "move_from",
+        "move_to",
+    }
 )
 
 
@@ -258,6 +268,7 @@ class Revisions(Sequence[Revision]):
                 " resolve the rest in Word"
             )
         _validate_row_removals(selected, accept=accept)
+        _validate_moves(selected, self._document)
         resolved = 0
         # content revisions first, then paragraph marks (mark resolution can
         # remove whole paragraphs and must see post-content state)
@@ -280,6 +291,222 @@ class Revisions(Sequence[Revision]):
             "revisions": [revision.to_dict() for revision in self._items],
             "remaining_unsupported": self.remaining_unsupported(),
         }
+
+
+# ---------------------------------------------------------------------------
+# move units (Phase 2): w:moveFrom/w:moveTo paired by range-marker w:name
+# ---------------------------------------------------------------------------
+
+_MOVE_FROM_RANGE_START = qn("w:moveFromRangeStart")
+_MOVE_FROM_RANGE_END = qn("w:moveFromRangeEnd")
+_MOVE_TO_RANGE_START = qn("w:moveToRangeStart")
+_MOVE_TO_RANGE_END = qn("w:moveToRangeEnd")
+_ID = qn("w:id")
+_NAME = qn("w:name")
+
+
+class _MoveSite:
+    """One side of a tracked move: its range brackets, run wrappers
+    (`w:moveFrom`/`w:moveTo`) and paragraph-mark stamps, in one story."""
+
+    def __init__(self, story: str, name: str, start: "_Element") -> None:
+        self.story = story
+        self.name = name
+        self.start = start
+        self.end: "Optional[_Element]" = None
+        self.wrappers: "List[_Element]" = []
+        self.mark_stamps: "List[_Element]" = []
+
+    @property
+    def elements(self) -> "List[_Element]":
+        markers = [self.start] + ([self.end] if self.end is not None else [])
+        return markers + self.wrappers + self.mark_stamps
+
+
+class _MoveUnit:
+    """A complete tracked move: source and destination site, same name."""
+
+    def __init__(self, from_site: _MoveSite, to_site: _MoveSite) -> None:
+        self.name = from_site.name
+        self.from_site = from_site
+        self.to_site = to_site
+
+    @property
+    def elements(self) -> "List[_Element]":
+        return self.from_site.elements + self.to_site.elements
+
+
+def _scan_story_moves(
+    story: str,
+    root: "_Element",
+    sites: "List[_MoveSite]",
+    orphans: "List[Tuple[_Element, str]]",
+) -> None:
+    """Collect move sites in document order; anything unpaired is an orphan."""
+    open_site: dict = {"from": None, "to": None}
+    directions = {
+        _MOVE_FROM_RANGE_START: ("from", "start"),
+        _MOVE_TO_RANGE_START: ("to", "start"),
+        _MOVE_FROM_RANGE_END: ("from", "end"),
+        _MOVE_TO_RANGE_END: ("to", "end"),
+        _MOVE_FROM: ("from", "content"),
+        _MOVE_TO: ("to", "content"),
+    }
+
+    def walk(element: "_Element") -> None:
+        for child in _first_choice_children(element):
+            role = directions.get(child.tag)
+            if role is not None:
+                direction, kind = role
+                site = open_site[direction]
+                if kind == "start":
+                    name = child.get(_NAME)
+                    if site is not None:
+                        orphans.append((child, "nested move ranges"))
+                    elif not name:
+                        orphans.append((child, "move range without a w:name"))
+                    else:
+                        open_site[direction] = _MoveSite(story, name, child)
+                elif kind == "end":
+                    if site is not None and child.get(_ID) == site.start.get(_ID):
+                        site.end = child
+                        sites.append(site)
+                        open_site[direction] = None
+                    else:
+                        orphans.append((child, "move range end without its start"))
+                else:  # content: a wrapper or a paragraph-mark stamp
+                    if site is None:
+                        orphans.append(
+                            (child, "move content outside any move range")
+                        )
+                    elif _is_paragraph_mark_revision(child):
+                        site.mark_stamps.append(child)
+                    else:
+                        site.wrappers.append(child)
+            walk(child)
+
+    walk(root)
+    for direction in ("from", "to"):
+        if open_site[direction] is not None:
+            orphans.append(
+                (open_site[direction].start, "move range start without its end")
+            )
+
+
+def _move_units(
+    document: "Document",
+) -> "Tuple[List[_MoveUnit], List[Tuple[_Element, str]]]":
+    """All well-formed move units, plus every orphaned move element."""
+    sites: "List[_MoveSite]" = []
+    orphans: "List[Tuple[_Element, str]]" = []
+    for story, root in _story_elements(document):
+        _scan_story_moves(story, root, sites, orphans)
+    by_name: dict = {}
+    for site in sites:
+        direction = "from" if site.start.tag == _MOVE_FROM_RANGE_START else "to"
+        by_name.setdefault(site.name, {"from": [], "to": []})[direction].append(site)
+    units: "List[_MoveUnit]" = []
+    for name, pair in sorted(by_name.items()):
+        froms, tos = pair["from"], pair["to"]
+        if len(froms) != 1 or len(tos) != 1:
+            reason = (
+                f"move {name!r} has {len(froms)} source and {len(tos)}"
+                " destination range(s); expected exactly one of each"
+            )
+            for site in froms + tos:
+                orphans.extend((element, reason) for element in site.elements)
+            continue
+        if froms[0].story != tos[0].story:
+            reason = (
+                f"move {name!r} crosses stories ({froms[0].story} ->"
+                f" {tos[0].story}); cross-story moves are not resolvable"
+            )
+            for site in froms + tos:
+                orphans.extend((element, reason) for element in site.elements)
+            continue
+        units.append(_MoveUnit(froms[0], tos[0]))
+    return units, orphans
+
+
+def _resolve_move(
+    node: "_Element", *, accept: bool, document: "Optional[Document]"
+) -> None:
+    if document is None:
+        raise UnsupportedStructureError(
+            "cannot resolve a tracked move without its document context"
+        )
+    units, orphans = _move_units(document)
+    for unit in units:
+        if any(element is node for element in unit.elements):
+            _resolve_move_unit(unit, accept=accept, document=document)
+            return
+    for element, reason in orphans:
+        if element is node:
+            raise UnsupportedStructureError(
+                f"cannot resolve this tracked move: {reason}; nothing was"
+                " changed. Resolve it in Word instead"
+            )
+    raise UnsupportedStructureError(
+        "cannot resolve this tracked move: its range markers were not found;"
+        " nothing was changed. Resolve it in Word instead"
+    )
+
+
+def _resolve_move_unit(
+    unit: _MoveUnit, *, accept: bool, document: "Optional[Document]"
+) -> None:
+    """Apply or undo a move as ONE unit (never one site alone).
+
+    Accept: destination content becomes plain, source range disappears.
+    Reject: source content becomes plain again, destination disappears.
+    Mark stamps ride the existing paragraph-mark machinery (`w:moveFrom` is
+    del-like, `w:moveTo` ins-like), AFTER range markers are removed so an
+    emptied source/destination paragraph is recognized as empty.
+    """
+    keep_site = unit.to_site if accept else unit.from_site
+    drop_site = unit.from_site if accept else unit.to_site
+    for wrapper in keep_site.wrappers:
+        if wrapper.getparent() is not None:
+            _unwrap(wrapper)
+    orphaned_comments: "List[int]" = []
+    for wrapper in drop_site.wrappers:
+        if wrapper.getparent() is not None:
+            orphaned_comments.extend(_comment_ids_inside(wrapper))
+            wrapper.getparent().remove(wrapper)
+    for site in (unit.from_site, unit.to_site):
+        for marker in (site.start, site.end):
+            if marker is not None and marker.getparent() is not None:
+                marker.getparent().remove(marker)
+    for site in (unit.from_site, unit.to_site):
+        for stamp in site.mark_stamps:
+            if stamp.getparent() is not None:
+                _resolve_paragraph_mark(stamp, accept=accept)
+    _cleanup_comment_anchors(document, orphaned_comments)
+
+
+def _validate_moves(selected: "List[Revision]", document: "Document") -> None:
+    """Refuse BEFORE mutating when any selected move is orphaned, duplicated
+    or cross-story (refusal atomicity for the batch)."""
+    move_nodes = [
+        revision._element  # noqa: SLF001
+        for revision in selected
+        if revision.revision_type in ("move_from", "move_to")
+    ]
+    if not move_nodes:
+        return
+    units, orphans = _move_units(document)
+    unit_elements = {id(e) for unit in units for e in unit.elements}
+    orphan_reasons = {id(element): reason for element, reason in orphans}
+    for node in move_nodes:
+        if id(node) in unit_elements:
+            continue
+        reason = orphan_reasons.get(
+            id(node), "its range markers were not found"
+        )
+        raise UnsupportedStructureError(
+            f"selected revisions include an unresolvable tracked move:"
+            f" {reason}; nothing was changed. Resolve it in Word instead"
+        )
 
 
 def _validate_row_removals(selected: "List[Revision]", *, accept: bool) -> None:
@@ -430,6 +657,9 @@ def _resolve_one(
     if node.getparent() is None:
         return  # already resolved via an enclosing operation
     revision_type = _revision_type_of(node)
+    if revision_type in ("move_from", "move_to"):
+        _resolve_move(node, accept=accept, document=document)
+        return
     if revision_type == "format_change":
         _resolve_format_change(node, accept=accept)
         return
@@ -588,7 +818,9 @@ def _resolve_paragraph_mark(node: "_Element", *, accept: bool) -> None:
       a mark-INSERTED split merges the same way.
     """
     paragraph = _paragraph_of_mark(node)
-    is_deletion = node.tag == _DEL
+    # w:moveFrom stamps are del-like (the mark moved AWAY from here),
+    # w:moveTo stamps ins-like — same break-change algebra
+    is_deletion = node.tag in (_DEL, _MOVE_FROM)
     applying_break_change = (accept and is_deletion) or (not accept and not is_deletion)
 
     r_pr = node.getparent()

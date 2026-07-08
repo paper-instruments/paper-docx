@@ -1031,35 +1031,41 @@ def multiround_paragraphs() -> "List[docx.oxml.xmlchemy.BaseOxmlElement]":
             '<w:r><w:t xml:space="preserve"> is made between the parties.</w:t></w:r>'
             "</w:p>"
         ),
-        # move source: content and the paragraph mark both move away
+        # move source: whole paragraph moved away — Word brackets the w:p
+        # with BLOCK-level range markers so the mark stamp sits inside the
+        # range, and stamps the paragraph mark itself with w:moveFrom
+        parse_xml(
+            f'<w:moveFromRangeStart {W} w:id="103" w:author="{AUTHOR_A}"'
+            f' w:date="{DATE_A}" w:name="mrMove1"/>'
+        ),
         parse_xml(
             f"<w:p {W}>"
             f'<w:pPr><w:rPr><w:moveFrom w:id="102" w:author="{AUTHOR_A}"'
             f' w:date="{DATE_A}"/></w:rPr></w:pPr>'
-            f'<w:moveFromRangeStart w:id="103" w:author="{AUTHOR_A}"'
-            f' w:date="{DATE_A}" w:name="mrMove1"/>'
             f'<w:moveFrom w:id="104" w:author="{AUTHOR_A}" w:date="{DATE_A}">'
             f"<w:r><w:t>{MULTIROUND_MOVED_TEXT}</w:t></w:r>"
             "</w:moveFrom>"
-            '<w:moveFromRangeEnd w:id="103"/>'
             "</w:p>"
         ),
+        parse_xml(f'<w:moveFromRangeEnd {W} w:id="103"/>'),
         parse_xml(
             f"<w:p {W}><w:r><w:t>Middle paragraph between the move sites.</w:t></w:r></w:p>"
         ),
-        # move destination
+        # move destination, same block-level bracketing
+        parse_xml(
+            f'<w:moveToRangeStart {W} w:id="106" w:author="{AUTHOR_A}"'
+            f' w:date="{DATE_A}" w:name="mrMove1"/>'
+        ),
         parse_xml(
             f"<w:p {W}>"
             f'<w:pPr><w:rPr><w:moveTo w:id="105" w:author="{AUTHOR_A}"'
             f' w:date="{DATE_A}"/></w:rPr></w:pPr>'
-            f'<w:moveToRangeStart w:id="106" w:author="{AUTHOR_A}"'
-            f' w:date="{DATE_A}" w:name="mrMove1"/>'
             f'<w:moveTo w:id="107" w:author="{AUTHOR_A}" w:date="{DATE_A}">'
             f"<w:r><w:t>{MULTIROUND_MOVED_TEXT}</w:t></w:r>"
             "</w:moveTo>"
-            '<w:moveToRangeEnd w:id="106"/>'
             "</w:p>"
         ),
+        parse_xml(f'<w:moveToRangeEnd {W} w:id="106"/>'),
         parse_xml(
             f"<w:p {W}><w:pPr>"
             '<w:jc w:val="center"/>'

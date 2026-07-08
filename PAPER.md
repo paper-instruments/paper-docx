@@ -121,6 +121,18 @@ listed here.
   `Revisions.to_dict()` schema v3: new type names, and format-change
   revisions now carry the text they apply to (they were unaddressable with
   `text == ""`). Zero-markup rescan oracle `docx.revision._remaining_markup`.
+- **Phase 2 — move resolution.** Conversion: `w:moveFrom`/`w:moveTo` with
+  their range markers (paired by `w:name`) resolve as ONE unit — accepting
+  or rejecting either site resolves both, never one side alone. Accept =
+  destination becomes plain, source range (content + moved paragraph marks)
+  disappears; reject = the symmetric inverse. Paragraph-mark move stamps
+  ride the existing mark machinery (`w:moveFrom` del-like, `w:moveTo`
+  ins-like). Orphaned, duplicated, nameless, or cross-story move markup →
+  typed refusal naming the defect, validated upfront for batch atomicity.
+  Comment anchors inside a dropped site are cleaned up with their comments.
+  The gauntlet now resolves completely in both directions (rescan == zero
+  markup), and `accept_all` on the multiround redline fixture reproduces
+  the hand-computed accepted ground truth story-for-story.
 
 ### v0.1 (2026-07-08) — honesty recall, everyday shapes, four verbs
 
