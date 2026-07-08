@@ -108,3 +108,16 @@ class ImageParts:
             if n not in used_numbers:
                 return image_partname(n)
         return image_partname(len(self) + 1)
+
+
+# -- paper-docx additions (v0): the package kernel pinned by CONVENTIONS §7.
+# -- Implementation lives in `docx/_paperpkg.py` so this upstream module's diff
+# -- stays minimal; the pinned public import path is `docx.package.*`.
+from docx._paperpkg import (  # noqa: E402
+    PackageDiff,
+    PartDiff,
+    PatchSaveResult,
+    diff_package,
+    patch_save,
+    xml_equivalent,
+)
