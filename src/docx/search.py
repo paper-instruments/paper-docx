@@ -83,9 +83,13 @@ class _Atom:
     in_insert: bool
     in_delete: bool
     in_text_box: bool
-    in_hyperlink: bool
+    hyperlink: "Optional[_Element]" = None  # innermost w:hyperlink, if any
     in_field: bool = False
     fixed_text: Optional[str] = None
+
+    @property
+    def in_hyperlink(self) -> bool:
+        return self.hyperlink is not None
 
     @property
     def text(self) -> str:
@@ -116,7 +120,7 @@ def _collect_block_atoms(
     """
     field_depth = [0]
 
-    def walk(node, paragraph, run, sdt, in_ins, in_del, in_hlink, in_box, in_fld):
+    def walk(node, paragraph, run, sdt, in_ins, in_del, hlink, in_box, in_fld):
         for child in _first_choice_children(node):
             tag = child.tag
             if tag == _TXBX and skip_text_boxes:
@@ -140,7 +144,7 @@ def _collect_block_atoms(
                     in_insert=in_ins,
                     in_delete=in_del,
                     in_text_box=in_box,
-                    in_hyperlink=in_hlink,
+                    hyperlink=hlink,
                     in_field=in_fld or field_depth[0] > 0,
                     fixed_text=_SYNTHETIC_TAGS.get(tag),
                 )
@@ -152,13 +156,13 @@ def _collect_block_atoms(
                 child if tag == _SDT else sdt,
                 in_ins or tag in (_INS, _MOVE_TO),
                 in_del or tag in (_DEL, _MOVE_FROM),
-                in_hlink or tag == _HYPERLINK,
+                child if tag == _HYPERLINK else hlink,
                 in_box or tag == _TXBX,
                 in_fld or tag == _FLD_SIMPLE,
             )
 
     paragraph = element if element.tag == qn("w:p") else None
-    yield from walk(element, paragraph, None, None, False, False, False, in_txbx, False)
+    yield from walk(element, paragraph, None, None, False, False, None, in_txbx, False)
 
 
 def _story_atoms(document: "Document", story_name: str, root: "_Element") -> "List[_Atom]":
@@ -292,6 +296,100 @@ class Span:
     _norm_start: int = field(repr=False)  # position in the story's normalized text
     _consumed: bool = field(default=False, repr=False)  # set by tracked replace
 
+    # -- narrowing --------------------------------------------------------
+
+    def _synthetic_positions(self) -> "set":
+        """Char positions in this span's text contributed by tab/break atoms."""
+        positions = set()
+        cursor = 0
+        for index, atom in enumerate(self._atoms):
+            start = self._start_offset if index == 0 else 0
+            end = self._end_offset if index == len(self._atoms) - 1 else len(atom.text)
+            if atom.is_synthetic:
+                positions.update(range(cursor, cursor + (end - start)))
+            cursor += end - start
+        return positions
+
+    def _narrow_to_change(self, new_text: str) -> "Optional[Tuple[Span, str]]":
+        """A sub-span covering only the changed region, or None if the trim
+        cannot shrink this span (caller falls through to normal validation).
+
+        In the kept prefix/suffix, a whitespace character in `new_text`
+        aligns with an existing tab/break: callers cannot write `\\t` (H6),
+        so "Section 4. Termination" against "Section 3.<TAB>Termination"
+        keeps the document's tab and changes only the "3" — matching is
+        normalized, documents keep their original characters.
+        """
+        synthetic = self._synthetic_positions()
+        old = self.text
+
+        def aligned(old_pos: int, new_char: str) -> bool:
+            return old[old_pos] == new_char or (
+                old_pos in synthetic and new_char.isspace()
+            )
+
+        prefix_len = 0
+        limit = min(len(old), len(new_text))
+        while prefix_len < limit and aligned(prefix_len, new_text[prefix_len]):
+            prefix_len += 1
+        suffix_len = 0
+        while (
+            suffix_len < len(old) - prefix_len
+            and suffix_len < len(new_text) - prefix_len
+            and aligned(len(old) - suffix_len - 1, new_text[len(new_text) - suffix_len - 1])
+        ):
+            suffix_len += 1
+        if prefix_len == 0 and suffix_len == 0:
+            return None
+        changed_old = self.text[prefix_len : len(self.text) - suffix_len]
+        changed_new = new_text[prefix_len : len(new_text) - suffix_len]
+        if not changed_old and not changed_new:
+            return None
+        # map the changed char range onto the atom slice
+        target_start = prefix_len
+        target_end = len(self.text) - suffix_len
+        position = 0
+        start_idx = end_idx = None
+        start_off = end_off = 0
+        for index, atom in enumerate(self._atoms):
+            base = self._start_offset if index == 0 else 0
+            limit = self._end_offset if index == len(self._atoms) - 1 else len(atom.text)
+            length = limit - base
+            if start_idx is None and position + length > target_start:
+                start_idx = index
+                start_off = base + (target_start - position)
+            if position + length >= target_end:
+                end_idx = index
+                end_off = base + (target_end - position)
+                break
+            position += length
+        if start_idx is None or end_idx is None:
+            return None  # zero-length change at an edge; let validation decide
+        sub_atoms = self._atoms[start_idx : end_idx + 1]
+        sub_span = Span(
+            text=changed_old,
+            story=self.story,
+            anchor=Anchor(
+                story=self.story,
+                index=self.anchor.index,
+                content_hash=content_hash(changed_old),
+            ),
+            in_insert=any(a.in_insert for a in sub_atoms),
+            in_delete=any(a.in_delete or a.tag == _DEL_TEXT for a in sub_atoms),
+            in_content_control=any(a.sdt is not None for a in sub_atoms),
+            in_text_box=any(a.in_text_box for a in sub_atoms),
+            in_field=any(a.in_field for a in sub_atoms),
+            crosses_paragraphs=any(
+                a.paragraph is not sub_atoms[0].paragraph for a in sub_atoms
+            ),
+            _document=self._document,
+            _atoms=list(sub_atoms),
+            _start_offset=start_off,
+            _end_offset=end_off,
+            _norm_start=self._norm_start,
+        )
+        return sub_span, changed_new
+
     # -- validation -------------------------------------------------------
 
     def _current_slice(self) -> str:
@@ -405,6 +503,17 @@ class Span:
             raise ValueError("author is required when tracked=True")
         _validate_writable_text(new_text, argument="new_text")
         self._validate_fresh()
+        if any(atom.is_synthetic for atom in self._atoms):
+            # spans matched ACROSS a tab/break may still edit safely when the
+            # actual change lies between breaks: narrow to the changed region
+            # (v0.1 S5); if the change itself crosses a break, validation
+            # below refuses as before
+            narrowed = self._narrow_to_change(new_text)
+            if narrowed is not None:
+                sub_span, sub_new = narrowed
+                return sub_span.replace(
+                    sub_new, tracked=tracked, author=author, date=date
+                )
         self._validate_replaceable()
         if not tracked:
             for atom in self._atoms:
@@ -459,25 +568,52 @@ class Span:
         from docx.oxml.revision import CT_RunTrackChange
 
         for atom in self._atoms:
-            if atom.in_hyperlink:
-                raise UnsupportedStructureError(
-                    "tracked replacement inside a hyperlink is not supported in v0"
-                )
             if atom.run is None:
                 raise UnsupportedStructureError(
                     "matched text is not inside a run; cannot anchor a revision"
                 )
+        # hyperlink interiors are supported (v0.1 S6); CROSSING the boundary
+        # would move text into or out of the link
+        link_scopes = {
+            id(atom.hyperlink) if atom.hyperlink is not None else None
+            for atom in self._atoms
+        }
+        if len(link_scopes) > 1:
+            raise BoundaryViolationError(
+                "span crosses a hyperlink boundary; edit the linked text and"
+                " the surrounding text separately"
+            )
         # layered revisions: a span straddling a pending w:ins would emit a
         # w:del claiming inserted text was base-document content — fabricated
-        # history that corrupts reject/original views. Fully inside ONE w:ins
-        # nests correctly and is allowed.
-        enclosing_insertions = {_enclosing_insertion(atom.element) for atom in self._atoms}
-        if len(enclosing_insertions) > 1:
-            raise UnsupportedStructureError(
-                "span overlaps a pending tracked insertion; accept or reject"
-                " the existing revision first, or target text inside or"
-                " outside it, not across its boundary"
+        # history that corrupts reject/original views. Two shapes are safe:
+        # fully inside ONE w:ins (nests correctly), and — v0.1 S4 — the SAME
+        # author extending their own insertion where the span starts in base
+        # text and ends in/at their insertion (their inserted text is simply
+        # removed, never re-marked as a base-text deletion).
+        enclosing = [_enclosing_insertion(atom.element) for atom in self._atoms]
+        scopes = {id(e) if e is not None else None for e in enclosing}
+        extends_own_insertion = False
+        if len(scopes) > 1:
+            non_none = [e for e in enclosing if e is not None]
+            all_own = all(
+                e.tag == _INS and (e.get(_W_AUTHOR) or "") == author for e in non_none
             )
+            inside_seen = False
+            contiguous_tail = True
+            for e in enclosing:
+                if e is not None:
+                    inside_seen = True
+                elif inside_seen:
+                    contiguous_tail = False
+                    break
+            if not (all_own and enclosing[0] is None and contiguous_tail):
+                raise UnsupportedStructureError(
+                    "span overlaps a pending tracked insertion it cannot layer"
+                    " over (different author, a tracked move, or base text"
+                    " following the insertion); accept or reject the existing"
+                    " revision first, or target text inside or outside it"
+                )
+            extends_own_insertion = True
         if self.text == new_text:
             raise TargetNotFoundError(
                 "replacement equals the existing text; nothing to change"
@@ -546,7 +682,16 @@ class Span:
 
         revision_ids: "List[int]" = []
         insert_point = first.run
-        if old_mid:
+        if extends_own_insertion:
+            # pieces inside the author's own pending insertion are removed
+            # outright (deleting your own unaccepted insertion leaves no
+            # mark, exactly as Word behaves); only base-text pieces get w:del
+            deleted_pieces = [
+                (source_run, piece)
+                for source_run, piece in deleted_pieces
+                if source_run is None or _enclosing_insertion(source_run) is None
+            ]
+        if old_mid and deleted_pieces:
             del_elm = CT_RunTrackChange.new("w:del", next_id, author, stamp)
             for source_run, piece in deleted_pieces:
                 source_rpr = source_run.find(_RPR) if source_run is not None else None
@@ -652,6 +797,7 @@ def _next_revision_id(document: "Document") -> int:
     return highest + 1
 
 
+_W_AUTHOR = qn("w:author")
 _CONTROL_CHARS = ("\n", "\r", "\t", "\x0b", "\x0c")
 _SDT_PR = qn("w:sdtPr")
 _SHOWING_PLC_HDR = qn("w:showingPlcHdr")
@@ -891,6 +1037,78 @@ def find_text(
             return []
         return [matches[nth - 1]]
     return matches
+
+
+@dataclass(frozen=True)
+class ReplaceAllResult:
+    """Outcome of a `replace_all` call: per-match results, never silent."""
+
+    replaced_count: int
+    results: Tuple[ReplaceResult, ...]
+    refused: Tuple[dict, ...]  # {story, anchor, error, message} per refusal
+
+    def to_dict(self) -> dict:
+        return {
+            "schema": "paper_replace_all",
+            "version": 1,
+            "replaced_count": self.replaced_count,
+            "results": [result.to_dict() for result in self.results],
+            "refused": list(self.refused),
+        }
+
+
+def replace_all(
+    document: "Document",
+    needle: str,
+    new_text: str,
+    *,
+    story: Optional[str] = None,
+    view: str = "current",
+    tracked: bool = False,
+    author: Optional[str] = None,
+    date: Optional[dt.datetime] = None,
+) -> ReplaceAllResult:
+    """Replace every match of `needle` in one pass (v0.1 S3).
+
+    Pinned invalidation semantics: one scan finds all matches, then
+    replacements apply in REVERSE document order within each story, so no
+    replacement can shift the offsets of one still pending — matches sharing
+    a run stay valid without re-finding. Matches that refuse individually
+    (field results, revision overlaps, bookmark hollowing, …) are reported in
+    `refused` with their reason; the rest proceed.
+    """
+    from docx.errors import PaperRefusal
+
+    if tracked and not author:
+        raise ValueError("author is required when tracked=True")
+    _validate_writable_text(new_text, argument="new_text")
+    spans = find_text(document, needle, story=story, view=view)
+    by_story: "dict[str, List[Span]]" = {}
+    for span in spans:
+        by_story.setdefault(span.story, []).append(span)
+    results: "List[ReplaceResult]" = []
+    refused: "List[dict]" = []
+    for story_name in sorted(by_story):
+        ordered = sorted(
+            by_story[story_name], key=lambda s: s._norm_start, reverse=True
+        )
+        for span in ordered:
+            try:
+                results.append(
+                    span.replace(new_text, tracked=tracked, author=author, date=date)
+                )
+            except PaperRefusal as exc:
+                refused.append(
+                    {
+                        "story": span.story,
+                        "anchor": span.anchor.to_dict(),
+                        "error": type(exc).__name__,
+                        "message": str(exc),
+                    }
+                )
+    return ReplaceAllResult(
+        replaced_count=len(results), results=tuple(results), refused=tuple(refused)
+    )
 
 
 def find_one(

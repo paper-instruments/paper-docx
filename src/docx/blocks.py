@@ -54,7 +54,25 @@ _CR = qn("w:cr")
 _DEL_TEXT = qn("w:delText")
 
 #: run children a tracked paragraph delete knows how to handle safely
-_SAFE_RUN_CHILDREN = frozenset({_RPR, _T, _TAB, _BR, _CR})
+_SAFE_RUN_CHILDREN = frozenset(
+    {_RPR, _T, _TAB, _BR, _CR, qn("w:commentReference"), qn("w:lastRenderedPageBreak")}
+)
+
+#: markup Word scatters through virtually every saved document (v0.1 S2):
+#: spell/grammar flags, point bookmarks, comment anchors. Tracked block ops
+#: treat these as transparent — preserved in place (proofErr dropped: it is
+#: transient checker state Word regenerates) instead of refusing the edit.
+_TRANSPARENT_PARAGRAPH_CHILDREN = frozenset(
+    qn(tag)
+    for tag in (
+        "w:proofErr",
+        "w:bookmarkStart",
+        "w:bookmarkEnd",
+        "w:commentRangeStart",
+        "w:commentRangeEnd",
+    )
+)
+_PROOF_ERR = qn("w:proofErr")
 
 
 @dataclass(frozen=True)
@@ -195,7 +213,7 @@ def _next_revision_id(document: "Document") -> int:
 
 def _validate_deletable_paragraph(paragraph: "_Element") -> None:
     for child in paragraph:
-        if child.tag == _PPR:
+        if child.tag == _PPR or child.tag in _TRANSPARENT_PARAGRAPH_CHILDREN:
             continue
         if child.tag != _R:
             raise UnsupportedStructureError(
@@ -226,12 +244,23 @@ def _paragraph_visible_text(paragraph: "_Element") -> str:
 def _mark_paragraph_deleted(
     paragraph: "_Element", revision_id: int, author: str, stamp: dt.datetime
 ) -> str:
-    """Move the paragraph's runs into `w:del`, preserving each run's `rPr`."""
+    """Move the paragraph's runs into `w:del`, preserving each run's `rPr`.
+
+    Transparent markup stays OUTSIDE the deletion: bookmarks and comment
+    anchors keep their positions at paragraph level (Word does the same), and
+    `w:proofErr` flags are dropped — they are transient spell/grammar state
+    Word regenerates on open, and text marked deleted has no checker state.
+    """
     text = _paragraph_visible_text(paragraph)
     deletion = CT_RunTrackChange.new("w:del", revision_id, author, stamp)
     for child in list(paragraph):
         if child.tag == _PPR:
             continue
+        if child.tag == _PROOF_ERR:
+            paragraph.remove(child)
+            continue
+        if child.tag in _TRANSPARENT_PARAGRAPH_CHILDREN:
+            continue  # bookmarks / comment anchors keep their places
         paragraph.remove(child)
         for t_elm in child.iter(_T):
             t_elm.tag = _DEL_TEXT

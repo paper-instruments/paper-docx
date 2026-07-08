@@ -275,7 +275,11 @@ class DescribeRevisionAnchors:
 
 
 class DescribeTableGuardsAndFormatting:
-    def it_refuses_tables_whose_only_complexity_is_a_nested_table(self):
+    def it_refuses_cells_whose_only_complexity_is_a_nested_table(self):
+        """Regression for the reference's `.//w:tbl//w:tbl` bug: singly-nested
+        tables must be detected. (v0.1 S1 narrowed the guard to the target
+        cell, so the refusal now fires on the nesting cell itself while its
+        plain neighbors stay editable.)"""
         from docx.tableops import update_cell
 
         document = _doc()
@@ -283,7 +287,9 @@ class DescribeTableGuardsAndFormatting:
         table.cell(0, 0).text = "host"
         table.cell(0, 1).add_table(rows=1, cols=1)  # nested, no merges
         with pytest.raises(UnsupportedStructureError, match="nested"):
-            update_cell(table, 0, 0, "x")
+            update_cell(table, 0, 1, "x")
+        update_cell(table, 0, 0, "plain neighbor updates fine")
+        assert table.cell(0, 0).text == "plain neighbor updates fine"
 
     def it_copies_run_formatting_into_inserted_rows(self):
         from docx.tableops import insert_row_after

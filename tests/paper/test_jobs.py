@@ -84,9 +84,6 @@ class DescribeMultiRoundRedlineJob:
         with pytest.raises(UnsupportedStructureError):
             doc.revisions.accept_all()
 
-    @pytest.mark.xfail(
-        strict=True, reason="same-author layering lands in Phase 1 (S4)"
-    )
     def it_lets_the_same_author_extend_their_own_pending_edit(self, tmp_path: Path):
         path = _copy(MINIMAL, tmp_path)
         doc = docx.Document(str(path))
@@ -155,9 +152,6 @@ class DescribeFormFillJob:
         with pytest.raises(UnsupportedStructureError):
             span.replace("July 9, 2026")
 
-    @pytest.mark.xfail(
-        strict=True, reason="cell-wise table guards land in Phase 1 (S1)"
-    )
     def it_updates_a_plain_cell_in_a_table_with_merged_headers(self, tmp_path: Path):
         from docx.tableops import update_cell
 
@@ -167,7 +161,6 @@ class DescribeFormFillJob:
         update_cell(table, 1, 0, "updated plain cell")  # unmerged target cell
         assert "updated plain cell" in table.cell(1, 0).text
 
-    @pytest.mark.xfail(strict=True, reason="replace_all lands in Phase 1 (S3)")
     def it_fills_ten_placeholders_in_one_call(self, tmp_path: Path):
         from docx.search import replace_all
 

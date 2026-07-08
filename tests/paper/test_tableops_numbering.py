@@ -88,13 +88,30 @@ class DescribeUpdateCell:
         reopened.revisions.accept_all()
         assert reopened.tables[0].cell(0, 0).text == "cell 99"
 
-    def it_refuses_complex_tables_atomically(self):
+    def it_refuses_merged_target_cells_atomically(self):
         document = _doc(COMPLEX_TABLE)
         assert_refusal_atomic(
             document,
-            lambda doc: update_cell(doc.tables[0], 0, 0, "x"),
+            lambda doc: update_cell(doc.tables[0], 0, 0, "x"),  # gridSpan cell
             UnsupportedStructureError,
         )
+        assert_refusal_atomic(
+            document,
+            lambda doc: update_cell(doc.tables[0], 1, 2, "x"),  # vMerge cell
+            UnsupportedStructureError,
+        )
+        assert_refusal_atomic(
+            document,
+            lambda doc: update_cell(doc.tables[0], 2, 0, "x"),  # nested table
+            UnsupportedStructureError,
+        )
+
+    def and_it_updates_plain_cells_of_the_same_table(self, tmp_path: Path):
+        """Cell-wise guards (v0.1 S1): the merge no longer poisons the table."""
+        document = _doc(COMPLEX_TABLE)
+        update_cell(document.tables[0], 1, 0, "updated plain cell")
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        assert reopened.tables[0].cell(1, 0).text == "updated plain cell"
 
     def it_refuses_out_of_range_addresses(self):
         _, table = _doc_with_simple_table()
@@ -143,12 +160,21 @@ class DescribeRowOperations:
             UnsupportedStructureError,
         )
 
-    def it_refuses_structural_ops_on_complex_tables(self):
+    def it_refuses_row_ops_intersecting_a_vertical_merge(self):
         document = _doc(COMPLEX_TABLE)
-        with pytest.raises(UnsupportedStructureError):
-            insert_row_after(document.tables[0], 0, ["x"])
-        with pytest.raises(UnsupportedStructureError):
-            delete_row(document.tables[0], 0)
+        with pytest.raises(UnsupportedStructureError, match="vertical merge"):
+            insert_row_after(document.tables[0], 1, ["x"])  # template row merged
+        with pytest.raises(UnsupportedStructureError, match="vertical merge"):
+            delete_row(document.tables[0], 1)  # vMerge restart row
+        with pytest.raises(UnsupportedStructureError, match="split"):
+            # clean template, but the insertion point splits rows 1-2's merge
+            insert_row_after(document.tables[0], 1, ["x"], copy_format_from=0)
+
+    def and_it_allows_row_ops_clear_of_the_merge(self, tmp_path: Path):
+        document = _doc(COMPLEX_TABLE)
+        insert_row_after(document.tables[0], 0, ["a", "b", "c"])
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        assert len(reopened.tables[0].rows) == 4
 
 
 class DescribeListNumbering:
