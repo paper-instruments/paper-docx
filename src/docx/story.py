@@ -315,76 +315,79 @@ def _block_containers(story: str, root: "_Element") -> "Iterator[Tuple[_Element,
         raise ValueError(f"unrecognized story root {tag!r} in {story}")
 
 
-def _emit_blocks(
-    story: str,
+def _walk_container(
     container: "_Element",
-    view: str,
     counter: List[int],
     *,
     in_sdt: bool,
     in_txbx: bool,
-) -> Iterator[Block]:
+) -> "Iterator[Tuple[str, int, _Element, bool, bool]]":
+    """(kind, block-index, element, in_sdt, in_txbx) for each block, in order.
+
+    THE single definition of block identity and indexing — `iter_blocks` and
+    `docx.search` both ride on it, so a span's block anchor can never disagree
+    with the outline's.
+    """
     for child in _first_choice_children(container):
         if child.tag == _P:
-            yield _paragraph_block(story, child, view, counter, in_sdt=in_sdt, in_txbx=in_txbx)
-            for txbx in _text_box_contents(child):
-                yield from _emit_blocks(
-                    story, txbx, view, counter, in_sdt=in_sdt, in_txbx=True
-                )
-        elif child.tag == _TBL:
-            visitor = _subtree_text(child, view, skip_text_boxes=False,
-                                    in_sdt=in_sdt, in_txbx=in_txbx)
             index = counter[0]
             counter[0] += 1
-            text = _table_text(child, view)
-            yield Block(
-                story=story,
-                kind="table",
-                index=index,
-                anchor=Anchor(story=story, index=index, content_hash=content_hash(text)),
-                text=text,
-                style_id=None,
-                in_insert=visitor.in_insert,
-                in_delete=visitor.in_delete,
-                in_content_control=in_sdt or visitor.in_content_control,
-                in_text_box=in_txbx or visitor.in_text_box,
-                table=_table_shape(child),
-            )
+            yield ("paragraph", index, child, in_sdt, in_txbx)
+            for txbx in _text_box_contents(child):
+                yield from _walk_container(txbx, counter, in_sdt=in_sdt, in_txbx=True)
+        elif child.tag == _TBL:
+            index = counter[0]
+            counter[0] += 1
+            yield ("table", index, child, in_sdt, in_txbx)
         elif child.tag == _SDT:
             content = child.find(_SDT_CONTENT)
             if content is not None:
-                yield from _emit_blocks(
-                    story, content, view, counter, in_sdt=True, in_txbx=in_txbx
-                )
+                yield from _walk_container(content, counter, in_sdt=True, in_txbx=in_txbx)
 
 
-def _paragraph_block(
+def _iter_block_elements(
+    story: str, root: "_Element"
+) -> "Iterator[Tuple[str, int, _Element, bool, bool]]":
+    counter = [0]
+    for container, in_sdt in _block_containers(story, root):
+        yield from _walk_container(container, counter, in_sdt=in_sdt, in_txbx=False)
+
+
+def _build_block(
     story: str,
-    paragraph: "_Element",
+    kind: str,
+    index: int,
+    element: "_Element",
     view: str,
-    counter: List[int],
     *,
     in_sdt: bool,
     in_txbx: bool,
 ) -> Block:
-    visitor = _subtree_text(paragraph, view, skip_text_boxes=True,
-                            in_sdt=in_sdt, in_txbx=in_txbx)
-    style_values = paragraph.xpath(_P_STYLE_XPATH)
-    index = counter[0]
-    counter[0] += 1
-    text = visitor.text
+    if kind == "table":
+        visitor = _subtree_text(element, view, skip_text_boxes=False,
+                                in_sdt=in_sdt, in_txbx=in_txbx)
+        text = _table_text(element, view)
+        style_id = None
+        table = _table_shape(element)
+    else:
+        visitor = _subtree_text(element, view, skip_text_boxes=True,
+                                in_sdt=in_sdt, in_txbx=in_txbx)
+        text = visitor.text
+        style_values = element.xpath(_P_STYLE_XPATH)
+        style_id = str(style_values[0]) if style_values else None
+        table = None
     return Block(
         story=story,
-        kind="paragraph",
+        kind=kind,
         index=index,
         anchor=Anchor(story=story, index=index, content_hash=content_hash(text)),
         text=text,
-        style_id=str(style_values[0]) if style_values else None,
+        style_id=style_id,
         in_insert=visitor.in_insert,
         in_delete=visitor.in_delete,
         in_content_control=in_sdt or visitor.in_content_control,
         in_text_box=in_txbx or visitor.in_text_box,
-        table=None,
+        table=table,
     )
 
 
@@ -436,10 +439,9 @@ def iter_blocks(document: "Document", *, view: str = "current") -> Iterator[Bloc
     if view not in VIEWS:
         raise ValueError(f"view must be one of {VIEWS}, got {view!r}")
     for story, root in _story_elements(document):
-        counter = [0]
-        for container, in_sdt in _block_containers(story, root):
-            yield from _emit_blocks(
-                story, container, view, counter, in_sdt=in_sdt, in_txbx=False
+        for kind, index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
+            yield _build_block(
+                story, kind, index, element, view, in_sdt=in_sdt, in_txbx=in_txbx
             )
 
 

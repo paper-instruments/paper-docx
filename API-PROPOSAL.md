@@ -282,8 +282,14 @@ find_one(doc, "forty-two units").replace(
     "forty-seven units", tracked=True, author="Alice Editor")           # redline
 ```
 Invariant (Phase 5): `replace(x→y)` then `replace(y→x)` restores visible text
-and formatting. Invariant (Phase 6, closed in Phase 8): accept(tracked
-replace) ≡ plain replace; reject ≡ original.
+always, and restores formatting fully when the span's own text carries
+uniform formatting. **Amendment (found in implementation):** a span covering
+a formatting transition collapses its interior formatting into the start
+run's when replaced — the information is destroyed by any replacement (the
+reference helpers share this property) — so the inverse restores text plus
+all *out-of-span* formatting, and the in-span text renders uniformly.
+Invariant (Phase 6, closed in Phase 8): accept(tracked replace) ≡ plain
+replace; reject ≡ original.
 
 `ReplaceResult`: `(story, deleted_text, inserted_text, tracked, revision_ids)`
 with `.to_dict()` (`schema="paper_replace", version=1`).
