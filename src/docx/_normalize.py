@@ -35,12 +35,17 @@ NORMALIZE_CHARS = str.maketrans(
     }
 )
 
-_WHITESPACE_RUN = re.compile(r"[ \n]+")
+_WHITESPACE_RUN = re.compile(r"\s+")
 
 
 def normalize_text(value: str) -> str:
     """`value` normalized for matching: folded punctuation, collapsed
-    whitespace, casefolded. Never applied to document content on write."""
+    whitespace, casefolded. Never applied to document content on write.
+
+    ANY Unicode whitespace collapses to a single ASCII space (`\\s+`, not just
+    the spaces in the table) so needles and document text normalize
+    identically no matter which exotic space either side carries.
+    """
     value = value.translate(NORMALIZE_CHARS)
     value = _WHITESPACE_RUN.sub(" ", value)
     return value.casefold()

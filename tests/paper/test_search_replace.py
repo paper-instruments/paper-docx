@@ -305,9 +305,13 @@ class DescribeTrackedReplace:
         )
         reopened = save_and_reopen(document, tmp_path / "out.docx")
         body = reopened.element.body
-        (del_rpr,) = body.xpath("//w:del/w:r/w:rPr")
+        # deleted text keeps each SOURCE run's rPr (one w:r per source run)
+        del_rprs = body.xpath("//w:del/w:r/w:rPr")
+        assert del_rprs, "deletion lost its runs"
+        assert all(r.find(qn("w:b")) is not None for r in del_rprs), (
+            "deleted side lost bold"
+        )
         (ins_rpr,) = body.xpath("//w:ins/w:r/w:rPr")
-        assert del_rpr.find(qn("w:b")) is not None, "deleted side lost bold"
         assert ins_rpr.find(qn("w:b")) is not None, "inserted side lost bold"
 
     def it_requires_an_author(self):

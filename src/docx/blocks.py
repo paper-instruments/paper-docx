@@ -172,7 +172,8 @@ def _stamp_paragraph_mark(
         r_pr = OxmlElement("w:rPr")
         # w:rPr's successors in the pPr child sequence (CT_PPr._tag_seq)
         p_pr.insert_element_before(r_pr, "w:sectPr", "w:pPrChange")
-    r_pr.append(CT_RunTrackChange.new(tag, revision_id, author, stamp))
+    # CT_ParaRPr's schema puts w:ins/w:del FIRST, before any run properties
+    r_pr.insert(0, CT_RunTrackChange.new(tag, revision_id, author, stamp))
 
 
 def _wrap_paragraph_content_as_insertion(
@@ -254,32 +255,34 @@ def _select_paragraph_range(
     if count < 1:
         raise ValueError("count must be >= 1")
     story, start_p = _resolve_anchor_paragraph(document, start_anchor)
-    root = dict(_story_elements(document))[story]
-    paragraphs = list(root.iter(_P))
-    start_index = next(i for i, p in enumerate(paragraphs) if p is start_p)
+    # ranges are counted among the start paragraph's SIBLINGS: nested
+    # paragraphs (table cells, text boxes) never silently join a range, and
+    # the same-parent safety rule holds by construction
+    parent = start_p.getparent()
+    siblings = [child for child in parent if child.tag == _P]
+    start_index = next(i for i, p in enumerate(siblings) if p is start_p)
     if end_anchor is not None:
         end_story, end_p = _resolve_anchor_paragraph(document, end_anchor)
         if end_story != story:
             raise BoundaryViolationError(
                 "start and end anchors live in different story parts"
             )
-        end_index = next(i for i, p in enumerate(paragraphs) if p is end_p)
+        if end_p.getparent() is not parent:
+            raise BoundaryViolationError(
+                "start and end anchors do not share one parent; edits spanning"
+                " story regions, table boundaries, or content-control"
+                " boundaries are refused"
+            )
+        end_index = next(i for i, p in enumerate(siblings) if p is end_p)
         if end_index < start_index:
             raise TargetNotFoundError("end anchor appears before start anchor")
     else:
         end_index = start_index + count - 1
-        if end_index >= len(paragraphs):
+        if end_index >= len(siblings):
             raise TargetNotFoundError(
                 f"count={count} extends past the last paragraph of {story}"
             )
-    selected = paragraphs[start_index : end_index + 1]
-    parent = selected[0].getparent()
-    if any(p.getparent() is not parent for p in selected):
-        raise BoundaryViolationError(
-            "selected paragraphs do not share one parent; edits spanning story"
-            " regions, table boundaries, or content-control boundaries are refused"
-        )
-    return story, selected
+    return story, siblings[start_index : end_index + 1]
 
 
 def _insert_after(anchor: "_Element", nodes: "Sequence[_Element]") -> None:

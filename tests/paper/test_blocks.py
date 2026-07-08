@@ -167,16 +167,29 @@ class DescribeTrackedDeleteParagraphs:
         assert result.deleted_blocks == 2
 
     def it_refuses_ranges_that_do_not_share_one_parent(self):
-        """Body paragraph + table-cell paragraph: never silently corrupted."""
+        """Body paragraph -> table-cell paragraph: never silently corrupted."""
         document = _doc(TABLES)
         assert_refusal_atomic(
             document,
             lambda doc: tracked_delete_paragraphs(
-                doc, "Paragraph before the merged", count=2,
+                doc, "Paragraph before the merged",
+                end_anchor="N11",  # nested-table cell paragraph
                 author="Carol QA", date=FROZEN,
             ),
             BoundaryViolationError,
         )
+
+    def it_counts_ranges_among_siblings_so_tables_are_bracketed_not_selected(self):
+        """count=2 from the paragraph before a table selects the paragraphs
+        AROUND it (siblings); the table itself is untouched."""
+        document = _doc(TABLES)
+        result = tracked_delete_paragraphs(
+            document, "Paragraph before the merged", count=2,
+            author="Carol QA", date=FROZEN,
+        )
+        assert result.deleted_blocks == 2
+        assert result.deleted_text[1] == "Paragraph after the tables."
+        assert len(document.tables) == 1  # table survives
 
     def it_refuses_paragraphs_with_inline_controls(self):
         document = _doc(CONTROLS)

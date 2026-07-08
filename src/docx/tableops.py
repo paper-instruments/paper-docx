@@ -38,7 +38,9 @@ _T = qn("w:t")
 
 
 def _is_complex(table: "Table") -> bool:
-    return bool(table._tbl.xpath(".//w:vMerge | .//w:gridSpan | .//w:tbl//w:tbl"))
+    # `.//w:tbl` relative to this w:tbl matches DESCENDANT tables only, i.e.
+    # any nested table (the reference's `.//w:tbl//w:tbl` missed singly-nested)
+    return bool(table._tbl.xpath(".//w:vMerge | .//w:gridSpan | .//w:tbl"))
 
 
 def _refuse_complex(table: "Table") -> None:
@@ -222,7 +224,27 @@ def insert_row_after(
     new_tr = copy.deepcopy(rows[template_index]._tr)
     rows[row]._tr.addnext(new_tr)
     for index, cell in enumerate(table.rows[row + 1].cells):
-        cell.text = values[index] if index < len(values) else ""
+        _set_cell_text_keeping_format(
+            cell, values[index] if index < len(values) else ""
+        )
+
+
+def _set_cell_text_keeping_format(cell: "_Cell", text: str) -> None:
+    """Replace a copied cell's text, keeping its paragraph and run formatting
+    (the upstream `.text` setter would drop the template's run properties)."""
+    paragraph = cell.paragraphs[0]
+    template_rpr = None
+    for run in paragraph.runs:
+        rpr = run._r.find(qn("w:rPr"))
+        if rpr is not None:
+            template_rpr = copy.deepcopy(rpr)
+            break
+    for extra in cell.paragraphs[1:]:
+        extra._p.getparent().remove(extra._p)
+    paragraph.clear()
+    run = paragraph.add_run(text)
+    if template_rpr is not None:
+        run._r.insert(0, template_rpr)
 
 
 def delete_row(table: "Table", row: int) -> None:

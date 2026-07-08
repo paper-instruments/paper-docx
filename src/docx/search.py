@@ -27,6 +27,7 @@ from docx.errors import (
     UnsupportedStructureError,
 )
 from docx.oxml.ns import qn
+from docx.oxml.parser import OxmlElement
 from docx.story import (
     VIEWS,
     Anchor,
@@ -45,6 +46,9 @@ _T = qn("w:t")
 _DEL_TEXT = qn("w:delText")
 _INSTR_TEXT = qn("w:instrText")
 _TEXT_TAGS = (_T, _DEL_TEXT, _INSTR_TEXT)
+#: tab/break elements contribute fixed characters to the search text so
+#: needles can match across them; spans containing them refuse to replace
+_SYNTHETIC_TAGS = {qn("w:tab"): "\t", qn("w:br"): "\n", qn("w:cr"): "\n"}
 _R = qn("w:r")
 _INS = qn("w:ins")
 _DEL = qn("w:del")
@@ -57,7 +61,12 @@ _XML_SPACE = qn("xml:space")
 
 @dataclass
 class _Atom:
-    """One text node in search space, with its structural context."""
+    """One text node in search space, with its structural context.
+
+    `fixed_text` marks a synthetic atom: a `w:tab`/`w:br`/`w:cr` that
+    contributes a fixed character to the search text so needles can match
+    across it, but that can never be edited through a span (replace refuses).
+    """
 
     element: "_Element"
     tag: str
@@ -70,10 +79,17 @@ class _Atom:
     in_delete: bool
     in_text_box: bool
     in_hyperlink: bool
+    fixed_text: Optional[str] = None
 
     @property
     def text(self) -> str:
+        if self.fixed_text is not None:
+            return self.fixed_text
         return self.element.text or ""
+
+    @property
+    def is_synthetic(self) -> bool:
+        return self.fixed_text is not None
 
 
 def _collect_block_atoms(
@@ -91,7 +107,7 @@ def _collect_block_atoms(
             tag = child.tag
             if tag == _TXBX and skip_text_boxes:
                 continue
-            if tag in _TEXT_TAGS:
+            if tag in _TEXT_TAGS or tag in _SYNTHETIC_TAGS:
                 yield _Atom(
                     element=child,
                     tag=tag,
@@ -104,6 +120,7 @@ def _collect_block_atoms(
                     in_delete=in_del,
                     in_text_box=in_box,
                     in_hyperlink=in_hlink,
+                    fixed_text=_SYNTHETIC_TAGS.get(tag),
                 )
                 continue
             yield from walk(
@@ -134,10 +151,14 @@ def _story_atoms(document: "Document", story_name: str, root: "_Element") -> "Li
 
 
 def _include_atom(atom: _Atom, view: str) -> bool:
+    if atom.is_synthetic:
+        return not (view == "original" and atom.in_insert)
     if view == "current":
         return atom.tag == _T
     if view == "original":
-        return (atom.tag == _T and not atom.in_insert) or atom.tag == _DEL_TEXT
+        # nothing inside a pending insertion existed in the original —
+        # including deletions nested within it
+        return not atom.in_insert and atom.tag in (_T, _DEL_TEXT)
     return True  # "all"
 
 
@@ -175,8 +196,12 @@ def _normalized_with_map(value: str) -> Tuple[str, List[int]]:
         for out in translated:
             if out.isspace():
                 out = " "
-            chars.append(out.casefold())
-            mapping.append(index)
+            # casefold can EXPAND one char to several ('ß' -> 'ss'); every
+            # expanded char must map back to the same source index or the
+            # map desynchronizes and matching crashes past the expansion
+            for folded in out.casefold():
+                chars.append(folded)
+                mapping.append(index)
     compact: List[str] = []
     compact_map: List[int] = []
     previous_space = False
@@ -236,6 +261,7 @@ class Span:
     _start_offset: int = field(repr=False)  # into first atom's text
     _end_offset: int = field(repr=False)  # exclusive, into last atom's text
     _norm_start: int = field(repr=False)  # position in the story's normalized text
+    _consumed: bool = field(default=False, repr=False)  # set by tracked replace
 
     # -- validation -------------------------------------------------------
 
@@ -257,14 +283,35 @@ class Span:
         return "".join(pieces)
 
     def _validate_fresh(self) -> None:
+        if self._consumed:
+            raise TargetNotFoundError(
+                "span was consumed by a tracked replace; re-find the text"
+            )
         if self._current_slice() != self.text:
             raise TargetNotFoundError(
                 f"span is stale: expected {self.text!r} at its anchor"
                 f" ({self.anchor.to_dict()}) but the document has changed"
             )
+        # detached atoms still hold their text; an edit landing in an orphaned
+        # subtree would report success and reach nothing (§1.4's nightmare)
+        story_roots = {id(root) for _, root in _story_elements(self._document)}
+        for atom in self._atoms:
+            top = atom.element
+            while top.getparent() is not None:
+                top = top.getparent()
+            if id(top) not in story_roots:
+                raise TargetNotFoundError(
+                    "span is stale: its containing structure was removed from"
+                    " the document"
+                )
 
     def _validate_replaceable(self) -> None:
         for atom in self._atoms:
+            if atom.is_synthetic:
+                raise UnsupportedStructureError(
+                    "span crosses a tab or line break; replace the text"
+                    " segments on either side individually"
+                )
             if atom.tag == _DEL_TEXT or atom.in_delete:
                 raise UnsupportedStructureError(
                     "span includes tracked-deleted text; resolve the revision"
@@ -358,17 +405,51 @@ class Span:
                 raise UnsupportedStructureError(
                     "matched text is not inside a run; cannot anchor a revision"
                 )
-        prefix_len, suffix_len = _common_affix_lengths(self.text, new_text)
-        old_mid = self.text[prefix_len : len(self.text) - suffix_len]
-        new_mid = new_text[prefix_len : len(new_text) - suffix_len]
-        if not old_mid and not new_mid:
+        # layered revisions: a span straddling a pending w:ins would emit a
+        # w:del claiming inserted text was base-document content — fabricated
+        # history that corrupts reject/original views. Fully inside ONE w:ins
+        # nests correctly and is allowed.
+        enclosing_insertions = {_enclosing_insertion(atom.element) for atom in self._atoms}
+        if len(enclosing_insertions) > 1:
+            raise UnsupportedStructureError(
+                "span overlaps a pending tracked insertion; accept or reject"
+                " the existing revision first, or target text inside or"
+                " outside it, not across its boundary"
+            )
+        if self.text == new_text:
             raise TargetNotFoundError(
                 "replacement equals the existing text; nothing to change"
             )
+        prefix_len, suffix_len = _common_affix_lengths(self.text, new_text)
         first, last = self._atoms[0], self._atoms[-1]
+        if first is not last:
+            # kept characters must never cross run boundaries (they would
+            # silently adopt another run's formatting): clamp the trim so the
+            # prefix stays in the first run and the suffix in the last
+            prefix_len = min(prefix_len, len(first.text) - self._start_offset)
+            suffix_len = min(suffix_len, self._end_offset)
+        old_mid = self.text[prefix_len : len(self.text) - suffix_len]
+        new_mid = new_text[prefix_len : len(new_text) - suffix_len]
         stamp = date if date is not None else _clock.now()
         next_id = _next_revision_id(self._document)
         rpr = first.run.find(_RPR) if first.run is not None else None
+
+        # deleted text must keep each source run's own formatting inside
+        # w:del (or reject would restore it with the wrong rPr); computed
+        # before mutation while atom texts are intact
+        span_pieces = []
+        for i, atom in enumerate(self._atoms):
+            start = self._start_offset if i == 0 else 0
+            end = self._end_offset if i == len(self._atoms) - 1 else len(atom.text)
+            span_pieces.append((atom.run, atom.text[start:end]))
+        deleted_pieces = _pieces_in_range(
+            span_pieces, prefix_len, len(self.text) - suffix_len
+        )
+        # the inserted text renders with the first CHANGED run's formatting
+        ins_source_run = deleted_pieces[0][0] if deleted_pieces else first.run
+        ins_rpr = (
+            ins_source_run.find(_RPR) if ins_source_run is not None else None
+        )
 
         # -- everything validated; mutate ---------------------------------
         before = first.text[: self._start_offset]
@@ -386,24 +467,44 @@ class Span:
         elif first is not last:
             _set_preserved_text(last.element, "")
 
+        # content of the first run that FOLLOWS the matched text node (a
+        # tab, a second w:t, a drawing) must move after the emitted revision
+        # or the visible order scrambles
+        trailing = _run_content_after(first.run, first.element)
+        moved_run = None
+        if trailing:
+            moved_run = OxmlElement("w:r")
+            if rpr is not None:
+                import copy as _copy
+
+                moved_run.append(_copy.deepcopy(rpr))
+            for element in trailing:
+                first.run.remove(element)
+                moved_run.append(element)
+
         revision_ids: "List[int]" = []
         insert_point = first.run
         if old_mid:
             del_elm = CT_RunTrackChange.new("w:del", next_id, author, stamp)
-            del_elm.add_tracked_run(old_mid, rpr, deleted=True)
+            for source_run, piece in deleted_pieces:
+                source_rpr = source_run.find(_RPR) if source_run is not None else None
+                del_elm.add_tracked_run(piece, source_rpr, deleted=True)
             insert_point.addnext(del_elm)
             insert_point = del_elm
             revision_ids.append(next_id)
             next_id += 1
         if new_mid:
             ins_elm = CT_RunTrackChange.new("w:ins", next_id, author, stamp)
-            ins_elm.add_tracked_run(new_mid, rpr, deleted=False)
+            ins_elm.add_tracked_run(new_mid, ins_rpr, deleted=False)
             insert_point.addnext(ins_elm)
             insert_point = ins_elm
             revision_ids.append(next_id)
         if tail_in_new_run and (suffix + after):
             tail_run = _new_text_run(suffix + after, rpr)
             insert_point.addnext(tail_run)
+            insert_point = tail_run
+        if moved_run is not None:
+            insert_point.addnext(moved_run)
 
         result = ReplaceResult(
             story=self.story,
@@ -413,18 +514,14 @@ class Span:
             revision_ids=tuple(revision_ids),
         )
         # span state after a tracked replace is complex; force a fresh find
-        # for any further use
         self.text = new_text
-        self._atoms = self._atoms[:1]
-        self._end_offset = -1
+        self._consumed = True
         return result
 
 
 def _new_text_run(text: str, rpr: "Optional[_Element]"):
     """A new `w:r` built through the oxml layer, with `rpr` cloned in."""
     import copy
-
-    from docx.oxml.parser import OxmlElement
 
     run = OxmlElement("w:r")
     if rpr is not None:
@@ -433,13 +530,61 @@ def _new_text_run(text: str, rpr: "Optional[_Element]"):
     return run
 
 
+def _pieces_in_range(pieces, start: int, end: int):
+    """(run, text-slice) pieces intersected with [start, end) over their
+    concatenation, consecutive same-run pieces merged."""
+    out = []
+    position = 0
+    for run, text in pieces:
+        lo = max(start, position)
+        hi = min(end, position + len(text))
+        if hi > lo:
+            fragment = text[lo - position : hi - position]
+            if out and out[-1][0] is run:
+                out[-1] = (run, out[-1][1] + fragment)
+            else:
+                out.append((run, fragment))
+        position += len(text)
+    return out
+
+
+def _enclosing_insertion(element: "_Element") -> "Optional[_Element]":
+    """The nearest `w:ins` ancestor of `element`, or None."""
+    node = element.getparent()
+    while node is not None:
+        if node.tag == _INS:
+            return node
+        node = node.getparent()
+    return None
+
+
+def _run_content_after(run: "Optional[_Element]", element: "_Element"):
+    """`run`'s content children positioned after `element`, in order."""
+    if run is None:
+        return []
+    trailing = []
+    past = False
+    for child in run:
+        if past and child.tag != _RPR:
+            trailing.append(child)
+        if child is element:
+            past = True
+    return trailing
+
+
 def _next_revision_id(document: "Document") -> int:
-    """One above the highest revision id anywhere in the document."""
+    """One above the highest revision id anywhere in the document.
+
+    Uses plain element iteration — story roots like `w:footnotes` carry no
+    registered oxml class, so prefix-based `.xpath()` is unavailable there.
+    """
+    w_id = qn("w:id")
     highest = 0
     for _, root in _story_elements(document):
-        for value in root.xpath("//w:ins/@w:id | //w:del/@w:id"):
+        for node in root.iter(_INS, _DEL):
+            value = node.get(w_id)
             try:
-                highest = max(highest, int(value))
+                highest = max(highest, int(value)) if value else highest
             except ValueError:
                 continue
     return highest + 1

@@ -229,6 +229,10 @@ class _TextVisitor:
         if tag == _DEL_TEXT:
             if self.view == "current":
                 return
+            if self.view == "original" and in_ins:
+                # a deletion nested inside a pending insertion never existed
+                # in the original document
+                return
             self._emit(element.text or "", in_ins, True, in_sdt, in_txbx)
             return
         if tag == _TAB:

@@ -53,14 +53,53 @@ _CONTENT_TYPES_PART = "[Content_Types].xml"
 _FIXED_ZIP_DATE = (1980, 1, 1, 0, 0, 0)
 
 
+class UnsupportedXmlError(ValueError):
+    """XML this kernel refuses to compare (fail loudly, never guess)."""
+
+
 def _parse(data: bytes) -> etree._Element:
-    """Parse raw part bytes for comparison. Raises XMLSyntaxError loudly."""
-    return etree.fromstring(data, _compare_parser)
+    """Parse raw part bytes for comparison. Raises XMLSyntaxError loudly.
+
+    Parts carrying an internal DTD subset are refused: unresolved entity
+    references would compare by name while their replacement text differs — a
+    false-EQUAL — and ISO 29500 forbids DOCTYPE in package parts anyway.
+    """
+    root = etree.fromstring(data, _compare_parser)
+    docinfo = root.getroottree().docinfo
+    if docinfo.internalDTD is not None or docinfo.doctype:
+        raise UnsupportedXmlError(
+            "part carries a DOCTYPE/internal DTD subset; OPC parts must not"
+            " (ISO 29500), and entity semantics cannot be compared safely"
+        )
+    return root
+
+
+def _doc_level_nodes(root: etree._Element) -> Tuple:
+    """Comments/PIs outside the root element (prolog and epilog), in order.
+
+    An `<?mso-application?>` prolog PI changes how Windows treats the file;
+    differences there are semantic and must not be invisible.
+    """
+    prolog = []
+    node = root.getprevious()
+    while node is not None:
+        prolog.append((str(node.tag), getattr(node, "target", None), node.text or ""))
+        node = node.getprevious()
+    epilog = []
+    node = root.getnext()
+    while node is not None:
+        epilog.append((str(node.tag), getattr(node, "target", None), node.text or ""))
+        node = node.getnext()
+    return tuple(reversed(prolog)), tuple(epilog)
 
 
 def _elements_equal(a: etree._Element, b: etree._Element) -> bool:
     if a.tag != b.tag:
         return False
+    # processing instructions share one tag object; the target is identity
+    if not isinstance(a.tag, str):
+        if getattr(a, "target", None) != getattr(b, "target", None):
+            return False
     if dict(a.attrib) != dict(b.attrib):
         return False
     if (a.text or "") != (b.text or ""):
@@ -85,12 +124,23 @@ def xml_equivalent(a: bytes, b: bytes) -> bool:
     insignificant (XML defines attributes as unordered); child order is
     significant; text and tail content compare verbatim, whitespace included
     (CONVENTIONS §3 — a canonicalizer that trims a meaningful trailing space
-    would corrupt documents through `patch_save`).
+    would corrupt documents through `patch_save`). Prolog/epilog comments and
+    processing instructions are compared too.
 
-    Raises `lxml.etree.XMLSyntaxError` on malformed input — this function
-    never guesses.
+    Raises `lxml.etree.XMLSyntaxError` on malformed input and
+    |UnsupportedXmlError| on DTD-bearing input — this function never guesses.
+
+    Known limit (documented in API-PROPOSAL.md): attribute VALUES holding
+    QNames compare textually, so a prefix rebound to a different URI while
+    the QName text stays identical is not detected. OOXML producers keep the
+    standard prefixes, and the error direction in `diff_package` remains
+    conservative for everything else.
     """
-    return _elements_equal(_parse(a), _parse(b))
+    root_a = _parse(a)
+    root_b = _parse(b)
+    if _doc_level_nodes(root_a) != _doc_level_nodes(root_b):
+        return False
+    return _elements_equal(root_a, root_b)
 
 
 def _relationship_multiset(data: bytes) -> Tuple[Tuple[str, ...], ...]:
@@ -149,8 +199,9 @@ def _parts_semantically_equal(
         if name.endswith(".rels"):
             return _relationship_multiset(a) == _relationship_multiset(b)
         return xml_equivalent(a, b)
-    except etree.XMLSyntaxError:
-        # a changed part that cannot be parsed can never be proven equivalent
+    except (etree.XMLSyntaxError, UnsupportedXmlError):
+        # a changed part that cannot be parsed (or compared safely) can never
+        # be proven equivalent
         return False
 
 

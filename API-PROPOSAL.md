@@ -45,6 +45,15 @@ Confirmed pinned shapes against real code: §2 exceptions (`docx/errors.py` is
 a free name; upstream uses `exceptions.py`), §2 anchors (below), §4 sidecar
 schema (already shipping in Phase 1), §7 kernel (F1 resolution above).
 
+**Post-implementation amendments (adversarial review):** duplicate zip member
+names collapse with LAST entry winning (`zipfile` semantics — corrected from
+this document's first draft which said "first"); `xml_equivalent` refuses
+DTD-bearing parts loudly (`UnsupportedXmlError`) and compares prolog/epilog
+comments/PIs and PI targets; QName-valued attributes compare textually
+(documented limit — prefix rebinding with identical QName text is not
+detected; OOXML producers keep standard prefixes and the diff error direction
+stays conservative elsewhere).
+
 ---
 
 ## 1. `docx.errors` — the refusal hierarchy (§2, pinned)
@@ -268,13 +277,23 @@ cloned from the start run to both sides. Same-paragraph targets only.
 Refusal conditions (both modes, all atomic):
 - Span includes deleted (`w:delText`) or field-instruction (`w:instrText`)
   text → `UnsupportedStructureError`.
+- Span crosses a tab or line break (`w:tab`/`w:br`/`w:cr`) →
+  `UnsupportedStructureError` (matching sees them as spaces; replacing
+  across one would silently drop it).
 - Span starts and ends in different content-control (`w:sdt`) scopes →
   `BoundaryViolationError`.
 - Span crosses a paragraph boundary → `BoundaryViolationError` (block ops
   are Phase 7's job).
-- Stale span → `TargetNotFoundError`.
+- Stale, consumed, or detached span → `TargetNotFoundError` (detached = the
+  span's containing structure was removed from the tree after capture).
 - Tracked replacement where trim leaves no change → `TargetNotFoundError`
   ("nothing to change" is a targeting failure, not silence).
+- Tracked only: span inside a hyperlink, or straddling a pending `w:ins`
+  boundary (layered revision history cannot be represented faithfully) →
+  `UnsupportedStructureError`; a span wholly inside one `w:ins` nests fine.
+- Tracked only: kept prefix/suffix characters are clamped to their own runs
+  so unchanged characters never migrate formatting; the redline may re-state
+  run-crossing kept characters inside the marked span instead.
 
 ```python
 find_one(doc, "$75–100/hr").replace("$85–110/hr")                       # surgical

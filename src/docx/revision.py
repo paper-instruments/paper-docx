@@ -165,20 +165,27 @@ def _iter_revision_nodes(
 
 
 def _enumerate_revisions(document: "Document") -> Iterator[Revision]:
+    from docx.story import _build_block
+
     for story, root in _story_elements(document):
-        for kind, index, element, _sdt, _txbx in _iter_block_elements(story, root):
+        for kind, index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
             skip_boxes = kind == "paragraph"
+            block_anchor = None
             for node in _iter_revision_nodes(element, skip_text_boxes=skip_boxes):
-                text = _node_text(node)
+                if block_anchor is None:
+                    # the anchor is the containing BLOCK's (so it verifies
+                    # against outline blocks and is usable as an AnchorLike)
+                    block_anchor = _build_block(
+                        story, kind, index, element, "current",
+                        in_sdt=in_sdt, in_txbx=in_txbx,
+                    ).anchor
                 yield Revision(
                     revision_type="insertion" if node.tag == _INS else "deletion",
                     author=node.get(_AUTHOR) or "",
                     date=_parse_date(node.get(_DATE)),
-                    text=text,
+                    text=_node_text(node),
                     story=story,
-                    anchor=Anchor(
-                        story=story, index=index, content_hash=content_hash(text)
-                    ),
+                    anchor=block_anchor,
                     is_paragraph_mark=_is_paragraph_mark_revision(node),
                     _element=node,
                 )
@@ -230,17 +237,56 @@ def _paragraph_has_content(paragraph: "_Element") -> bool:
     return any(child.tag != _PPR for child in paragraph)
 
 
+def _is_last_block_in_container(paragraph: "_Element") -> bool:
+    parent = paragraph.getparent()
+    if parent is None:
+        return True
+    blocks = [c for c in parent if c.tag in (_P, qn("w:tbl")) and c is not paragraph]
+    return not blocks
+
+
+def _next_paragraph_sibling(paragraph: "_Element") -> "Optional[_Element]":
+    node = paragraph.getnext()
+    while node is not None:
+        if node.tag == _P:
+            return node
+        if node.tag == qn("w:tbl"):
+            return None  # merging across a table is not a paragraph join
+        node = node.getnext()
+    return None
+
+
 def _resolve_paragraph_mark(node: "_Element", *, accept: bool) -> None:
+    """Resolve a paragraph-MARK revision (`w:pPr/w:rPr/w:ins|w:del`).
+
+    Removing the mark applies/undoes the paragraph-break change:
+
+    * mark removed + paragraph empty -> the paragraph disappears, unless it
+      is the container's last block (a `w:tc`/body must keep one block —
+      removing it would emit schema-invalid XML).
+    * mark-DELETED paragraph that still has content (Word's "deleted
+      pilcrow") -> accepting merges its content into the following
+      paragraph, exactly as Word's Accept All does. The symmetric reject of
+      a mark-INSERTED split merges the same way.
+    """
     paragraph = _paragraph_of_mark(node)
+    is_deletion = node.tag == _DEL
+    applying_break_change = (accept and is_deletion) or (not accept and not is_deletion)
+
     r_pr = node.getparent()
     r_pr.remove(node)
-    if r_pr is not None and len(r_pr) == 0:
+    if len(r_pr) == 0:
         r_pr.getparent().remove(r_pr)
-    if paragraph is None:
+    if paragraph is None or not applying_break_change:
         return
-    is_deletion = node.tag == _DEL
-    remove_paragraph = (
-        (accept and is_deletion) or (not accept and not is_deletion)
-    ) and not _paragraph_has_content(paragraph)
-    if remove_paragraph and paragraph.getparent() is not None:
+    if _paragraph_has_content(paragraph):
+        following = _next_paragraph_sibling(paragraph)
+        if following is None:
+            return  # nothing to join with; the content stays as a paragraph
+        insert_at = 1 if following.find(_PPR) is not None else 0
+        for child in reversed([c for c in paragraph if c.tag != _PPR]):
+            following.insert(insert_at, child)
+        paragraph.getparent().remove(paragraph)
+        return
+    if not _is_last_block_in_container(paragraph) and paragraph.getparent() is not None:
         paragraph.getparent().remove(paragraph)
