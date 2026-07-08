@@ -1,0 +1,33 @@
+{
+  "fixture": "comments.docx",
+  "provenance": {
+    "app": "LibreOffice",
+    "version": "26.2.4.2",
+    "notes": "Headless `soffice --convert-to docx` round-trip of generated/feature-isolated/comments.docx; LibreOffice re-authored every part, so markup shapes are LibreOffice's own. Comment authors, dates and texts survived verbatim."
+  },
+  "features": [
+    "comments",
+    "comment-reference-range",
+    "comment-metadata"
+  ],
+  "ground_truth": {
+    "comments": [
+      {
+        "author": "Alice Editor",
+        "initials": "AE",
+        "date": "2026-06-03T10:15:00Z",
+        "text": "Please double-check this figure.",
+        "anchor_paragraph_text": "This paragraph carries the first comment."
+      },
+      {
+        "author": "Bob Reviewer",
+        "initials": "BR",
+        "date": "2026-06-03T10:15:00Z",
+        "text": "Approved as written.",
+        "anchor_paragraph_text": "A second paragraph with another comment target."
+      }
+    ]
+  },
+  "verified_by": "UNVERIFIED — agent-authored (Claude), machine-cross-checked; human sign-off pending",
+  "date": "2026-07-07"
+}

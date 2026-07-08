@@ -1,0 +1,37 @@
+{
+  "fixture": "numbering-custom.docx",
+  "provenance": {
+    "app": "LibreOffice",
+    "version": "26.2.4.2",
+    "notes": "Headless `soffice --convert-to docx` round-trip of generated/feature-isolated/numbering-custom.docx; LibreOffice re-authored every part, so markup shapes are LibreOffice's own. LibreOffice rebuilt numbering.xml and remapped the custom definition from numId 42 to numId 7."
+  },
+  "features": [
+    "custom-numbering-definition",
+    "numbering-references",
+    "multilevel-list"
+  ],
+  "ground_truth": {
+    "custom_definition": {
+      "num_id": 7
+    },
+    "numbered_paragraphs": [
+      {
+        "text": "First numbered item",
+        "ilvl": 0,
+        "num_id": 7
+      },
+      {
+        "text": "Second numbered item",
+        "ilvl": 0,
+        "num_id": 7
+      },
+      {
+        "text": "Nested lettered item",
+        "ilvl": 1,
+        "num_id": 7
+      }
+    ]
+  },
+  "verified_by": "UNVERIFIED — agent-authored (Claude), machine-cross-checked; human sign-off pending",
+  "date": "2026-07-07"
+}

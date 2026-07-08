@@ -1,0 +1,28 @@
+{
+  "fixture": "content-control.docx",
+  "provenance": {
+    "app": "LibreOffice",
+    "version": "26.2.4.2",
+    "notes": "Headless `soffice --convert-to docx` round-trip of generated/feature-isolated/content-control.docx; LibreOffice re-authored every part, so markup shapes are LibreOffice's own. Both controls and their aliases survived."
+  },
+  "features": [
+    "content-control-block",
+    "content-control-inline"
+  ],
+  "ground_truth": {
+    "block_control": {
+      "alias": "ClauseBlock",
+      "tag": "clause-block-1",
+      "text": "Text inside a block-level content control."
+    },
+    "inline_control": {
+      "alias": "InlineField",
+      "tag": "inline-field-1",
+      "text": "controlled text",
+      "host_paragraph_text": "Inline control follows: controlled text and text after it."
+    },
+    "sdt_count": 2
+  },
+  "verified_by": "UNVERIFIED — agent-authored (Claude), machine-cross-checked; human sign-off pending",
+  "date": "2026-07-07"
+}
