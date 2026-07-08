@@ -298,3 +298,118 @@ class DescribeJobSafetyNet:
             find_one(document, "June 1, 2026").replace("never")
 
         assert_refusal_atomic(doc, edit_field_result, PaperRefusal, on_disk=(path,))
+
+
+def _assemble_proposal(tmp_path: Path):
+    """The v0.11 proposal-assembly job: base + two clause libraries + a CV
+    section with headings, lists, a table and an image (standing eval)."""
+    import io
+
+    from docx.composition import append_document, insert_blocks_from
+    from docx.numbering import apply_numbering, ensure_bullet_definition
+
+    from .test_composition import TINY_PNG
+
+    base = docx.Document()
+    base.add_heading("Proposal: Document Automation Services", level=1)
+    base.add_paragraph("Prepared for the client by Paper Instruments.")
+    base.add_paragraph("The sections below are assembled from our libraries.")
+
+    clauses_one = docx.Document()
+    clauses_one.add_heading("Standard Terms", level=2)
+    clauses_one.add_paragraph("Indemnity: the supplier shall hold harmless.")
+    clauses_one.add_paragraph("Liability is capped at the fees paid.")
+
+    clauses_two = docx.Document()
+    clauses_two.add_heading("Service Levels", level=2)
+    num_id = ensure_bullet_definition(clauses_two)
+    for item in ("Response within one business day.", "Escalation on demand."):
+        apply_numbering(clauses_two.add_paragraph(item), num_id=num_id)
+    fee_table = clauses_two.add_table(rows=2, cols=2)
+    fee_table.cell(0, 0).text = "Tier"
+    fee_table.cell(0, 1).text = "Fee"
+    fee_table.cell(1, 0).text = "Standard"
+    fee_table.cell(1, 1).text = "$1,000"
+
+    cv = docx.Document()
+    cv.add_heading("Lead Consultant", level=2)
+    cv.add_picture(io.BytesIO(TINY_PNG))
+    cv_num = ensure_bullet_definition(cv)
+    for skill in ("OOXML surgery", "Redline forensics"):
+        apply_numbering(cv.add_paragraph(skill), num_id=cv_num)
+    history = cv.add_table(rows=2, cols=2)
+    history.cell(0, 0).text = "Years"
+    history.cell(0, 1).text = "Role"
+    history.cell(1, 0).text = "2020-2026"
+    history.cell(1, 1).text = "Document systems lead"
+
+    reports = [
+        insert_blocks_from(
+            base, clauses_one, "Standard Terms", count=3,
+            anchor="assembled from our libraries",
+        ),
+        append_document(base, clauses_two),
+        append_document(base, cv),
+    ]
+    out = tmp_path / "proposal.docx"
+    base.save(str(out))
+    return out, reports
+
+
+class DescribeProposalAssemblyJob:
+    """Report assembly (v0.11 Phase 5): compose from libraries without
+    corruption — the job either completes or refuses loudly."""
+
+    def it_assembles_a_proposal_that_reopens_clean(self, tmp_path: Path):
+        from .harness import checks
+
+        out, reports = _assemble_proposal(tmp_path)
+        checks.assert_package_facts_clean(out)
+        reopened = docx.Document(str(out))
+        texts = [p.text for p in reopened.paragraphs]
+        for expected in (
+            "Standard Terms",
+            "Liability is capped at the fees paid.",
+            "Service Levels",
+            "Response within one business day.",
+            "Lead Consultant",
+            "OOXML surgery",
+        ):
+            assert expected in texts, f"missing {expected!r}"
+        assert sum(r.inserted_blocks for r in reports) >= 12
+
+    def it_numbers_both_imported_lists_independently(self, tmp_path: Path):
+        from docx.numbering import list_numbering
+
+        out, _reports = _assemble_proposal(tmp_path)
+        numbered = list_numbering(docx.Document(str(out))).numbered_paragraphs
+        by_text = {p.text: p.num_id for p in numbered}
+        assert by_text["Response within one business day."] == by_text[
+            "Escalation on demand."
+        ]
+        assert by_text["OOXML surgery"] == by_text["Redline forensics"]
+        # the two imported lists stay distinct definitions
+        assert by_text["OOXML surgery"] != by_text["Response within one business day."]
+
+    def it_carries_the_image_and_declares_every_changed_part(
+        self, tmp_path: Path
+    ):
+        import zipfile
+
+        out, reports = _assemble_proposal(tmp_path)
+        with zipfile.ZipFile(out) as zf:
+            media = [n for n in zf.namelist() if n.startswith("word/media/")]
+        assert len(media) == 1
+        cv_report = reports[2]
+        assert cv_report.media_copied == media
+        assert "word/numbering.xml" in cv_report.declared_parts
+
+    def it_keeps_the_style_count_bounded(self, tmp_path: Path):
+        """No style explosion: only referenced-and-missing styles import."""
+        out, reports = _assemble_proposal(tmp_path)
+        reopened = docx.Document(str(out))
+        imported = {s for r in reports for s in r.imported_styles}
+        # heading styles exist in every default-template doc -> nothing to
+        # import except at most the list-paragraph style
+        assert len(imported) <= 2, imported
+        assert len(list(reopened.styles)) <= len(list(docx.Document().styles)) + 2

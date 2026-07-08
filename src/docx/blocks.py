@@ -108,14 +108,24 @@ def _resolve_anchor_paragraph(
 ) -> "Tuple[str, _Element]":
     """(story, paragraph element) for `anchor`, staleness-verified.
 
+    Every block operation resolves its MUTATION anchor here, so this is
+    also the protection choke point (v0.11 Phase 3); read-only anchor
+    resolution (e.g. a composition SOURCE range) uses
+    `_locate_anchor_paragraph` directly.
+    """
+    _refuse_if_protected(document, "insert or remove paragraphs")
+    return _locate_anchor_paragraph(document, anchor)
+
+
+def _locate_anchor_paragraph(
+    document: "Document", anchor: AnchorLike
+) -> "Tuple[str, _Element]":
+    """(story, paragraph element) for `anchor`, staleness-verified.
+
     Strings are found via `find_one` (ambiguity refuses); Block/Anchor values
     are re-verified by content hash against the current-view text of the
     block at their recorded position.
-
-    Every block operation resolves its anchor here, so this is also the
-    protection choke point (v0.11 Phase 3).
     """
-    _refuse_if_protected(document, "insert or remove paragraphs")
     if isinstance(anchor, str):
         span = find_one(document, anchor)
         paragraph = span._atoms[0].paragraph  # noqa: SLF001 - same-package access
