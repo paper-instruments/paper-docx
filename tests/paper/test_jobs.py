@@ -78,11 +78,30 @@ class DescribeMultiRoundRedlineJob:
         kinds = {r.revision_type for r in doc.revisions}
         assert "format_change" in kinds
 
-    @pytest.mark.parametrize("relpath", [MOVES, FORMAT_CHANGES])
-    def it_refuses_to_claim_resolution_of_unsupported_revisions(self, relpath: str):
-        doc = docx.Document(str(fixture_path(relpath)))
+    def it_refuses_to_claim_resolution_of_unsupported_revisions(self):
+        """v0.11 converted moves and format changes from refusal to
+        capability; the refusal contract now guards the exotic remainder."""
+        from docx.oxml import parse_xml
+        from docx.oxml.ns import nsdecls
+
+        doc = docx.Document(str(fixture_path(FORMAT_CHANGES)))
+        tbl = doc.add_table(rows=1, cols=1)._tbl
+        tbl.tblPr.append(
+            parse_xml(
+                f'<w:tblPrChange {nsdecls("w")} w:id="990" w:author="A"'
+                ' w:date="2026-06-01T09:30:00Z"><w:tblPr/></w:tblPrChange>'
+            )
+        )
         with pytest.raises(UnsupportedStructureError):
             doc.revisions.accept_all()
+
+    def it_resolves_format_changes_instead_of_refusing(self, tmp_path: Path):
+        """v0.11 Phase 1: the refusal became a capability (PAPER.md ledger)."""
+        from docx.revision import _remaining_markup
+
+        doc = docx.Document(str(fixture_path(FORMAT_CHANGES)))
+        assert doc.revisions.accept_all() == 2
+        assert _remaining_markup(doc) == {}
 
     def it_lets_the_same_author_extend_their_own_pending_edit(self, tmp_path: Path):
         path = _copy(MINIMAL, tmp_path)

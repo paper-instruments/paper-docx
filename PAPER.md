@@ -101,6 +101,27 @@ surgical + tracked, new `w:ins`/`w:del` oxml vocabulary); `docx.blocks`;
 in `docx/package.py`, part registrations in `docx/__init__.py`,
 `Document.revisions` property.
 
+### v0.11 (2026-07-08) — revision completion, scrub, compare, composition
+
+`agent_docs/PLAN-v0.11-paper-docx.md`. Refusal→capability conversions (the
+sanctioned growth path, §1.1 scope rule) and new organs; every conversion
+listed here.
+
+- **Phase 1 — format-change and structural revision resolution.**
+  Conversions: `w:rPrChange`/`w:pPrChange` (run, paragraph, paragraph-mark)
+  accept/reject with stored-property restore; `w:trPr` row markers
+  reclassified from insertion/deletion (which resolved only the marker —
+  the ghost-row false state) to `row_insertion`/`row_deletion` with whole-row
+  semantics and an empty-table refusal (batch-validated upfront for
+  atomicity). Reject of a deletion now also restores `w:delInstrText` →
+  `w:instrText`. The exotic remainder is enumerated and refused BY NAME:
+  `table_property_change` (tblPrChange/tblPrExChange/tblGridChange/
+  trPrChange/tcPrChange), `cell_revision` (cellIns/cellDel/cellMerge),
+  `section_property_change`, `numbering_change`, `custom_xml_revision`.
+  `Revisions.to_dict()` schema v3: new type names, and format-change
+  revisions now carry the text they apply to (they were unaddressable with
+  `text == ""`). Zero-markup rescan oracle `docx.revision._remaining_markup`.
+
 ### v0.1 (2026-07-08) — honesty recall, everyday shapes, four verbs
 
 `agent_docs/PLAN-v0.1.md`, driven by the 83-finding gap review. Standing job

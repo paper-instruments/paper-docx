@@ -68,7 +68,7 @@ class DescribeEnumeration:
         payload_2 = json.dumps(_doc(TRACKED).revisions.to_dict())
         assert payload_1 == payload_2
         parsed = json.loads(payload_1)
-        assert parsed["schema"] == "paper_revisions" and parsed["version"] == 2
+        assert parsed["schema"] == "paper_revisions" and parsed["version"] == 3
         assert parsed["remaining_unsupported"] == {}
 
 
@@ -198,15 +198,14 @@ class DescribeUnresolvableRevisions:
     def it_reports_a_census_of_unsupported_revisions(self):
         revisions = _doc(self.MOVES).revisions
         assert revisions.remaining_unsupported() == {"move_from": 1, "move_to": 1}
-        assert _doc(self.FORMAT_CHANGES).revisions.remaining_unsupported() == {
-            "format_change": 2
-        }
+        # v0.11 Phase 1: format changes left the census (now resolvable)
+        assert _doc(self.FORMAT_CHANGES).revisions.remaining_unsupported() == {}
 
     def it_refuses_individual_resolution_of_a_move(self):
         revision = next(
             r for r in _doc(self.MOVES).revisions if r.revision_type == "move_from"
         )
-        with pytest.raises(UnsupportedStructureError, match="not yet"):
+        with pytest.raises(UnsupportedStructureError, match="not resolvable"):
             revision.accept()
 
     def it_resolves_an_author_filtered_clean_subset_alongside_moves(self, tmp_path):

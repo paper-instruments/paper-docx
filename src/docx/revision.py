@@ -15,6 +15,7 @@ Resolution mutates the in-memory document; save with
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterator, List, Optional, Sequence, Tuple
@@ -40,30 +41,58 @@ _MOVE_FROM = qn("w:moveFrom")
 _MOVE_TO = qn("w:moveTo")
 _T = qn("w:t")
 _DEL_TEXT = qn("w:delText")
+_INSTR_TEXT = qn("w:instrText")
+_DEL_INSTR_TEXT = qn("w:delInstrText")
 _R = qn("w:r")
 _RPR = qn("w:rPr")
 _PPR = qn("w:pPr")
 _P = qn("w:p")
+_TR = qn("w:tr")
+_TRPR = qn("w:trPr")
+_TBL = qn("w:tbl")
+_SECT_PR = qn("w:sectPr")
+_RPR_CHANGE = qn("w:rPrChange")
+_PPR_CHANGE = qn("w:pPrChange")
 _AUTHOR = qn("w:author")
 _DATE = qn("w:date")
 
-#: tag -> revision_type for everything Document.revisions enumerates
+#: tag -> revision_type for everything Document.revisions enumerates.
+#: `w:ins`/`w:del` refine to "row_insertion"/"row_deletion" when the node is
+#: a `w:trPr` row marker (see `_revision_type_of`) — classifying those as
+#: plain insertion/deletion would resolve just the MARKER and leave ghost
+#: rows behind, reporting false state.
 _REVISION_TYPES = {
     _INS: "insertion",
     _DEL: "deletion",
     _MOVE_FROM: "move_from",
     _MOVE_TO: "move_to",
+    _RPR_CHANGE: "format_change",
+    _PPR_CHANGE: "format_change",
 }
-for _change_tag in (
-    "w:rPrChange", "w:pPrChange", "w:tblPrChange", "w:tcPrChange",
-    "w:trPrChange", "w:sectPrChange", "w:numberingChange",
-    "w:cellIns", "w:cellDel", "w:cellMerge",
-):
-    _REVISION_TYPES[qn(_change_tag)] = "format_change"
+for _change_tag in ("w:tblPrChange", "w:tblPrExChange", "w:tblGridChange",
+                    "w:trPrChange", "w:tcPrChange"):
+    _REVISION_TYPES[qn(_change_tag)] = "table_property_change"
+for _change_tag in ("w:cellIns", "w:cellDel", "w:cellMerge"):
+    _REVISION_TYPES[qn(_change_tag)] = "cell_revision"
+_REVISION_TYPES[qn("w:sectPrChange")] = "section_property_change"
+_REVISION_TYPES[qn("w:numberingChange")] = "numbering_change"
+for _change_tag in ("w:customXmlInsRangeStart", "w:customXmlDelRangeStart",
+                    "w:customXmlMoveFromRangeStart", "w:customXmlMoveToRangeStart"):
+    _REVISION_TYPES[qn(_change_tag)] = "custom_xml_revision"
 del _change_tag
 
+
+def _revision_type_of(node: "_Element") -> str:
+    parent = node.getparent()
+    if parent is not None and parent.tag == _TRPR:
+        return "row_insertion" if node.tag == _INS else "row_deletion"
+    return _REVISION_TYPES[node.tag]
+
+
 #: the only revision types accept()/reject() know how to resolve correctly
-RESOLVABLE_TYPES = frozenset({"insertion", "deletion"})
+RESOLVABLE_TYPES = frozenset(
+    {"insertion", "deletion", "format_change", "row_insertion", "row_deletion"}
+)
 
 
 def _node_text(node: "_Element") -> str:
@@ -72,6 +101,25 @@ def _node_text(node: "_Element") -> str:
         if child.tag in (_T, _DEL_TEXT):
             pieces.append(child.text or "")
     return "".join(pieces)
+
+
+def _applies_to_text(node: "_Element") -> str:
+    """The text a property-change revision APPLIES to (its own subtree holds
+    only stored properties, so `_node_text` is empty and the revision would
+    be unaddressable): the containing run's text for a run change, the
+    containing paragraph's for a paragraph or paragraph-mark change."""
+    parent = node.getparent()
+    if parent is None:
+        return ""
+    if parent.tag == _RPR:
+        holder = parent.getparent()  # w:r, or w:pPr for a paragraph mark
+        if holder is not None and holder.tag == _PPR:
+            holder = holder.getparent()
+        return _node_text(holder) if holder is not None else ""
+    if parent.tag == _PPR:  # w:pPrChange
+        paragraph = parent.getparent()
+        return _node_text(paragraph) if paragraph is not None else ""
+    return ""
 
 
 def _is_paragraph_mark_revision(node: "_Element") -> bool:
@@ -93,10 +141,13 @@ def _parse_date(value: Optional[str]) -> Optional[dt.datetime]:
 class Revision:
     """One tracked change, addressable — and resolvable when supported.
 
-    `revision_type` is one of "insertion" | "deletion" (resolvable),
-    "move_from" | "move_to" | "format_change" (enumerated and counted, but
-    resolution is refused — v0.1 knows how to SEE these, not how to apply
-    them; claiming otherwise would report false state).
+    Resolvable `revision_type`s: "insertion", "deletion", "format_change"
+    (`w:rPrChange`/`w:pPrChange`, run or paragraph mark), "row_insertion",
+    "row_deletion" (`w:trPr` row markers), and — as paired units —
+    "move_from"/"move_to". The exotic remainder ("table_property_change",
+    "cell_revision", "section_property_change", "numbering_change",
+    "custom_xml_revision") is enumerated and counted but resolution is
+    refused by name — claiming to resolve them would report false state.
     """
 
     revision_type: str
@@ -116,9 +167,9 @@ class Revision:
     def _refuse_unresolvable(self, verb: str) -> None:
         if not self.is_resolvable:
             raise UnsupportedStructureError(
-                f"cannot {verb} a {self.revision_type!r} revision: tracked"
-                " moves and formatting changes are enumerated but not yet"
-                " resolvable (resolve them in Word, or a later paper-docx"
+                f"cannot {verb} a {self.revision_type!r} revision: this"
+                " revision type is enumerated but not resolvable by"
+                " paper-docx (resolve it in Word, or a later paper-docx"
                 " version)"
             )
 
@@ -206,6 +257,7 @@ class Revisions(Sequence[Revision]):
                 " by author, resolve individual insertions/deletions, or"
                 " resolve the rest in Word"
             )
+        _validate_row_removals(selected, accept=accept)
         resolved = 0
         # content revisions first, then paragraph marks (mark resolution can
         # remove whole paragraphs and must see post-content state)
@@ -221,10 +273,39 @@ class Revisions(Sequence[Revision]):
     def to_dict(self) -> dict:
         return {
             "schema": "paper_revisions",
-            "version": 2,  # v2: move/format_change types + census (v0.1 H1-H3)
+            # v2: move/format_change types + census (v0.1 H1-H3)
+            # v3: row_insertion/row_deletion + named exotic types; format
+            #     changes and row revisions resolvable (v0.11 Phase 1)
+            "version": 3,
             "revisions": [revision.to_dict() for revision in self._items],
             "remaining_unsupported": self.remaining_unsupported(),
         }
+
+
+def _validate_row_removals(selected: "List[Revision]", *, accept: bool) -> None:
+    """Refuse BEFORE mutating when batch resolution would empty a table.
+
+    The per-call guard in `_resolve_row_revision` fires mid-batch otherwise,
+    leaving the document half-resolved (refusal atomicity, CONVENTIONS §2).
+    """
+    removals: dict = {}
+    for revision in selected:
+        removes_row = (revision.revision_type == "row_insertion" and not accept) or (
+            revision.revision_type == "row_deletion" and accept
+        )
+        if not removes_row:
+            continue
+        row = revision._element.getparent().getparent()  # noqa: SLF001
+        table = row.getparent()
+        removals[table] = removals.get(table, 0) + 1
+    for table, count in removals.items():
+        total = sum(1 for child in table if child.tag == _TR)
+        if count >= total:
+            raise UnsupportedStructureError(
+                "resolving the selected row revisions would remove every row"
+                " of a table, leaving invalid XML; nothing was changed."
+                " Resolve that table's rows in Word instead"
+            )
 
 
 def _iter_revision_nodes(
@@ -256,17 +337,56 @@ def _enumerate_revisions(document: "Document") -> Iterator[Revision]:
                         story, kind, index, element, "current",
                         in_sdt=in_sdt, in_txbx=in_txbx,
                     ).anchor
+                revision_type = _revision_type_of(node)
+                text = _node_text(node)
+                if not text and node.tag in (_RPR_CHANGE, _PPR_CHANGE):
+                    text = _applies_to_text(node)
                 yield Revision(
-                    revision_type=_REVISION_TYPES[node.tag],
+                    revision_type=revision_type,
                     author=node.get(_AUTHOR) or "",
                     date=_parse_date(node.get(_DATE)),
-                    text=_node_text(node),
+                    text=text,
                     story=story,
                     anchor=block_anchor,
                     is_paragraph_mark=_is_paragraph_mark_revision(node),
                     _element=node,
                     _document=document,
                 )
+
+
+#: every tag that constitutes revision markup, for the post-resolution rescan
+#: (enumerated types plus the range brackets that resolution must sweep up)
+_MARKUP_SCAN_TAGS = tuple(_REVISION_TYPES) + tuple(
+    qn(tag)
+    for tag in (
+        "w:moveFromRangeStart", "w:moveFromRangeEnd",
+        "w:moveToRangeStart", "w:moveToRangeEnd",
+        "w:customXmlInsRangeEnd", "w:customXmlDelRangeEnd",
+        "w:customXmlMoveFromRangeEnd", "w:customXmlMoveToRangeEnd",
+    )
+)
+
+
+def _iter_markup_nodes(element: "_Element") -> Iterator["_Element"]:
+    for child in _first_choice_children(element):
+        if child.tag in _MARKUP_SCAN_TAGS:
+            yield child
+        yield from _iter_markup_nodes(child)
+
+
+def _remaining_markup(document: "Document") -> dict:
+    """{local-tag-name: count} of ALL revision markup left in traversal space.
+
+    The invariant oracle: after a successful `accept_all()`/`reject_all()`
+    (and, post-Phase-2, move resolution) this is empty — "resolved" while
+    markup remains anywhere would be false state.
+    """
+    counts: dict = {}
+    for _story, root in _story_elements(document):
+        for node in _iter_markup_nodes(root):
+            name = node.tag.rsplit("}", 1)[-1]
+            counts[name] = counts.get(name, 0) + 1
+    return dict(sorted(counts.items()))
 
 
 def _comment_ids_inside(node: "_Element"):
@@ -309,6 +429,13 @@ def _resolve_one(
 ) -> None:
     if node.getparent() is None:
         return  # already resolved via an enclosing operation
+    revision_type = _revision_type_of(node)
+    if revision_type == "format_change":
+        _resolve_format_change(node, accept=accept)
+        return
+    if revision_type in ("row_insertion", "row_deletion"):
+        _resolve_row_revision(node, accept=accept, document=document)
+        return
     if _is_paragraph_mark_revision(node):
         _resolve_paragraph_mark(node, accept=accept)
         return
@@ -343,7 +470,78 @@ def _resolve_deletion(node: "_Element", *, accept: bool) -> None:
     else:
         for text_elm in node.iter(_DEL_TEXT):
             text_elm.tag = _T
+        for text_elm in node.iter(_DEL_INSTR_TEXT):
+            text_elm.tag = _INSTR_TEXT
         _unwrap(node)
+
+
+#: children of a paragraph-mark `w:rPr` (CT_ParaRPr) that are revision
+#: bookkeeping, not formatting — a format-change reject must preserve them.
+_PARA_RPR_STAMPS = (_INS, _DEL, _MOVE_FROM, _MOVE_TO)
+
+
+def _resolve_format_change(node: "_Element", *, accept: bool) -> None:
+    """Resolve `w:rPrChange`/`w:pPrChange` (run, paragraph or paragraph mark).
+
+    Accept keeps the current properties and drops the stored previous ones;
+    reject swaps the stored previous properties back in. On a paragraph-mark
+    `w:rPr` the revision stamps (`w:ins`/`w:del`/`w:moveFrom`/`w:moveTo`)
+    are bookkeeping, not formatting, and survive a reject; on a `w:pPr` the
+    mark's `w:rPr` and any `w:sectPr` likewise stay.
+    """
+    parent = node.getparent()
+    if accept:
+        parent.remove(node)
+        if len(parent) == 0:
+            parent.getparent().remove(parent)
+        return
+    if node.tag == _RPR_CHANGE:
+        stored = node.find(_RPR)
+        kept = [child for child in parent if child.tag in _PARA_RPR_STAMPS]
+    else:  # w:pPrChange stores a CT_PPrBase (never rPr/sectPr)
+        stored = node.find(_PPR)
+        kept = [child for child in parent if child.tag in (_RPR, _SECT_PR)]
+    restored = [copy.deepcopy(child) for child in stored] if stored is not None else []
+    # CT_ParaRPr puts revision stamps first; CT_PPr puts rPr/sectPr last
+    new_children = kept + restored if node.tag == _RPR_CHANGE else restored + kept
+    for child in list(parent):
+        parent.remove(child)
+    for child in new_children:
+        parent.append(child)
+    if len(parent) == 0:
+        parent.getparent().remove(parent)
+
+
+def _resolve_row_revision(
+    node: "_Element", *, accept: bool, document: "Optional[Document]" = None
+) -> None:
+    """Resolve a `w:trPr` row marker (`w:ins` = row inserted with tracking,
+    `w:del` = row deleted with tracking).
+
+    Keeping the row = remove just the marker. Removing the row = remove the
+    whole `w:tr` (the cell-level content revisions inside it are subsumed,
+    exactly as Word's Accept/Reject All treats them). A removal that would
+    leave the table without rows refuses — a zero-row `w:tbl` is invalid
+    XML, and silently dropping the table is not this package's call.
+    """
+    tr_pr = node.getparent()
+    row = tr_pr.getparent()
+    keeps_row = (node.tag == _INS and accept) or (node.tag == _DEL and not accept)
+    if keeps_row:
+        tr_pr.remove(node)
+        if len(tr_pr) == 0:
+            row.remove(tr_pr)
+        return
+    table = row.getparent()
+    if sum(1 for child in table if child.tag == _TR) == 1:
+        verb = "rejecting" if node.tag == _INS else "accepting"
+        raise UnsupportedStructureError(
+            f"{verb} this row revision would remove the table's only row,"
+            " leaving an empty table; resolve it in Word instead"
+        )
+    orphaned = _comment_ids_inside(row)
+    table.remove(row)
+    _cleanup_comment_anchors(document, orphaned)
 
 
 def _paragraph_of_mark(node: "_Element") -> "Optional[_Element]":
