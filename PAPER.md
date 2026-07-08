@@ -133,6 +133,22 @@ listed here.
   The gauntlet now resolves completely in both directions (rescan == zero
   markup), and `accept_all` on the multiround redline fixture reproduces
   the hand-computed accepted ground truth story-for-story.
+- **Phase 3 — scrub/finalize + protection-aware mutations.** New surface
+  (API-PROPOSAL §10): `Document.finalize(revisions=...)` (total resolution
+  or typed refusal; certifies zero remaining markup), `Document.scrub(...)`
+  (comments incl. extended/threading/people parts + anchors, core/app/custom
+  metadata + thumbnail, trackRevisions setting, optional RSIDs, optional
+  hidden text) returning an itemized `ScrubReport` (report-matches-diff
+  contract, tested against `diff_package`). Metadata scrub refuses while
+  revisions are pending. **Sanctioned deviation of paper APIs only** (the
+  v0.1 honesty-recall precedent, per PLAN-v0.11): enforced
+  `w:documentProtection` now makes every paper-docx mutating API refuse
+  with `DocumentProtectedError` (new pinned refusal subclass — flagged for
+  human sign-off) naming the mode and the single override affordance
+  `docx.protection.acknowledge_protection(document)` (document-level,
+  in-memory, never persisted). Protection is reported, never removed; no
+  stripping verb exists; upstream APIs untouched. The scrubbed gauntlet is
+  LO-smoke verified.
 
 ### v0.1 (2026-07-08) — honesty recall, everyday shapes, four verbs
 

@@ -23,6 +23,7 @@ from docx.errors import (
 )
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
+from docx.protection import _refuse_if_protected
 from docx.search import _validate_writable_text
 from docx.story import _first_choice_children, _story_elements
 
@@ -204,6 +205,7 @@ class Control:
         Dropdown/combo: must match a listItem (dropdown) — combos accept free
         text. Date: date/datetime (stamps `w:fullDate`) or display string.
         """
+        _refuse_if_protected(self._document, "set a control value")
         if self.is_data_bound:
             raise UnsupportedStructureError(
                 "control is data-bound (w:dataBinding): its value lives in a"

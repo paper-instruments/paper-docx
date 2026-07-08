@@ -454,6 +454,44 @@ numbered_paragraphs=(story, index, num_id, level, text))` + `.to_dict()`
 
 ---
 
+## 10. v0.11 — revision completion, scrub/finalize, protection (PLAN-v0.11)
+
+**Semantic amendments (refusal→capability conversions, ledgered in
+PAPER.md):** `Revisions` resolution now covers `format_change`
+(`w:rPrChange`/`w:pPrChange` incl. paragraph marks), `row_insertion`/
+`row_deletion` (`w:trPr` markers — new type names; they previously
+misclassified as insertion/deletion), and moves as PAIRED UNITS (either
+site resolves both). `Revisions.to_dict()` schema is v3. The exotic
+remainder refuses BY NAME: `table_property_change`, `cell_revision`,
+`section_property_change`, `numbering_change`, `custom_xml_revision`.
+
+```python
+Document.finalize(*, revisions: str = "accept") -> int
+    # total resolution or typed refusal naming what blocked it; after a
+    # successful return a rescan finds ZERO revision markup of any kind
+Document.scrub(*, comments: bool = True, metadata: bool = True,
+               track_changes_setting: bool = True, rsids: bool = False,
+               hidden_text: bool = False) -> ScrubReport
+    # ScrubReport (docx.scrubbing): itemized removals, .to_dict(),
+    # schema="paper_scrub_report" v1; report-matches-diff is the contract.
+    # metadata=True refuses while revisions are pending (attribution would
+    # survive); document protection is REPORTED, never removed.
+```
+
+```python
+# docx.protection — protection-aware mutations (Phase 3)
+def protection_status(document) -> ProtectionStatus   # edit/enforced/acknowledged
+def acknowledge_protection(document) -> ProtectionStatus
+    # THE one override affordance (document-level, in-memory, never saved)
+```
+
+`w:documentProtection` with `w:enforcement` truthy makes every paper-docx
+mutating API refuse with `DocumentProtectedError` (new member of the pinned
+refusal hierarchy — flagged for human sign-off) naming the mode and the
+override path. Uniform across modes in v0.11 (readOnly/forms/comments/
+trackedChanges all refuse — conservative, documented). Upstream APIs are
+untouched (strict superset). There is NO protection-stripping verb.
+
 ## Module map (all new files unless marked additive)
 
 | Path | Contents |

@@ -207,6 +207,42 @@ class Document(ElementProxy):
 
         return Revisions(self)
 
+    def finalize(self, *, revisions: str = "accept"):
+        """Totally resolve every tracked revision, or refuse (typed) naming
+        what blocked it — never a file that looks final while markup remains.
+
+        paper-docx addition (v0.11); see `docx.scrubbing.finalize`.
+        """
+        from docx.scrubbing import finalize
+
+        return finalize(self, revisions=revisions)
+
+    def scrub(
+        self,
+        *,
+        comments: bool = True,
+        metadata: bool = True,
+        track_changes_setting: bool = True,
+        rsids: bool = False,
+        hidden_text: bool = False,
+    ):
+        """Remove reviewing residue (comments, metadata, the track-changes
+        switch, optional RSIDs/hidden text); returns an itemized ScrubReport.
+        Document protection is reported, never removed.
+
+        paper-docx addition (v0.11); see `docx.scrubbing.scrub`.
+        """
+        from docx.scrubbing import scrub
+
+        return scrub(
+            self,
+            comments=comments,
+            metadata=metadata,
+            track_changes_setting=track_changes_setting,
+            rsids=rsids,
+            hidden_text=hidden_text,
+        )
+
     def save(self, path_or_stream: str | IO[bytes]):
         """Save this document to `path_or_stream`.
 

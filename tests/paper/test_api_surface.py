@@ -172,6 +172,16 @@ APPROVED_SIGNATURES = [
     ("docx.commentops", "parent_of", "(document, comment)"),
     ("docx.controls", "iter_controls", "(document)"),
     ("docx.revision", "Revisions.remaining_unsupported", "(self)"),
+    # -- v0.11 additions (PLAN-v0.11; amendments in API-PROPOSAL.md §10) -----
+    ("docx.document", "Document.finalize", "(self, *, revisions='accept')"),
+    (
+        "docx.document",
+        "Document.scrub",
+        "(self, *, comments=True, metadata=True, track_changes_setting=True,"
+        " rsids=False, hidden_text=False)",
+    ),
+    ("docx.protection", "protection_status", "(document)"),
+    ("docx.protection", "acknowledge_protection", "(document)"),
 ]
 
 _IDS = [f"{module}.{attr}" for module, attr, _ in APPROVED_SIGNATURES]
@@ -202,6 +212,7 @@ class DescribeApprovedApiSurface:
             "UnsupportedStructureError",
             "BoundaryViolationError",
             "RelationshipPolicyError",
+            "DocumentProtectedError",  # v0.11 Phase 3; human sign-off flagged
         ):
             subclass = getattr(errors, name)
             assert issubclass(subclass, errors.PaperRefusal), name

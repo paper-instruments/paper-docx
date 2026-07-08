@@ -16,6 +16,7 @@ from docx import _clock
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.oxml.ns import nsdecls, qn
 from docx.oxml.parser import parse_xml
+from docx.protection import _refuse_if_protected
 
 _W_DECL = nsdecls("w")
 
@@ -151,6 +152,7 @@ def is_resolved(document: "Document", comment: "Comment") -> bool:
 
 def resolve(document: "Document", comment: "Comment", *, resolved: bool = True) -> None:
     """Mark `comment` resolved (or reopened) the way Word does."""
+    _refuse_if_protected(document, "resolve a comment")
     para_id = _ensure_para_id(document, _last_paragraph(_comment_element(document, comment)))
     root = _comments_extended_root(document, create=True)
     entry = _entry_for(root, para_id, create=True)
@@ -226,6 +228,7 @@ def reply(
     """Add a threaded reply to `comment`, anchored to the same text range."""
     if not author:
         raise ValueError("author is required")
+    _refuse_if_protected(document, "reply to a comment")
     parent_elm = _comment_element(document, comment)
     start, end, reference_run = _anchor_elements(document, comment.comment_id)
     if start is None or end is None or reference_run is None:

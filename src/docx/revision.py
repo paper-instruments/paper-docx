@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Iterator, List, Optional, Sequence, Tuple
 
 from docx.errors import UnsupportedStructureError
 from docx.oxml.ns import qn
+from docx.protection import _refuse_if_protected
 from docx.story import (
     Anchor,
     _first_choice_children,
@@ -184,13 +185,19 @@ class Revision:
             )
 
     def accept(self) -> None:
-        """Apply this change to the document."""
+        """Apply this change to the document. Tracked moves resolve as a
+        PAIR: accepting either site accepts both (v0.11 Phase 2)."""
         self._refuse_unresolvable("accept")
+        if self._document is not None:
+            _refuse_if_protected(self._document, "resolve a revision")
         _resolve_one(self._element, accept=True, document=self._document)
 
     def reject(self) -> None:
-        """Undo this change, restoring the pre-change content."""
+        """Undo this change, restoring the pre-change content. Tracked moves
+        resolve as a PAIR: rejecting either site rejects both."""
         self._refuse_unresolvable("reject")
+        if self._document is not None:
+            _refuse_if_protected(self._document, "resolve a revision")
         _resolve_one(self._element, accept=False, document=self._document)
 
     def to_dict(self) -> dict:
@@ -252,6 +259,7 @@ class Revisions(Sequence[Revision]):
         return dict(sorted(census.items()))
 
     def _resolve_all(self, *, accept: bool, author: Optional[str]) -> int:
+        _refuse_if_protected(self._document, "resolve revisions")
         selected = [
             revision
             for revision in self._items

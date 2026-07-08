@@ -22,6 +22,7 @@ from docx.errors import (
     UnsupportedStructureError,
 )
 from docx.oxml.ns import qn
+from docx.protection import _refuse_if_protected
 from docx.oxml.revision import CT_RunTrackChange
 from docx.search import (
     ReplaceResult,
@@ -202,6 +203,7 @@ def update_cell(
 
     _validate_writable_text(new_text, argument="new_text")
     document = _document_of(table)
+    _refuse_if_protected(document, "update a table cell")
     cell = _cell_at(table, row, column)
     _refuse_complex_cell(cell._tc, row=row, column=column)
 
@@ -281,6 +283,7 @@ def insert_row_after(
 ) -> None:
     """Insert a new row after `row` (0-based), copying formatting from
     `copy_format_from` (default: the anchor row) and filling `values`."""
+    _refuse_if_protected(_document_of(table), "insert a table row")
     rows = table.rows
     if not 0 <= row < len(rows):
         raise TargetNotFoundError(f"row {row} does not exist (0..{len(rows) - 1})")
@@ -343,6 +346,7 @@ def _set_cell_text_keeping_format(cell: "_Cell", text: str) -> None:
 def delete_row(table: "Table", row: int) -> None:
     """Delete row `row` (0-based). The last remaining row is refused —
     a rowless table is not valid WordprocessingML."""
+    _refuse_if_protected(_document_of(table), "delete a table row")
     rows = table.rows
     if not 0 <= row < len(rows):
         raise TargetNotFoundError(f"row {row} does not exist (0..{len(rows) - 1})")

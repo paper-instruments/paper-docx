@@ -32,6 +32,7 @@ from docx.errors import (
 )
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
+from docx.protection import _refuse_if_protected
 from docx.oxml.revision import CT_RunTrackChange
 from docx.search import Span, _validate_writable_text, find_one
 from docx.story import Anchor, Block, _iter_block_elements, _story_elements
@@ -110,7 +111,11 @@ def _resolve_anchor_paragraph(
     Strings are found via `find_one` (ambiguity refuses); Block/Anchor values
     are re-verified by content hash against the current-view text of the
     block at their recorded position.
+
+    Every block operation resolves its anchor here, so this is also the
+    protection choke point (v0.11 Phase 3).
     """
+    _refuse_if_protected(document, "insert or remove paragraphs")
     if isinstance(anchor, str):
         span = find_one(document, anchor)
         paragraph = span._atoms[0].paragraph  # noqa: SLF001 - same-package access

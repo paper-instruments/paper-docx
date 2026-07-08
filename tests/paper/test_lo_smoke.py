@@ -32,3 +32,17 @@ class DescribeLibreOfficeSmoke:
     @pytest.mark.parametrize("relpath", _smoke_relpaths())
     def it_opens_every_clean_fixture(self, relpath: str):
         assert_libreoffice_opens(fixture_path(relpath))
+
+    def it_opens_the_finalized_and_scrubbed_gauntlet(self, tmp_path):
+        """v0.11 Phase 3: the compliance output must survive an independent
+        loader, not just our own reopen."""
+        import docx
+
+        document = docx.Document(
+            str(fixture_path("generated/gauntlet/gauntlet.docx"))
+        )
+        document.finalize()
+        document.scrub(rsids=True)
+        out = tmp_path / "gauntlet-scrubbed.docx"
+        document.save(str(out))
+        assert_libreoffice_opens(out)
