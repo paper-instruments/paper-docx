@@ -109,16 +109,21 @@ def _collect_block_atoms(
     *,
     skip_text_boxes: bool,
     in_txbx: bool,
+    field_depth: "Optional[List[int]]" = None,
 ) -> "Iterator[_Atom]":
     """Text atoms under one block element, in document order.
 
     Complex fields (`w:fldChar` begin…separate…end run sequences) are tracked
     with a depth counter as the walk passes them in document order: every
     atom between begin and end — instruction AND cached result — carries
-    `in_field=True`, as do `w:fldSimple` descendants. Tracked moves flag
-    their atoms deletion-like (`w:moveFrom`) / insertion-like (`w:moveTo`).
+    `in_field=True`, as do `w:fldSimple` descendants. Pass a shared
+    `field_depth` cell when iterating consecutive blocks of one story:
+    multi-paragraph fields (every Word TOC) keep their begin…end state OPEN
+    across block boundaries. Tracked moves flag their atoms deletion-like
+    (`w:moveFrom`) / insertion-like (`w:moveTo`).
     """
-    field_depth = [0]
+    if field_depth is None:
+        field_depth = [0]
 
     def walk(node, paragraph, run, sdt, in_ins, in_del, hlink, in_box, in_fld):
         for child in _first_choice_children(node):
@@ -167,11 +172,16 @@ def _collect_block_atoms(
 
 def _story_atoms(document: "Document", story_name: str, root: "_Element") -> "List[_Atom]":
     atoms: "List[_Atom]" = []
+    # ONE field-depth cell for the whole story: a field opened in one block
+    # stays open into the next (TOC shape) — resetting per block was the
+    # false-state hole the v0.1 review sweep found
+    field_depth = [0]
     for kind, index, element, _in_sdt, in_txbx in _iter_block_elements(story_name, root):
         skip_boxes = kind == "paragraph"  # text-box paragraphs are their own blocks
         atoms.extend(
             _collect_block_atoms(
-                story_name, index, element, skip_text_boxes=skip_boxes, in_txbx=in_txbx
+                story_name, index, element, skip_text_boxes=skip_boxes,
+                in_txbx=in_txbx, field_depth=field_depth,
             )
         )
     return atoms
@@ -340,45 +350,84 @@ class Span:
     def _isolate_edge_runs(self) -> None:
         """Split boundary runs so this span's runs hold EXACTLY its text.
 
-        Semantically neutral (text and formatting unchanged — the split-off
-        pieces keep a clone of their run's `rPr`); needed so element-level
-        anchors like comment range marks wrap the span text, not whole runs.
+        Semantically neutral (text, order and formatting unchanged): run
+        content BEFORE the first matched text node — including the split-off
+        text prefix — moves to a new preceding run, and content AFTER the
+        last matched node (plus the split-off tail) moves to a new following
+        run, each with a clone of its source run's `rPr`. Needed so
+        element-level anchors like comment range marks wrap the span text,
+        not whole runs, without ever reordering visible content.
         """
         import copy
 
+        def split_before(run, element, prefix_text: str) -> None:
+            preceding = []
+            for child in run:
+                if child is element:
+                    break
+                if child.tag != _RPR:
+                    preceding.append(child)
+            if not preceding and not prefix_text:
+                return
+            new_run = OxmlElement("w:r")
+            rpr = run.find(_RPR)
+            if rpr is not None:
+                new_run.append(copy.deepcopy(rpr))
+            for child in preceding:
+                run.remove(child)
+                new_run.append(child)
+            if prefix_text:
+                new_run.add_t(prefix_text)
+            run.addprevious(new_run)
+
+        def split_after(run, element, tail_text: str) -> None:
+            following = []
+            seen = False
+            for child in run:
+                if seen and child.tag != _RPR:
+                    following.append(child)
+                if child is element:
+                    seen = True
+            if not following and not tail_text:
+                return
+            new_run = OxmlElement("w:r")
+            rpr = run.find(_RPR)
+            if rpr is not None:
+                new_run.append(copy.deepcopy(rpr))
+            if tail_text:
+                new_run.add_t(tail_text)
+            for child in following:
+                run.remove(child)
+                new_run.append(child)
+            run.addnext(new_run)
+
         first = self._atoms[0]
-        if self._start_offset > 0 and first.run is not None:
-            before_run = OxmlElement("w:r")
-            rpr = first.run.find(_RPR)
-            if rpr is not None:
-                before_run.append(copy.deepcopy(rpr))
-            before_run.add_t(first.text[: self._start_offset])
-            first.run.addprevious(before_run)
-            _set_preserved_text(first.element, first.text[self._start_offset :])
-            self._end_offset -= self._start_offset if len(self._atoms) == 1 else 0
-            self._start_offset = 0
+        if first.run is not None:
+            prefix = first.text[: self._start_offset] if self._start_offset > 0 else ""
+            split_before(first.run, first.element, prefix)
+            if prefix:
+                _set_preserved_text(first.element, first.text[self._start_offset :])
+                if len(self._atoms) == 1:
+                    self._end_offset -= self._start_offset
+                self._start_offset = 0
         last = self._atoms[-1]
-        if self._end_offset < len(last.text) and last.run is not None:
-            after_run = OxmlElement("w:r")
-            rpr = last.run.find(_RPR)
-            if rpr is not None:
-                after_run.append(copy.deepcopy(rpr))
-            after_run.add_t(last.text[self._end_offset :])
-            last.run.addnext(after_run)
-            _set_preserved_text(last.element, last.text[: self._end_offset])
+        if last.run is not None:
+            tail = last.text[self._end_offset :] if self._end_offset < len(last.text) else ""
+            split_after(last.run, last.element, tail)
+            if tail:
+                _set_preserved_text(last.element, last.text[: self._end_offset])
 
     # -- narrowing --------------------------------------------------------
 
     def _synthetic_positions(self) -> "set":
-        """Char positions in this span's text contributed by tab/break atoms."""
+        """Char positions in this span's text contributed by tab/break atoms
+        (paragraph separators count too — they are equally unwritable)."""
         positions = set()
         cursor = 0
-        for index, atom in enumerate(self._atoms):
-            start = self._start_offset if index == 0 else 0
-            end = self._end_offset if index == len(self._atoms) - 1 else len(atom.text)
-            if atom.is_synthetic:
-                positions.update(range(cursor, cursor + (end - start)))
-            cursor += end - start
+        for atom_index, text in self._in_span_pieces():
+            if atom_index is None or self._atoms[atom_index].is_synthetic:
+                positions.update(range(cursor, cursor + len(text)))
+            cursor += len(text)
         return positions
 
     def _narrow_to_change(self, new_text: str) -> "Optional[Tuple[Span, str]]":
@@ -416,22 +465,29 @@ class Span:
         changed_new = new_text[prefix_len : len(new_text) - suffix_len]
         if not changed_old and not changed_new:
             return None
-        # map the changed char range onto the atom slice
+        # map the changed char range onto the atom slice (paragraph
+        # separators are None pieces: a change touching one cannot narrow —
+        # validation will refuse it as a cross-paragraph change)
         target_start = prefix_len
         target_end = len(self.text) - suffix_len
         position = 0
         start_idx = end_idx = None
         start_off = end_off = 0
-        for index, atom in enumerate(self._atoms):
-            base = self._start_offset if index == 0 else 0
-            limit = self._end_offset if index == len(self._atoms) - 1 else len(atom.text)
-            length = limit - base
+        for atom_index, text in self._in_span_pieces():
+            length = len(text)
+            base = 0
+            if atom_index == 0:
+                base = self._start_offset
             if start_idx is None and position + length > target_start:
-                start_idx = index
+                if atom_index is None:
+                    return None  # change begins on a paragraph separator
+                start_idx = atom_index
                 start_off = base + (target_start - position)
             if position + length >= target_end:
-                end_idx = index
-                end_off = base + (target_end - position)
+                if atom_index is None and end_idx is None:
+                    return None  # change ends on a paragraph separator
+                end_idx = atom_index if atom_index is not None else end_idx
+                end_off = base + (target_end - position) if atom_index is not None else end_off
                 break
             position += length
         if start_idx is None or end_idx is None:
@@ -463,22 +519,29 @@ class Span:
 
     # -- validation -------------------------------------------------------
 
+    def _in_span_pieces(self) -> "List[Tuple[Optional[int], str]]":
+        """(atom-index-or-None, text) pieces reconstituting this span's text.
+
+        `None` entries are the synthetic "\\n" paragraph separators the search
+        text carries between atoms of different paragraphs — part of the span
+        TEXT but belonging to no atom; every offset computation must account
+        for them or cross-paragraph spans desynchronize.
+        """
+        pieces: "List[Tuple[Optional[int], str]]" = []
+        previous: "Optional[_Atom]" = None
+        for index, atom in enumerate(self._atoms):
+            if previous is not None and atom.paragraph is not previous.paragraph:
+                pieces.append((None, "\n"))
+            start = self._start_offset if index == 0 else 0
+            end = self._end_offset if index == len(self._atoms) - 1 else len(atom.text)
+            pieces.append((index, atom.text[start:end]))
+            previous = atom
+        return pieces
+
     def _current_slice(self) -> str:
         """The span's text as the tree holds it right now (paragraph
         boundaries render as the same "\\n" the capture used)."""
-        if len(self._atoms) == 1:
-            return self._atoms[0].text[self._start_offset : self._end_offset]
-        pieces = [self._atoms[0].text[self._start_offset :]]
-        previous = self._atoms[0]
-        for atom in self._atoms[1:-1]:
-            if atom.paragraph is not previous.paragraph:
-                pieces.append("\n")
-            pieces.append(atom.text)
-            previous = atom
-        if self._atoms[-1].paragraph is not previous.paragraph:
-            pieces.append("\n")
-        pieces.append(self._atoms[-1].text[: self._end_offset])
-        return "".join(pieces)
+        return "".join(text for _, text in self._in_span_pieces())
 
     def _validate_fresh(self) -> None:
         if self._consumed:
@@ -537,7 +600,18 @@ class Span:
                 "span crosses a content-control boundary; edit inside or"
                 " outside the control, not across it"
             )
-        hollowed = _hollowed_bookmarks(self._atoms)
+        # both modes: an untracked replace crossing a hyperlink boundary
+        # would silently move text into or out of the link
+        link_scopes = {
+            id(atom.hyperlink) if atom.hyperlink is not None else None
+            for atom in self._atoms
+        }
+        if len(link_scopes) > 1:
+            raise BoundaryViolationError(
+                "span crosses a hyperlink boundary; edit the linked text and"
+                " the surrounding text separately"
+            )
+        hollowed = _hollowed_bookmarks(self._atoms, self._end_offset)
         if hollowed:
             raise UnsupportedStructureError(
                 f"replacing this span would hollow out bookmark(s) {hollowed}"
@@ -574,11 +648,11 @@ class Span:
             raise ValueError("author is required when tracked=True")
         _validate_writable_text(new_text, argument="new_text")
         self._validate_fresh()
-        if any(atom.is_synthetic for atom in self._atoms):
-            # spans matched ACROSS a tab/break may still edit safely when the
-            # actual change lies between breaks: narrow to the changed region
-            # (v0.1 S5); if the change itself crosses a break, validation
-            # below refuses as before
+        if any(atom.is_synthetic for atom in self._atoms) or self.crosses_paragraphs:
+            # spans matched ACROSS a tab/break/paragraph boundary may still
+            # edit safely when the actual change lies within one segment:
+            # narrow to the changed region (v0.1 S5); if the change itself
+            # crosses a break or boundary, validation below refuses as before
             narrowed = self._narrow_to_change(new_text)
             if narrowed is not None:
                 sub_span, sub_new = narrowed
@@ -596,6 +670,23 @@ class Span:
                         " reject the revision first, or use tracked=True"
                     )
         placeholder_sdts = _placeholder_controls_of(self._atoms)
+        if placeholder_sdts:
+            if tracked:
+                raise UnsupportedStructureError(
+                    "span lies in a form control still showing PLACEHOLDER"
+                    " prompt text; a tracked replacement would fabricate a"
+                    " deletion of text that was never real content — fill the"
+                    " control untracked (or via docx.controls) first"
+                )
+            for sdt in placeholder_sdts:
+                prompt = _placeholder_prompt_text(sdt)
+                if self.text != prompt:
+                    raise UnsupportedStructureError(
+                        "span covers only part of a placeholder prompt;"
+                        " replacing it would promote the leftover prompt text"
+                        " to real content — replace the whole prompt"
+                        f" ({prompt!r}) or use docx.controls.set_control_value"
+                    )
         if tracked:
             result = self._tracked_replace(new_text, author=author, date=date)  # type: ignore[arg-type]
         else:
@@ -638,22 +729,16 @@ class Span:
 
         from docx.oxml.revision import CT_RunTrackChange
 
+        if self.story == "word/comments.xml":
+            raise UnsupportedStructureError(
+                "tracked changes inside comment text are not representable;"
+                " edit the comment untracked or reply instead"
+            )
         for atom in self._atoms:
             if atom.run is None:
                 raise UnsupportedStructureError(
                     "matched text is not inside a run; cannot anchor a revision"
                 )
-        # hyperlink interiors are supported (v0.1 S6); CROSSING the boundary
-        # would move text into or out of the link
-        link_scopes = {
-            id(atom.hyperlink) if atom.hyperlink is not None else None
-            for atom in self._atoms
-        }
-        if len(link_scopes) > 1:
-            raise BoundaryViolationError(
-                "span crosses a hyperlink boundary; edit the linked text and"
-                " the surrounding text separately"
-            )
         # layered revisions: a span straddling a pending w:ins would emit a
         # w:del claiming inserted text was base-document content — fabricated
         # history that corrupts reject/original views. Two shapes are safe:
@@ -783,6 +868,14 @@ class Span:
             insert_point = tail_run
         if moved_run is not None:
             insert_point.addnext(moved_run)
+        if extends_own_insertion:
+            # an own-ins whose text this edit fully consumed is now an empty
+            # phantom revision; drop it rather than enumerate a ghost
+            for own_ins in {e for e in enclosing if e is not None}:
+                if not "".join(own_ins.itertext()) and not own_ins.xpath(
+                    ".//w:drawing | .//w:object"
+                ):
+                    own_ins.getparent().remove(own_ins)
 
         result = ReplaceResult(
             story=self.story,
@@ -857,9 +950,15 @@ def _next_revision_id(document: "Document") -> int:
     registered oxml class, so prefix-based `.xpath()` is unavailable there.
     """
     w_id = qn("w:id")
+    revision_tags = (
+        _INS, _DEL, _MOVE_FROM, _MOVE_TO,
+        qn("w:moveFromRangeStart"), qn("w:moveToRangeStart"),
+        qn("w:rPrChange"), qn("w:pPrChange"), qn("w:tblPrChange"),
+        qn("w:sectPrChange"), qn("w:cellIns"), qn("w:cellDel"), qn("w:cellMerge"),
+    )
     highest = 0
     for _, root in _story_elements(document):
-        for node in root.iter(_INS, _DEL):
+        for node in root.iter(*revision_tags):
             value = node.get(w_id)
             try:
                 highest = max(highest, int(value)) if value else highest
@@ -908,41 +1007,63 @@ def _placeholder_controls_of(atoms: "Sequence[_Atom]"):
     return controls
 
 
+def _placeholder_prompt_text(sdt: "_Element") -> str:
+    """The full prompt text a placeholder-showing control displays."""
+    content = sdt.find(qn("w:sdtContent"))
+    if content is None:
+        return ""
+    return "".join(node.text or "" for node in content.iter(_T))
+
+
+def _in_nested_sdt(node: "_Element", outer_sdt: "_Element") -> bool:
+    parent = node.getparent()
+    while parent is not None and parent is not outer_sdt:
+        if parent.tag == _SDT:
+            return True
+        parent = parent.getparent()
+    return False
+
+
 def _clear_placeholder_state(sdt: "_Element") -> None:
     """The control was really filled: drop `w:showingPlcHdr` and the
-    `PlaceholderText` run style so Word stops treating it as empty."""
+    `PlaceholderText` run style so Word stops treating it as empty.
+
+    Nested inner controls keep their own placeholder state — only THIS
+    control was filled."""
     sdt_pr = sdt.find(_SDT_PR)
     if sdt_pr is not None:
         showing = sdt_pr.find(_SHOWING_PLC_HDR)
         if showing is not None:
             sdt_pr.remove(showing)
     for r_style in sdt.findall(f".//{_R_STYLE}"):
-        if r_style.get(qn("w:val")) == "PlaceholderText":
+        if r_style.get(qn("w:val")) == "PlaceholderText" and not _in_nested_sdt(
+            r_style, sdt
+        ):
             r_style.getparent().remove(r_style)
 
 
-def _hollowed_bookmarks(atoms: "Sequence[_Atom]") -> "List[str]":
-    """Names of non-point bookmarks wholly inside the span's atom window.
+def _hollowed_bookmarks(atoms: "Sequence[_Atom]", end_offset: int) -> "List[str]":
+    """Names of non-point bookmarks the replace would silently EMPTY.
 
-    Their text lives in atoms the replace will consume, while the replacement
-    lands outside the marker pair — the bookmark would silently become empty.
-    Point bookmarks (`_GoBack`, cursor markers) hold no text and are
-    transparent by design (they must be, or Word's ubiquitous noise would
-    refuse everything).
+    Character-accurate: the replace empties every middle atom, plus the last
+    atom when the span consumes it entirely (`end_offset == len(last.text)`);
+    the first atom always keeps its prefix + the replacement. A bookmark is
+    hollowed when ALL of its text lives in elements that get emptied — the
+    replacement lands outside its marker pair. Point bookmarks (`_GoBack`)
+    hold no text and are transparent by design.
     """
     paragraph = atoms[0].paragraph
     if paragraph is None:
         return []
-    stream = list(paragraph.iter())
-    try:
-        first_pos = stream.index(atoms[0].element)
-        last_pos = stream.index(atoms[-1].element)
-    except ValueError:
+    emptied_ids = {id(atom.element) for atom in atoms[1:-1]}
+    if len(atoms) > 1 and end_offset >= len(atoms[-1].text):
+        emptied_ids.add(id(atoms[-1].element))
+    if not emptied_ids:
         return []
-    window = stream[first_pos + 1 : last_pos]
+    stream = list(paragraph.iter())
     starts = {}
     hollowed = []
-    for position, node in enumerate(window):
+    for position, node in enumerate(stream):
         if node.tag == _BOOKMARK_START:
             starts[node.get(_W_ID)] = (position, node.get(_W_NAME) or "")
         elif node.tag == _BOOKMARK_END:
@@ -952,11 +1073,14 @@ def _hollowed_bookmarks(atoms: "Sequence[_Atom]") -> "List[str]":
             start_pos, name = entry
             if name == "_GoBack":
                 continue
-            has_text = any(
-                inner.tag in (_T, _DEL_TEXT) and (inner.text or "")
-                for inner in window[start_pos + 1 : position]
-            )
-            if has_text:
+            text_elements = [
+                inner
+                for inner in stream[start_pos + 1 : position]
+                if inner.tag in (_T, _DEL_TEXT) and (inner.text or "")
+            ]
+            if text_elements and all(
+                id(inner) in emptied_ids for inner in text_elements
+            ):
                 hollowed.append(name)
     return hollowed
 

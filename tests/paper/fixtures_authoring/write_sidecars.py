@@ -314,6 +314,20 @@ FIELDS_FEATURES = ["fields", "simple-field", "complex-field", "field-cached-resu
 PLACEHOLDER_FEATURES = ["content-control-placeholder", "showing-plc-hdr"]
 BOOKMARK_FEATURES = ["bookmarks", "point-bookmark"]
 NOISY_FEATURES = ["proof-err", "comment-anchors", "point-bookmark"]
+TOC_FIELD_FEATURES = ["complex-field", "multi-paragraph-field", "toc-shape"]
+
+TOC_FIELD_GROUND_TRUTH = {
+    "field": {
+        "instr": "TOC",
+        "spans_paragraphs": 3,
+        "entry_texts": [
+            "Chapter One entry\t4",
+            "Chapter Two entry\t9",
+            "Chapter Three entry\t14",
+        ],
+    },
+    "all_entry_paragraphs_are_field_content": True,
+}
 
 SIDECARS: Dict[str, Dict[str, Any]] = {
     # -- generated bucket ---------------------------------------------------
@@ -421,6 +435,12 @@ SIDECARS: Dict[str, Dict[str, Any]] = {
         NOISY_FEATURES,
         NOISY_MARKUP_GROUND_TRUTH,
     ),
+    "generated/feature-isolated/toc-field.docx": sidecar(
+        "toc-field.docx",
+        GENERATED_PROVENANCE,
+        TOC_FIELD_FEATURES,
+        TOC_FIELD_GROUND_TRUTH,
+    ),
     "generated/gauntlet/gauntlet.docx": sidecar(
         "gauntlet.docx",
         GENERATED_PROVENANCE,
@@ -459,7 +479,8 @@ SIDECARS: Dict[str, Dict[str, Any]] = {
             "notes": FOOTNOTES_GROUND_TRUTH,
             "moves": MOVES_GROUND_TRUTH,
             "format_changes": FORMAT_CHANGES_GROUND_TRUTH,
-            "fields": FIELDS_GROUND_TRUTH,
+            "fields": {**FIELDS_GROUND_TRUTH, "field_count": 3},
+            "toc_field": TOC_FIELD_GROUND_TRUTH,
             "placeholder_control": PLACEHOLDER_GROUND_TRUTH,
             "bookmarks": BOOKMARKS_GROUND_TRUTH,
             "proof_err_count": 2,

@@ -169,6 +169,9 @@ APPROVED_SIGNATURES = [
     ),
     ("docx.commentops", "anchored_text", "(document, comment)"),
     ("docx.commentops", "comment_thread", "(document)"),
+    ("docx.commentops", "parent_of", "(document, comment)"),
+    ("docx.controls", "iter_controls", "(document)"),
+    ("docx.revision", "Revisions.remaining_unsupported", "(self)"),
 ]
 
 _IDS = [f"{module}.{attr}" for module, attr, _ in APPROVED_SIGNATURES]

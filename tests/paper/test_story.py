@@ -262,7 +262,7 @@ class DescribeBlindRegionCounts:
             "format_changes": 2,  # rPrChange + pPrChange
             "content_controls": 3,  # block + inline + placeholder form control
             "text_boxes": 1,
-            "fields": 2,  # fldSimple + one complex fldChar field
+            "fields": 3,  # fldSimple + complex PAGEREF + multi-paragraph TOC
             "math": 0,
             "embedded_objects": 0,
             "alt_chunks": 0,

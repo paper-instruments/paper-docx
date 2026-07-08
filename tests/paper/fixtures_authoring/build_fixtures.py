@@ -561,6 +561,8 @@ def build_gauntlet(out: Path) -> None:
         append_block(doc, p)
     append_block(doc, placeholder_control_paragraph())
     append_block(doc, bookmark_paragraph())
+    for p in toc_field_paragraphs():
+        append_block(doc, p)
     noisy = doc.add_paragraph("Gauntlet paragrah with proofing noise.")
     noisy._p.insert(  # noqa: SLF001 - authoring tool
         list(noisy._p).index(noisy.runs[0]._r),
@@ -791,6 +793,39 @@ def build_noisy_markup(out: Path) -> None:
     save_frozen(doc, out, post=add_comment_style_definitions)
 
 
+def toc_field_paragraphs() -> "List[docx.oxml.xmlchemy.BaseOxmlElement]":
+    """A TOC-shaped multi-paragraph complex field: begin+instr+separate in the
+    first paragraph, an entry paragraph in the middle, end in the last —
+    the canonical shape whose cross-block state the v0.1 review caught."""
+    first = parse_xml(
+        f"<w:p {W}>"
+        '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
+        '<w:r><w:instrText xml:space="preserve"> TOC \\o &quot;1-3&quot; \\h </w:instrText></w:r>'
+        '<w:r><w:fldChar w:fldCharType="separate"/></w:r>'
+        "<w:r><w:t>Chapter One entry	4</w:t></w:r>"
+        "</w:p>"
+    )
+    middle = parse_xml(
+        f"<w:p {W}><w:r><w:t>Chapter Two entry	9</w:t></w:r></w:p>"
+    )
+    last = parse_xml(
+        f"<w:p {W}>"
+        "<w:r><w:t>Chapter Three entry	14</w:t></w:r>"
+        '<w:r><w:fldChar w:fldCharType="end"/></w:r>'
+        "</w:p>"
+    )
+    return [first, middle, last]
+
+
+def build_toc_field(out: Path) -> None:
+    doc = Document()
+    doc.add_paragraph("Contents heading before the TOC field.")
+    for p in toc_field_paragraphs():
+        append_block(doc, p)
+    doc.add_paragraph("Body paragraph after the TOC field.")
+    save_frozen(doc, out)
+
+
 def build_corrupt_broken_rel(minimal: Path, out: Path) -> None:
     """Valid zip, valid XML, but document.xml.rels points at a missing part."""
     parts, order = read_parts(minimal.read_bytes())
@@ -909,6 +944,11 @@ FEATURE_PROBES: Dict[str, List[Tuple[str, bytes]]] = {
         ("word/document.xml", b"<w:proofErr "),
         ("word/document.xml", b"commentRangeStart"),
         ("word/document.xml", b'w:name="_GoBack"'),
+    ],
+    "toc-field": [
+        ("word/document.xml", b" TOC "),
+        ("word/document.xml", b'w:fldCharType="separate"'),
+        ("word/document.xml", b"Chapter Two entry"),
     ],
 }
 
@@ -1098,6 +1138,7 @@ def main(argv: "List[str] | None" = None) -> int:
         feature_dir / "placeholder-control.docx": build_placeholder_control,
         feature_dir / "bookmarks.docx": build_bookmarks,
         feature_dir / "noisy-markup.docx": build_noisy_markup,
+        feature_dir / "toc-field.docx": build_toc_field,
         GENERATED_DIR / "gauntlet" / "gauntlet.docx": build_gauntlet,
         GENERATED_DIR / "large" / "large-5000-paragraphs.docx": build_large,
     }

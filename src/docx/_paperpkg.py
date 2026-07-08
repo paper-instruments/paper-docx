@@ -439,23 +439,34 @@ def diagnose(path: _PathLike) -> PackageDiagnosis:
         if name not in parts
     ]
     main_type = None
+    main_part_name = "word/document.xml"
+    if "_rels/.rels" in parts:
+        try:
+            for rel_id, rel_type, target, mode in _relationship_multiset(
+                parts["_rels/.rels"]
+            ):
+                if rel_type.endswith("/officeDocument") and mode == "Internal":
+                    main_part_name = target.lstrip("/")
+                    break
+        except (etree.XMLSyntaxError, UnsupportedXmlError):
+            pass
     if _CONTENT_TYPES_PART in parts:
         try:
             _, overrides = _effective_content_types(
                 parts[_CONTENT_TYPES_PART], list(parts)
             )
-            main_type = overrides.get("/word/document.xml")
-        except etree.XMLSyntaxError as exc:
-            problems.append(f"[Content_Types].xml is unparseable: {exc}")
+            main_type = overrides.get("/" + main_part_name)
+        except (etree.XMLSyntaxError, UnsupportedXmlError) as exc:
+            problems.append(f"[Content_Types].xml is unparseable or unsafe: {exc}")
 
-    if "word/document.xml" not in parts:
+    if main_part_name not in parts:
         for marker, kind in (("xl/", "xlsx"), ("ppt/", "pptx")):
             if any(name.startswith(marker) for name in parts):
                 return result(
                     False, kind, "an OPC package, but not a WordprocessingML one"
                 )
         return result(
-            False, "opc-unknown", "no word/document.xml main document part",
+            False, "opc-unknown", f"no {main_part_name} main document part",
             *problems,
         )
 

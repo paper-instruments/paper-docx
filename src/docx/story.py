@@ -395,6 +395,26 @@ def _iter_block_elements(
         yield from _walk_container(container, counter, in_sdt=in_sdt, in_txbx=False)
 
 
+def _count_fldchar_delta(element: "_Element") -> int:
+    """Net change in open complex-field depth across `element`'s traversal
+    space (begins minus ends, floored at closing more than opened)."""
+    delta = 0
+
+    def walk(node: "_Element") -> None:
+        nonlocal delta
+        for child in _first_choice_children(node):
+            if child.tag == _FLD_CHAR:
+                fld_type = child.get(_FLD_CHAR_TYPE)
+                if fld_type == "begin":
+                    delta += 1
+                elif fld_type == "end":
+                    delta -= 1
+            walk(child)
+
+    walk(element)
+    return delta
+
+
 def _build_block(
     story: str,
     kind: str,
@@ -404,6 +424,7 @@ def _build_block(
     *,
     in_sdt: bool,
     in_txbx: bool,
+    in_open_field: bool = False,
 ) -> Block:
     if kind == "table":
         visitor = _subtree_text(element, view, skip_text_boxes=False,
@@ -429,7 +450,9 @@ def _build_block(
         in_delete=visitor.in_delete,
         in_content_control=in_sdt or visitor.in_content_control,
         in_text_box=in_txbx or visitor.in_text_box,
-        has_field=visitor.has_field,
+        # a block BETWEEN a field's begin and end (TOC entry paragraphs) is
+        # field content even though neither marker lives in it
+        has_field=visitor.has_field or in_open_field,
         table=table,
     )
 
@@ -486,6 +509,14 @@ def _count_blind_regions(root: "_Element") -> Dict[str, int]:
         _VANISH: "hidden_text",
     }
 
+    graphic_data = (
+        "{http://schemas.openxmlformats.org/drawingml/2006/main}graphicData"
+    )
+    _SURFACED_GRAPHIC_URIS = (
+        "http://schemas.openxmlformats.org/drawingml/2006/picture",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
+    )
+
     def walk(element: "_Element") -> None:
         for child in _first_choice_children(element):
             key = tag_keys.get(child.tag)
@@ -495,6 +526,11 @@ def _count_blind_regions(root: "_Element") -> Dict[str, int]:
                 counts["format_changes"] += 1
             elif child.tag == _FLD_CHAR and child.get(_FLD_CHAR_TYPE) == "begin":
                 counts["fields"] += 1
+            elif child.tag == graphic_data and (
+                child.get("uri") not in _SURFACED_GRAPHIC_URIS
+            ):
+                # charts, SmartArt, OLE previews — content we cannot read
+                counts["embedded_objects"] += 1
             walk(child)
 
     walk(root)
@@ -511,10 +547,14 @@ def iter_blocks(document: "Document", *, view: str = "current") -> Iterator[Bloc
     if view not in VIEWS:
         raise ValueError(f"view must be one of {VIEWS}, got {view!r}")
     for story, root in _story_elements(document):
+        open_field_depth = 0
         for kind, index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
             yield _build_block(
-                story, kind, index, element, view, in_sdt=in_sdt, in_txbx=in_txbx
+                story, kind, index, element, view,
+                in_sdt=in_sdt, in_txbx=in_txbx,
+                in_open_field=open_field_depth > 0,
             )
+            open_field_depth = max(0, open_field_depth + _count_fldchar_delta(element))
 
 
 def outline(document: "Document", *, view: str = "current") -> Outline:

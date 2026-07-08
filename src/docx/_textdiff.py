@@ -64,9 +64,9 @@ def _story_lines(document, view: str) -> "Dict[str, List[str]]":
 
     lines: "Dict[str, List[str]]" = {}
     for block in iter_blocks(document, view=view):
-        lines.setdefault(block.story, []).append(
-            f"[{block.kind} {block.index}] {block.text}"
-        )
+        # no block index in the label: one insertion would shift every
+        # later index and report the whole document as changed
+        lines.setdefault(block.story, []).append(f"[{block.kind}] {block.text}")
     return lines
 
 

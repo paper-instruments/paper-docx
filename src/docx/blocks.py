@@ -211,7 +211,87 @@ def _next_revision_id(document: "Document") -> int:
     return shared(document)
 
 
+def _refuse_cell_anchor(paragraph: "_Element") -> None:
+    """Section/block insertion targets body-level flow; an anchor resolving
+    inside a table cell would silently build the section INSIDE the cell."""
+    parent = paragraph.getparent()
+    if parent is not None and parent.tag == qn("w:tc"):
+        raise UnsupportedStructureError(
+            "anchor resolves inside a table cell; block insertion targets"
+            " body-level paragraphs — anchor on a paragraph outside the table"
+        )
+
+
+def _field_open_flags(story: str, root: "_Element", paragraph: "_Element"):
+    """(open_before, open_after) complex-field state around `paragraph`'s block.
+
+    A multi-paragraph field (every Word TOC) keeps begin..end open across
+    blocks; block operations inside that region would write content Word
+    erases on the next field update (v0.1 H4 at block level).
+    """
+    from docx.story import _count_fldchar_delta
+
+    depth = 0
+    for _kind, _index, element, _sdt, _txbx in _iter_block_elements(story, root):
+        contains = element is paragraph or any(
+            node is paragraph for node in element.iter(_P)
+        )
+        delta = _count_fldchar_delta(element)
+        if contains:
+            return depth > 0, (depth + delta) > 0
+        depth = max(0, depth + delta)
+    return False, False
+
+
+def _refuse_paragraph_in_open_field(
+    story: str, root: "_Element", paragraph: "_Element", *, for_insertion: bool
+) -> None:
+    open_before, open_after = _field_open_flags(story, root, paragraph)
+    blocked = open_after if for_insertion else (open_before or open_after)
+    if blocked:
+        raise UnsupportedStructureError(
+            "target lies inside a field result that spans paragraphs (a TOC or"
+            " similar); Word regenerates field results on update, so content"
+            " written there would silently vanish"
+        )
+
+
+def _named_bookmarks_in(paragraph: "_Element"):
+    """Names of non-point, non-_GoBack bookmarks with a marker in `paragraph`."""
+    starts = {}
+    named = []
+    stream = list(paragraph.iter())
+    for position, node in enumerate(stream):
+        if node.tag == qn("w:bookmarkStart"):
+            name = node.get(qn("w:name")) or ""
+            starts[node.get(qn("w:id"))] = (position, name)
+            if name != "_GoBack":
+                named.append((node.get(qn("w:id")), name))
+        elif node.tag == qn("w:bookmarkEnd"):
+            entry = starts.pop(node.get(qn("w:id")), None)
+            if entry is None:
+                continue
+            start_pos, name = entry
+            if name == "_GoBack":
+                continue
+            has_text = any(
+                inner.tag == _T and (inner.text or "")
+                for inner in stream[start_pos + 1 : position]
+            )
+            if not has_text:
+                named = [(i, n) for i, n in named if i != node.get(qn("w:id"))]
+    return [name for _, name in named]
+
+
 def _validate_deletable_paragraph(paragraph: "_Element") -> None:
+    hollowable = _named_bookmarks_in(paragraph)
+    if hollowable:
+        raise UnsupportedStructureError(
+            f"paragraph carries named bookmark(s) {hollowable} — the targets"
+            " of REF/PAGEREF/TOC references; deleting it would hollow them."
+            " Remove the bookmark deliberately first (only point bookmarks"
+            " like _GoBack are transparent)"
+        )
     for child in paragraph:
         if child.tag == _PPR or child.tag in _TRANSPARENT_PARAGRAPH_CHILDREN:
             continue
@@ -253,7 +333,8 @@ def _mark_paragraph_deleted(
     """
     text = _paragraph_visible_text(paragraph)
     deletion = CT_RunTrackChange.new("w:del", revision_id, author, stamp)
-    for child in list(paragraph):
+    placement = None
+    for position, child in enumerate(list(paragraph)):
         if child.tag == _PPR:
             continue
         if child.tag == _PROOF_ERR:
@@ -261,11 +342,19 @@ def _mark_paragraph_deleted(
             continue
         if child.tag in _TRANSPARENT_PARAGRAPH_CHILDREN:
             continue  # bookmarks / comment anchors keep their places
+        if placement is None:
+            placement = position
         paragraph.remove(child)
         for t_elm in child.iter(_T):
             t_elm.tag = _DEL_TEXT
         deletion.append(child)
-    paragraph.append(deletion)
+    # the deletion sits WHERE the content was, so comment range marks around
+    # it keep wrapping it and reject restores the original order exactly
+    if placement is None:
+        paragraph.append(deletion)
+    else:
+        placement = min(placement, len(paragraph))
+        paragraph.insert(placement, deletion)
     _stamp_paragraph_mark(paragraph, "w:del", revision_id, author, stamp)
     return text
 
@@ -284,6 +373,8 @@ def _select_paragraph_range(
     if count < 1:
         raise ValueError("count must be >= 1")
     story, start_p = _resolve_anchor_paragraph(document, start_anchor)
+    root = dict(_story_elements(document))[story]
+    _refuse_paragraph_in_open_field(story, root, start_p, for_insertion=False)
     # ranges are counted among the start paragraph's SIBLINGS: nested
     # paragraphs (table cells, text boxes) never silently join a range, and
     # the same-parent safety rule holds by construction
@@ -352,6 +443,9 @@ def insert_section_after(
     heading_style_id = _validated_style_id(document, heading_style, argument="heading_style")
     body_style_id = _validated_style_id(document, body_style, argument="body_style")
     story, anchor_p = _resolve_anchor_paragraph(document, anchor)
+    _refuse_cell_anchor(anchor_p)
+    root = dict(_story_elements(document))[story]
+    _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
 
     # -- validated; build and mutate --
     stamp = date if date is not None else _clock.now()
@@ -626,6 +720,9 @@ def insert_blocks_after(
         raise ValueError("author is required when tracked=True")
     _validate_rich_blocks(document, blocks, tracked=tracked)
     story, anchor_p = _resolve_anchor_paragraph(document, anchor)
+    _refuse_cell_anchor(anchor_p)
+    root = dict(_story_elements(document))[story]
+    _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
 
     # -- validated; build and mutate --
     stamp = date if date is not None else _clock.now()
@@ -645,6 +742,21 @@ def insert_blocks_after(
                 paragraph_nodes.append(node)
         else:
             nodes.append(_new_table(document, block))
+    # Word fuses adjacent sibling tables and refuses a cell/body ending in
+    # w:tbl: pad tables with an empty paragraph where needed
+    padded: "List[_Element]" = []
+    for position, node in enumerate(nodes):
+        padded.append(node)
+        if node.tag != qn("w:tbl"):
+            continue
+        next_in_batch = nodes[position + 1] if position + 1 < len(nodes) else None
+        if next_in_batch is not None and next_in_batch.tag == qn("w:tbl"):
+            padded.append(OxmlElement("w:p"))
+        elif next_in_batch is None:
+            following = anchor_p.getnext()
+            if following is None or following.tag == qn("w:tbl"):
+                padded.append(OxmlElement("w:p"))
+    nodes = padded
     revision_ids: "List[int]" = []
     if tracked:
         next_id = _next_revision_id(document)

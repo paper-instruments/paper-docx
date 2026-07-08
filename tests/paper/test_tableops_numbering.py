@@ -170,11 +170,19 @@ class DescribeRowOperations:
             # clean template, but the insertion point splits rows 1-2's merge
             insert_row_after(document.tables[0], 1, ["x"], copy_format_from=0)
 
-    def and_it_allows_row_ops_clear_of_the_merge(self, tmp_path: Path):
+    def it_refuses_horizontally_merged_template_rows(self):
+        """A gridSpan template row repeats its merged tc through .cells, so
+        positional values would silently misassign (v0.1 review fix)."""
         document = _doc(COMPLEX_TABLE)
-        insert_row_after(document.tables[0], 0, ["a", "b", "c"])
+        with pytest.raises(UnsupportedStructureError, match="gridSpan"):
+            insert_row_after(document.tables[0], 0, ["a", "b", "c"])
+
+    def and_it_allows_deleting_a_grid_span_row(self, tmp_path: Path):
+        """Deleting a whole horizontally merged row is unambiguous."""
+        document = _doc(COMPLEX_TABLE)
+        delete_row(document.tables[0], 0)
         reopened = save_and_reopen(document, tmp_path / "out.docx")
-        assert len(reopened.tables[0].rows) == 4
+        assert len(reopened.tables[0].rows) == 2
 
 
 class DescribeListNumbering:

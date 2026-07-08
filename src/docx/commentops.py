@@ -198,12 +198,19 @@ def anchored_text(document: "Document", comment: "Comment") -> str:
         raise TargetNotFoundError(
             f"comment {comment.comment_id} has no range anchor in the body"
         )
+    # document-order walk over the whole story tree: comment ranges may
+    # cross paragraph boundaries, where sibling iteration would truncate
     pieces: "List[str]" = []
-    node = start.getnext()
-    while node is not None and node is not end:
-        for text_node in node.iter(_T):
-            pieces.append(text_node.text or "")
-        node = node.getnext()
+    root = start.getroottree().getroot()
+    inside = False
+    for node in root.iter():
+        if node is start:
+            inside = True
+            continue
+        if node is end:
+            break
+        if inside and node.tag == _T:
+            pieces.append(node.text or "")
     return "".join(pieces)
 
 

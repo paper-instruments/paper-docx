@@ -173,8 +173,20 @@
         "instr": "PAGEREF _RefAnchor",
         "cached_result": "14"
       },
-      "field_count": 2,
+      "field_count": 3,
       "visible_text_includes_results": true
+    },
+    "toc_field": {
+      "field": {
+        "instr": "TOC",
+        "spans_paragraphs": 3,
+        "entry_texts": [
+          "Chapter One entry\t4",
+          "Chapter Two entry\t9",
+          "Chapter Three entry\t14"
+        ]
+      },
+      "all_entry_paragraphs_are_field_content": true
     },
     "placeholder_control": {
       "control": {

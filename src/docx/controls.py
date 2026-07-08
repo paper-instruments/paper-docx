@@ -49,6 +49,7 @@ _DATE = qn("w:date")
 _FULL_DATE = qn("w:fullDate")
 _LIST_ITEM = qn("w:listItem")
 _DISPLAY_TEXT = qn("w:displayText")
+_LIST_VALUE = qn("w:value")
 _TEXT_CTRL = qn("w:text")
 _PICTURE = qn("w:picture")
 _DOC_PART_OBJ = qn("w:docPartObj")
@@ -116,7 +117,7 @@ def _choices(sdt_pr: "Optional[_Element]") -> Tuple[str, ...]:
         holder = sdt_pr.find(holder_tag)
         if holder is not None:
             return tuple(
-                item.get(_DISPLAY_TEXT) or item.get(_W_VAL) or ""
+                item.get(_DISPLAY_TEXT) or item.get(_LIST_VALUE) or ""
                 for item in holder.findall(_LIST_ITEM)
             )
     return ()
@@ -226,6 +227,13 @@ class Control:
             self._set_text(display)
             self._set_full_date(value)
             return
+        if control_type == "date" and isinstance(value, str):
+            # a plain display string: drop any machine-readable w:fullDate so
+            # the control never shows one date while claiming another
+            sdt_pr = self._sdt_pr
+            date_pr = sdt_pr.find(_DATE) if sdt_pr is not None else None
+            if date_pr is not None and date_pr.get(_FULL_DATE):
+                del date_pr.attrib[_FULL_DATE]
         if not isinstance(value, str):
             raise ValueError(f"{control_type} controls take a string value")
         _validate_writable_text(value, argument="value")
@@ -263,6 +271,27 @@ class Control:
         if content is None:
             content = OxmlElement("w:sdtContent")
             self._sdt.append(content)
+        # structure guards: never destroy nested controls or tables, and never
+        # write a bare run into block-level content that has no paragraph
+        if content.find(qn("w:sdt")) is not None or any(
+            node.tag == qn("w:sdt") for node in content.iter(qn("w:sdt"))
+        ):
+            raise UnsupportedStructureError(
+                "control content holds nested content controls; set the inner"
+                " controls individually instead of overwriting the group"
+            )
+        if content.find(qn("w:tbl")) is not None:
+            raise UnsupportedStructureError(
+                "control content holds a table; refusing to replace structure"
+                " with plain text"
+            )
+        has_block_content = content.find(_P) is not None
+        has_inline_content = any(child.tag == _R for child in content) or not len(content)
+        if not has_block_content and not has_inline_content:
+            raise UnsupportedStructureError(
+                "control content is not simple text (no paragraph or runs to"
+                " replace); refusing to destroy its structure"
+            )
         # keep the first run's formatting; block controls keep one paragraph
         first_run = next(iter(content.iter(_R)), None)
         template_rpr = None

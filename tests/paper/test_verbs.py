@@ -327,8 +327,8 @@ class DescribeTextDiff:
         document.save(str(out))
         diff = text_diff(source, out)
         joined = "\n".join(line for s in diff.stories for line in s.diff_lines)
-        assert "-[paragraph 2] Second body paragraph, equally unremarkable." in joined
-        assert "+[paragraph 2] Second body paragraph, quite peculiar." in joined
+        assert "-[paragraph] Second body paragraph, equally unremarkable." in joined
+        assert "+[paragraph] Second body paragraph, quite peculiar." in joined
         payload = diff.to_dict()
         assert payload["schema"] == "paper_text_diff" and payload["version"] == 1
 

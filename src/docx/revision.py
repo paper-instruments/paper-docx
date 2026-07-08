@@ -107,6 +107,7 @@ class Revision:
     anchor: Anchor
     is_paragraph_mark: bool
     _element: "_Element"
+    _document: "Optional[Document]" = None
 
     @property
     def is_resolvable(self) -> bool:
@@ -124,12 +125,12 @@ class Revision:
     def accept(self) -> None:
         """Apply this change to the document."""
         self._refuse_unresolvable("accept")
-        _resolve_one(self._element, accept=True)
+        _resolve_one(self._element, accept=True, document=self._document)
 
     def reject(self) -> None:
         """Undo this change, restoring the pre-change content."""
         self._refuse_unresolvable("reject")
-        _resolve_one(self._element, accept=False)
+        _resolve_one(self._element, accept=False, document=self._document)
 
     def to_dict(self) -> dict:
         return {
@@ -210,7 +211,9 @@ class Revisions(Sequence[Revision]):
         # remove whole paragraphs and must see post-content state)
         ordered = sorted(selected, key=lambda item: item.is_paragraph_mark)
         for revision in ordered:
-            _resolve_one(revision._element, accept=accept)  # noqa: SLF001
+            _resolve_one(  # noqa: SLF001
+                revision._element, accept=accept, document=self._document
+            )
             resolved += 1
         self._items = tuple(_enumerate_revisions(self._document))
         return resolved
@@ -262,19 +265,62 @@ def _enumerate_revisions(document: "Document") -> Iterator[Revision]:
                     anchor=block_anchor,
                     is_paragraph_mark=_is_paragraph_mark_revision(node),
                     _element=node,
+                    _document=document,
                 )
 
 
-def _resolve_one(node: "_Element", *, accept: bool) -> None:
+def _comment_ids_inside(node: "_Element"):
+    return [
+        int(ref.get(qn("w:id")))
+        for ref in node.iter(qn("w:commentReference"))
+        if ref.get(qn("w:id"))
+    ]
+
+
+def _cleanup_comment_anchors(document: "Optional[Document]", comment_ids) -> None:
+    """A resolution removed the run holding a comment's reference mark: also
+    remove the now-orphaned range markers and the comment itself, exactly as
+    Word does — half-deleted comments are silent corruption."""
+    if document is None or not comment_ids:
+        return
+    wanted = set(comment_ids)
+    for _story, root in _story_elements(document):
+        for marker in list(
+            root.iter(qn("w:commentRangeStart"), qn("w:commentRangeEnd"))
+        ):
+            raw = marker.get(qn("w:id"))
+            if raw and int(raw) in wanted:
+                marker.getparent().remove(marker)
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    try:
+        comments_part = document.part.part_related_by(RT.COMMENTS)
+    except KeyError:
+        return
+    comments_root = comments_part._element  # noqa: SLF001
+    for comment in list(comments_root):
+        raw = comment.get(qn("w:id"))
+        if raw and int(raw) in wanted:
+            comments_root.remove(comment)
+
+
+def _resolve_one(
+    node: "_Element", *, accept: bool, document: "Optional[Document]" = None
+) -> None:
     if node.getparent() is None:
         return  # already resolved via an enclosing operation
     if _is_paragraph_mark_revision(node):
         _resolve_paragraph_mark(node, accept=accept)
         return
+    removes_content = (node.tag == _INS and not accept) or (
+        node.tag == _DEL and accept
+    )
+    orphaned = _comment_ids_inside(node) if removes_content else []
     if node.tag == _INS:
         _resolve_insertion(node, accept=accept)
     else:
         _resolve_deletion(node, accept=accept)
+    _cleanup_comment_anchors(document, orphaned)
 
 
 def _unwrap(node: "_Element") -> None:

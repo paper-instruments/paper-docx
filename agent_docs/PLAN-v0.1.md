@@ -212,6 +212,15 @@ holds.
 | Performance (indexed find, 500-page docs) | first profile showing find dominating a job |
 | Pagination/layout oracle | first signature-page or page-reference verification need |
 
+## Post-implementation review deferral
+
+The v0.1 adversarial sweep confirmed 34 findings; 33 were fixed in the
+hardening commit. One is deferred with a loud refusal in place: same-author
+tracked layering supports only the base-prefix→own-insertion-tail shape (a
+span STARTING inside the author's own insertion and extending into base text
+still refuses with guidance). Trigger for the tail entry: first real
+workflow blocked by that refusal.
+
 ## Definition of done, v0.1
 
 Every Phase 0 item: the lie is reproducible in a frozen fixture, a test

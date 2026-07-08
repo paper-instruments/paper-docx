@@ -198,6 +198,9 @@ def update_cell(
     """
     if tracked and not author:
         raise ValueError("author is required when tracked=True")
+    from docx.search import _validate_writable_text
+
+    _validate_writable_text(new_text, argument="new_text")
     document = _document_of(table)
     cell = _cell_at(table, row, column)
     _refuse_complex_cell(cell._tc, row=row, column=column)
@@ -287,10 +290,27 @@ def insert_row_after(
             f"copy_format_from row {template_index} does not exist"
         )
     _refuse_row_op(table, affected_rows={template_index}, splits_before=row + 1)
+    from docx.search import _validate_writable_text
+
+    for position, value in enumerate(values):
+        _validate_writable_text(value, argument=f"values[{position}]")
     column_count = len(rows[row].cells)
     if len(values) > column_count:
         raise ValueError(
             f"{len(values)} values for a {column_count}-column table"
+        )
+    # a horizontally merged template row repeats its merged tc through
+    # rows[..].cells, so positional value assignment would silently drop or
+    # misplace values — refuse instead
+    template_tr = rows[template_index]._tr
+    if any(
+        tc.find(_TC_PR) is not None and tc.find(_TC_PR).find(_GRID_SPAN) is not None
+        for tc in _row_cells(template_tr)
+    ):
+        raise UnsupportedStructureError(
+            f"template row {template_index} contains horizontally merged cells"
+            " (gridSpan); positional values cannot be assigned unambiguously —"
+            " copy formatting from an unmerged row"
         )
 
     # -- validated; mutate --
