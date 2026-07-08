@@ -151,9 +151,11 @@ zip determinism (same input → same bytes, twice).
 ## 4. Phase 3 — `docx.story` traversal & inspection (opt-in)
 
 New part classes `FootnotesPart` / `EndnotesPart`
-(`src/docx/parts/footnotes.py`, `endnotes.py`, both `StoryPart` subclasses
-with `default()` templates), registered for `CT.WML_FOOTNOTES` /
-`CT.WML_ENDNOTES` in `src/docx/__init__.py` (constants already exist).
+(`src/docx/parts/footnotes.py`, `endnotes.py`, both `StoryPart` subclasses),
+registered for `CT.WML_FOOTNOTES` / `CT.WML_ENDNOTES` in
+`src/docx/__init__.py` (constants already exist). v0 reads these parts; it
+does not create them, so no `default()` factory ships (amended from the
+first draft, which mentioned templates).
 
 ```python
 def story_parts(document) -> tuple[str, ...]
