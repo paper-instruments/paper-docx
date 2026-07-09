@@ -4,19 +4,19 @@ paper-docx
 
 Release v\ |version| (:ref:`Installation <install>`)
 
-*paper-docx* is a drop-in fork of `python-docx`_ (the import name stays
-``docx``) that adds the editing surface real document work needs — complete
-visibility into a document, find-and-replace that survives Word's run
-fragmentation, real tracked changes and their resolution, compare, scrub, and
-cross-document composition — all behind typed, atomic refusals instead of
-silent corruption. Everything documented for python-docx below still works,
-unchanged; the fork additions are collected under
-:ref:`Paper additions <paper_additions>`.
+*paper-docx* is an agent-first, strict-superset hard fork of `python-docx`_ for
+safely inspecting, editing, reviewing, and composing existing Word documents.
+The distribution is renamed; the import name stays ``docx``, so existing code
+keeps working unchanged. It adds complete document traversal, normalized
+find-and-replace, native tracked changes and their resolution, compare, scrub,
+and cross-document composition. Every added operation either does exactly what
+it claims or refuses atomically instead of risking silent corruption. See
+:ref:`Paper additions <paper_additions>` for the added APIs.
 
 .. _python-docx: https://github.com/python-openxml/python-docx
 
-The rest of this page is the inherited python-docx documentation: a Python
-library for creating and updating Microsoft Word (.docx) files.
+The rest of this page is inherited from python-docx and covers the shared
+foundation for creating and updating Microsoft Word (.docx) files.
 
 
 What it can do
@@ -119,7 +119,7 @@ API Documentation
 Paper additions — API reference
 -------------------------------
 
-Reference pages for the surface the fork adds. See
+Reference pages for the APIs the fork adds. See
 :ref:`Paper additions <paper_additions>` for the narrative overview.
 
 .. toctree::

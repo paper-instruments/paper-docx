@@ -4,13 +4,13 @@
 Story traversal
 ===============
 
-Visibility-complete traversal. Where ``Document.paragraphs`` sees only
-the body and skips tracked insertions, content controls, text boxes and
-notes, these functions walk every story part (body, headers, footers,
-footnotes, endnotes, comments) and every region standard traversal is
-blind to, under a chosen *view* (``"current"``, ``"original"`` or
-``"all"``). Blocks carry stable |Anchor| identities usable as edit
-targets, and |Outline| confesses what it could not read.
+*paper-docx addition.* Traverse every story and region. Where
+``Document.paragraphs`` sees only the body and skips tracked insertions,
+content controls, text boxes, and notes, these functions walk every story part
+(body, headers, footers, footnotes, endnotes, comments) and every region that
+standard traversal misses. A chosen *view* selects ``"current"``,
+``"original"``, or ``"all"``. Blocks carry stable |Anchor| identities usable
+as edit targets, and |Outline| reports regions it could not read.
 
 .. currentmodule:: docx.story
 

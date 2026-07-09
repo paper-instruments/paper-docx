@@ -4,14 +4,13 @@
 Package kernel
 ==============
 
-The corruption-proof package layer. ``patch_save`` writes a compare-based
-narrow save — parts you did not semantically change keep their original
-bytes, so a file-level diff shows your edit and nothing else. ``diff_package``
-and ``text_diff`` prove what changed; ``diagnose`` triages an unopenable
-file into a typed verdict; ``compare`` generates a native tracked-change
-redline transforming one document into another. These names are the
-pinned public path (``docx.package.*``); the implementation lives in
-private modules.
+*paper-docx addition.* Compare packages semantically and save edits narrowly.
+``patch_save`` keeps the original bytes for parts you did not semantically
+change, so a file-level diff shows your edit and nothing else. ``diff_package``
+and ``text_diff`` report what changed. ``diagnose`` triages an unopenable file
+into a typed verdict. ``compare`` generates a native tracked-change redline
+that transforms one document into another. These names are the pinned public
+path (``docx.package.*``); the implementation lives in private modules.
 
 .. currentmodule:: docx.package
 

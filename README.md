@@ -1,39 +1,43 @@
 # paper-docx
 
-**paper-docx reads and edits Microsoft Word (`.docx`) documents from Python.**
-It is a drop-in fork of [`python-docx`](https://github.com/python-openxml/python-docx)
-built for programmatic and agent-driven document work: seeing everything the
-document contains, editing real-world text without breaking formatting,
-proposing and resolving tracked changes, comparing and composing whole
-documents, and saving files that are safe to send.
+`paper-docx` is an agent-first Python library for safely inspecting, editing,
+reviewing, and composing existing Microsoft Word (`.docx`) documents. It is a
+strict-superset hard fork of
+[`python-docx`](https://github.com/python-openxml/python-docx) and a drop-in
+replacement. The distribution is renamed; the import name stays `docx`, so
+existing code keeps working unchanged.
 
 ```python
 import docx                       # the import name is unchanged
 doc = docx.Document("contract.docx")
 ```
 
-Everything `python-docx` does, paper-docx still does, unchanged. Its upstream
-test suites run green on every commit. The rest of this document describes what
-paper-docx adds on top.
+## Why it exists
 
-## Where it came from
+`python-docx` is excellent at *creating* documents. Its lossless package layer,
+disciplined XML mapping, and years of absorbed edge cases are why this fork
+builds on it.
 
-`python-docx` has an excellent foundation: a lossless package layer that
-round-trips content it doesn't understand, and a disciplined XML layer with
-years of absorbed edge cases. It is, however, aimed at *creating* documents.
-paper-docx keeps that foundation and adds the surface you need to *work with
-documents that already exist* — the operations that dominate real editing and
-review, and that a program or agent driving Word cannot otherwise perform
-safely.
+The harder problem is changing a contract or other real-world document without
+losing formatting, revisions, fields, or content outside the body. Hand-edited
+XML can produce **silent corruption**: a file that opens fine and is quietly
+wrong. An agent cannot eyeball the result, so it needs the document's structure
+and every edit outcome as typed, machine-readable data. It also needs the
+library to refuse rather than guess.
 
-The failure mode it is designed to avoid is **silent corruption**: hand-rolled
-XML edits that produce a file which opens without error and is quietly wrong.
-Every operation paper-docx adds either does the right thing or refuses with a
-typed, specific error — it never guesses and never half-finishes.
+## Safety contract
+
+Every added operation either does exactly what it claims or refuses atomically.
+Mutating operations validate fully before they change anything. If an operation
+cannot proceed safely, it raises a typed `PaperRefusal` and leaves the document
+byte-for-byte unchanged in memory and on disk. Callers can catch `PaperRefusal`
+separately from programmer errors, which remain plain `ValueError` or
+`TypeError`. Comparison and rewrite paths preserve meaningful whitespace,
+including trailing spaces inside runs.
 
 ## A short example
 
-Two versions of a document go in; a native Word redline comes out.
+Create a native Word redline from two document versions:
 
 ```python
 import tempfile, docx
@@ -57,104 +61,65 @@ result.document.paragraphs[0].text
 ```
 
 `compare` emits markup Word renders as tracked changes. Accepting the redline
-reproduces the revised document and rejecting it reproduces the original,
-across every part of the file — that round-trip guarantee holds throughout the
-library.
+reproduces the revised document; rejecting it reproduces the original. That
+round-trip guarantee holds across every part of the file.
 
 ## What it adds
 
 ### Reading and editing one document
 
-- **`docx.story`** — traversal that covers every part of a document (body,
-  headers, footers, footnotes, endnotes, comments) and the regions ordinary
-  traversal misses (tracked insertions, content controls, text boxes), under a
-  choice of view: the document as it stands, as it was before pending
-  revisions, or everything at once.
-- **`docx.search`** — find text the way a person writes it (normalized for
-  smart quotes, dashes, and spacing) even when Word has split it across many
-  runs. A match returns a `Span` you can replace surgically, replace as a
-  tracked change, or attach a comment to.
-- **`docx.blocks`** — insert, delete, or replace whole paragraphs relative to a
-  text anchor, plainly or as a tracked change.
-- **`docx.tableops` / `docx.numbering`** — cell and row edits and list
-  numbering that refuse on structures they cannot handle safely (merged cells,
-  nested tables, undefined numbering) rather than corrupt them.
-- **`docx.controls`** — fill content controls with the correct value type and
-  clear their placeholder state, so Word treats them as genuinely filled.
-- **`docx.bookmarks` / `docx.fields`** — create bookmarks over a span, and
-  author page numbers, dates, cross-references, and tables of contents as
-  fields with placeholder results.
-- **`docx.formatting`** — resolve what formatting a piece of text actually
-  carries, following document defaults, styles, and direct formatting, with
-  each value reporting the layer it came from.
+- **`docx.story`** traverses the body, headers, footers, footnotes, endnotes,
+  comments, tracked insertions, content controls, and text boxes. Callers can
+  view the document as it stands, before pending revisions, or all at once.
+- **`docx.search`** finds normalized text across Word's run fragmentation. A
+  returned `Span` can replace the matched text while preserving unaffected
+  runs, emit the replacement as a tracked change, or anchor a comment.
+- **`docx.blocks`** inserts, deletes, or replaces whole paragraphs relative to
+  a text anchor, plainly or as a tracked change.
+- **`docx.tableops` / `docx.numbering`** provide cell, row, and list edits that
+  refuse on unsafe structures such as merged cells, nested tables, or undefined
+  numbering.
+- **`docx.controls`** fills content controls with the correct value type and
+  clears placeholder state so Word treats them as filled.
+- **`docx.bookmarks` / `docx.fields`** create bookmarks over a span and author
+  page numbers, dates, cross-references, and tables of contents as fields with
+  placeholder results.
+- **`docx.formatting`** resolves effective formatting through document defaults,
+  styles, and direct formatting, with provenance for each value.
 
 ### Reviewing and finalizing
 
-- **`doc.revisions`** — enumerate every tracked change across every part of the
-  document and resolve it: insertions, deletions, run and paragraph format
-  changes, table-row revisions, and moves. Markup it cannot resolve is listed
-  by name rather than silently passed over.
-- **`doc.finalize()` / `doc.scrub()`** — accept or reject all revisions, then
-  remove reviewing residue (comments, metadata, revision-save ids), returning a
-  report of exactly what was removed.
-- **`docx.protection`** — respect a document's Restrict-Editing setting:
-  mutating operations refuse on a protected document unless the caller
-  explicitly overrides. The setting itself is never stripped.
+- **`doc.revisions`** enumerates and resolves tracked changes across every part:
+  insertions, deletions, run and paragraph format changes, table-row revisions,
+  and moves. Unresolvable markup is listed by name.
+- **`doc.finalize()` / `doc.scrub()`** accepts or rejects all revisions, then
+  removes reviewing residue and reports exactly what was removed.
+- **`docx.protection`** respects Restrict-Editing. Mutating operations refuse on
+  a protected document unless the caller explicitly overrides; the setting is
+  preserved in the document.
 
 ### Working across documents
 
-- **`docx.package.compare`** — generate a native tracked-change redline from
-  two documents, with the accept/reject round-trip shown above.
-- **`docx.package.patch_save` / `diff_package` / `text_diff`** — a save that
-  leaves parts you didn't change byte-for-byte identical, so a file-level diff
-  shows only your edit, plus the diffs that demonstrate it. `diagnose` reports
+- **`docx.package.compare`** generates a native tracked-change redline from two
+  documents, with the accept/reject round-trip shown above.
+- **`docx.package.patch_save` / `diff_package` / `text_diff`** keeps unchanged
+  parts byte-identical and reports changed parts and text. `diagnose` explains
   why an unreadable file cannot be opened.
-- **`docx.composition`** — copy formatted content from one document into
-  another, reconciling styles, numbering, media, hyperlinks, and bookmarks, and
-  reporting every part it touched.
-- **`docx.errors`** — every refusal is a typed exception, so a caller can tell
-  a safe refusal apart from a bug.
+- **`docx.composition`** copies formatted content between documents, reconciles
+  styles, numbering, media, hyperlinks, and bookmarks, and reports every part
+  touched.
+- **`docx.errors`** exposes typed refusals, distinct from programmer errors.
 
-## What it does not do
+## Drop-in and name map
 
-These limits are deliberate:
-
-- **It never computes field values or paginates.** It writes fields and sets
-  the update-on-open flag; Word or a headless renderer computes the results.
-- **`compare` emits insertions and deletions only.** Moves are not synthesized;
-  formatting-only, image, and object differences are reported rather than
-  redlined.
-- **No OLE authoring**, and composition refuses embedded objects.
-- **No protection stripping and no decryption.** A password-protected file gets
-  a typed refusal.
-- **No document-quality judgment.** paper-docx edits documents; it does not
-  grade them. Bad input surfaces as a specific, typed error rather than a raw
-  traceback.
-- **The formatting resolver states what it cannot resolve** (such as
-  table-style conditional formatting or theme fonts) instead of guessing.
-
-## How it stays compatible
-
-- **Strict superset.** No existing behavior changes; new capability is new,
-  explicitly named API. Upstream's own pytest and behave suites run on every
-  commit.
-- **Atomic operations.** Each operation validates fully before it mutates. A
-  refused operation leaves the document, in memory and on disk, exactly as it
-  was.
-- **Whitespace is content.** No comparison or rewrite path normalizes
-  meaningful text — a trailing space in a run is a real character.
-- **Tested against real files.** A frozen, hash-verified fixture corpus spans
-  generated and LibreOffice-authored documents and is checked against a
-  headless LibreOffice load.
-
-## Naming
-
-Four names, kept distinct on purpose (the same pattern as Pillow and PIL):
+Only the distribution and repository are renamed. The importable package stays
+`docx`. This is the same distribution/import split as Pillow
+(`pip install pillow`, `import PIL`), and it preserves existing code, snippets,
+and model priors.
 
 - GitHub repository / PyPI distribution: **`paper-docx`**
-- Python import package: **`docx`** — unchanged, so existing code and snippets
-  keep working; drop-in compatibility is the point of the fork
-- Fork sentinel: `docx.__paper_version__`
+- Python import: **`docx`**
+- Fork sentinel: `docx.__paper_version__ = "0.1.0"`
 
 ## Installation
 
@@ -170,31 +135,6 @@ Confirm the install:
 python -c "import docx; print(docx.__paper_version__)"
 ```
 
-## Repository map
-
-```
-src/docx/          the package (import name `docx`) — upstream modules plus:
-  errors.py          typed, atomic refusals
-  story.py           whole-document traversal, views, anchors
-  search.py          normalized find and Span (replace, tracked replace, comment)
-  blocks.py          paragraph-level insert / delete / replace
-  revision.py        doc.revisions — enumerate and resolve tracked changes
-  tableops.py        guarded table cell and row operations
-  numbering.py       list reporting, application, and authoring
-  controls.py        content-control enumeration and filling
-  commentops.py      comment threads (reply, resolve, anchored text)
-  bookmarks.py       bookmark enumerate / create / delete
-  fields.py          field authoring (page, date, cross-reference, TOC)
-  formatting.py      effective-format resolver
-  protection.py      Restrict-Editing awareness
-  scrubbing.py       doc.finalize / doc.scrub
-  composition.py     cross-document composition
-  package.py         xml_equivalent, diff_package, patch_save, diagnose,
-                     text_diff, compare
-docs/              Sphinx documentation (start at docs/user/paper-additions.rst)
-tests/             upstream suites plus tests/paper (contract harness + fixtures)
-```
-
 ## Documentation
 
 The Sphinx docs extend the upstream python-docx documentation to cover the
@@ -203,7 +143,16 @@ fork's additions: start with `docs/user/paper-additions.rst` and the
 works as documented at the
 [python-docx documentation](https://python-docx.readthedocs.io/).
 
-## License and credit
+## How it's tested
+
+- Upstream's pytest and behave suites run on every commit to check compatibility
+  with existing behavior.
+- A frozen, hash-pinned fixture corpus spans generated and LibreOffice-authored
+  documents.
+- The contract harness checks refusal atomicity and validates the fixture corpus
+  with a headless LibreOffice load smoke.
+
+## License
 
 MIT, inherited from python-docx. Original work © Steve Canny and the python-docx
 contributors; fork additions © Paper Instruments, Inc. This fork preserves the

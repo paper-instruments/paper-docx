@@ -4,10 +4,10 @@
 Table operations
 ================
 
-Cell and row edits that refuse loudly on structures they cannot handle
-safely — merged cells, nested tables — instead of guessing. Cell text
-routes through the |Span| machinery, so ``tracked=True`` produces a
-real revision.
+*paper-docx addition.* Edit cells and rows with typed refusals for structures
+that cannot be handled safely, including merged cells and nested tables. Cell
+text routes through the |Span| machinery, so ``tracked=True`` produces a real
+revision.
 
 .. currentmodule:: docx.tableops
 

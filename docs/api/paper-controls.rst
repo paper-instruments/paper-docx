@@ -4,10 +4,10 @@
 Content controls
 ================
 
-Enumerate structured document tags (content controls) and set their
-values type-correctly. Filling a control that still shows placeholder
-text clears the placeholder state so Word treats it as genuinely
-filled; data-bound, nested and unsupported controls refuse.
+*paper-docx addition.* Enumerate structured document tags (content controls)
+and set their values with the correct type. Filling a control that still shows
+placeholder text clears that state so Word treats it as filled.
+Data-bound, nested, and unsupported controls refuse.
 
 .. currentmodule:: docx.controls
 

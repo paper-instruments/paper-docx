@@ -4,11 +4,11 @@
 Refusal hierarchy
 =================
 
-Every mutating paper-docx API validates fully *before* it touches the
-document, so a raised |PaperRefusal| guarantees the in-memory tree and
-any file on disk are exactly as they were. Programmer mistakes still
-raise the ordinary :exc:`TypeError`/:exc:`ValueError`; a |PaperRefusal|
-is a *safe* refusal, catchable distinctly from a bug.
+*paper-docx addition.* Every added operation either does exactly what it claims
+or refuses atomically. Mutating operations validate fully before they touch the
+document, so a raised |PaperRefusal| leaves the in-memory tree and any file on
+disk byte-for-byte unchanged. Programmer mistakes remain ordinary
+:exc:`TypeError`/:exc:`ValueError`. Callers can catch |PaperRefusal| separately.
 
 .. currentmodule:: docx.errors
 
