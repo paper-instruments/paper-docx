@@ -158,6 +158,8 @@ Four names, kept distinct on purpose (the same pattern as Pillow and PIL):
 
 ## Installation
 
+This repository is private for now and publication to PyPI is gated. Install from Git:
+
 ```bash
 pip install "paper-docx @ git+https://github.com/The-LLM-Data-Company/paper-docx.git@main"
 ```
@@ -203,6 +205,6 @@ works as documented at the
 
 ## License and credit
 
-paper-docx is distributed under the MIT License. `python-docx` is by Steve
-Canny and contributors; this fork builds on that work and preserves its
-license and attribution.
+MIT, inherited from python-docx. Original work © Steve Canny and the python-docx
+contributors; fork additions © Paper Instruments, Inc. This fork preserves the
+upstream license and attribution. See [`LICENSE`](LICENSE).
