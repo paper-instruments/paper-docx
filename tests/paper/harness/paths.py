@@ -2,8 +2,8 @@
 
 Fixtures live under ``tests/paper/fixtures/<provenance>/<taxonomy>/``.
 
-Provenance buckets (CONVENTIONS §4): ``word`` (authored in desktop Microsoft
-Word), ``google`` (exported from Google Docs), ``libreoffice`` (exported from
+Provenance buckets: ``word`` (authored in desktop Microsoft Word),
+``google`` (exported from Google Docs), ``libreoffice`` (exported from
 LibreOffice), ``other`` (other real-world producers), ``generated`` (produced
 by this repo's own authoring code — never by code under test).
 

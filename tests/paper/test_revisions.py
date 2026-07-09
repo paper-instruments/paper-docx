@@ -1,6 +1,6 @@
-"""Tests for docx.revision / Document.revisions (Phase 8), including the
-tracked-edit algebra invariants that cross-check Phases 5, 6 and 8
-(CONVENTIONS §4 — the highest-value tests in the repo)."""
+"""Tests for docx.revision / Document.revisions, including the tracked-edit
+algebra invariants that cross-check replace, block ops and revision
+resolution — the highest-value tests in the repo."""
 
 from __future__ import annotations
 
@@ -189,16 +189,15 @@ class DescribeTrackedEditAlgebra:
 
 
 class DescribeUnresolvableRevisions:
-    """v0.1 saw, counted, and refused what it could not resolve. v0.11
-    converted moves and format changes into capabilities; the census and the
-    refusal contract now guard the exotic remainder — never half-resolved,
-    never silently omitted."""
+    """Moves and format changes are resolvable capabilities; the census and
+    the refusal contract now guard only the exotic remainder — never
+    half-resolved, never silently omitted."""
 
     MOVES = "generated/feature-isolated/tracked-moves.docx"
     FORMAT_CHANGES = "generated/feature-isolated/format-changes.docx"
 
     def it_reports_a_census_of_unsupported_revisions(self):
-        # v0.11 Phases 1-2: moves and format changes left the census
+        # moves and format changes are resolvable, so they leave the census
         assert _doc(self.MOVES).revisions.remaining_unsupported() == {}
         assert _doc(self.FORMAT_CHANGES).revisions.remaining_unsupported() == {}
         # the census still carries what genuinely cannot be resolved
@@ -254,6 +253,6 @@ class DescribeUnresolvableRevisions:
         pending = {r.revision_type for r in document.revisions}
         assert pending == {"move_from", "move_to"}
         assert document.revisions.remaining_unsupported() == {}
-        # v0.11 Phase 2: the rest of the redline now resolves too
+        # the rest of the redline resolves too
         assert document.revisions.accept_all() > 0
         assert len(document.revisions) == 0

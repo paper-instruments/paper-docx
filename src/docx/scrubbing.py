@@ -1,4 +1,4 @@
-"""Finalize and scrub — the compliance verbs (paper-docx, v0.11 Phase 3).
+"""Finalize and scrub — the compliance verbs (paper-docx).
 
 `finalize` totally resolves every tracked revision (or refuses, typed,
 naming what blocked it). `scrub` removes the reviewing residue a file

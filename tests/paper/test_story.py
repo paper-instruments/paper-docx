@@ -1,4 +1,4 @@
-"""Tests for docx.story — visibility-complete traversal (Phase 3).
+"""Tests for docx.story — visibility-complete traversal.
 
 Sidecar-driven: counts and texts per fixture assert against the hand-verified
 ground truth; the gauntlet proves nothing visible is missed; the LibreOffice
@@ -192,7 +192,7 @@ class DescribeFragmentedRuns:
 
 
 class DescribeGauntletCompleteness:
-    """CONVENTIONS Phase 3 exit test: nothing visible is missed."""
+    """Exit test: nothing visible is missed."""
 
     def it_sees_every_ground_truth_text_somewhere(self):
         truth = _ground_truth(GAUNTLET)
@@ -235,7 +235,7 @@ class DescribeAnchors:
 
 
 class DescribeInspectionDeterminism:
-    """CONVENTIONS §4 invariant: same input -> byte-identical JSON, run twice."""
+    """Invariant: same input -> byte-identical JSON, run twice."""
 
     @pytest.mark.parametrize("relpath", [MINIMAL, GAUNTLET, TEXTBOX_LO])
     def it_produces_byte_identical_json_across_runs(self, relpath: str):
@@ -256,7 +256,7 @@ class DescribeBlindRegionCounts:
     def it_counts_traversed_regions_on_the_gauntlet(self):
         counts = outline(_doc(GAUNTLET)).blind_region_counts
         assert counts == {
-            # v0.11: +2 row-cell insertions, +2 ins mark stamps, +1 split mark,
+            # +2 row-cell insertions, +2 ins mark stamps, +1 split mark,
             # +1 trPr row-insert marker (and symmetrically for deletions)
             "tracked_insertions": 8,
             "tracked_deletions": 7,

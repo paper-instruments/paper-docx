@@ -1,4 +1,4 @@
-"""Tests for the v0.1 Phase 2 verbs (V1-V5)."""
+"""Tests for the editing verbs."""
 
 from __future__ import annotations
 

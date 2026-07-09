@@ -1,14 +1,13 @@
-"""Standing job evals (v0.1 Phase E).
+"""Standing job evals.
 
-The v0 gap review's panel found what 326 organ tests didn't, because organ
-tests test organs and the panel tested JOBS. These scenarios drive the public
-surface the way agents actually do. The bar for every step, forever:
+These scenarios exercise whole tasks, not isolated units: they drive the
+public surface the way agents actually do. The bar for every step, forever:
 **green or explicitly-refusing — never silently wrong.**
 
-Steps that v0 gets wrong carry `@pytest.mark.xfail(strict=True, reason=...)`
-naming the phase that fixes them; landing that phase REMOVES the marker in
-the same commit (strict xfail fails the suite the moment the fix works, so a
-marker can never go stale silently).
+Steps that are not yet handled carry `@pytest.mark.xfail(strict=True,
+reason=...)`; once the fix lands the marker is removed in the same commit
+(strict xfail fails the suite the moment the fix works, so a marker can never
+go stale silently).
 """
 
 from __future__ import annotations
@@ -79,8 +78,8 @@ class DescribeMultiRoundRedlineJob:
         assert "format_change" in kinds
 
     def it_refuses_to_claim_resolution_of_unsupported_revisions(self):
-        """v0.11 converted moves and format changes from refusal to
-        capability; the refusal contract now guards the exotic remainder."""
+        """Moves and format changes are supported capabilities; the refusal
+        contract now guards only the exotic remainder."""
         from docx.oxml import parse_xml
         from docx.oxml.ns import nsdecls
 
@@ -96,7 +95,7 @@ class DescribeMultiRoundRedlineJob:
             doc.revisions.accept_all()
 
     def it_resolves_format_changes_instead_of_refusing(self, tmp_path: Path):
-        """v0.11 Phase 1: the refusal became a capability (PAPER.md ledger)."""
+        """Resolving a format change is a supported capability."""
         from docx.revision import _remaining_markup
 
         doc = docx.Document(str(fixture_path(FORMAT_CHANGES)))
@@ -238,7 +237,7 @@ class DescribeReportAssemblyJob:
     def it_creates_a_real_bullet_list_in_a_definitionless_document(
         self, tmp_path: Path
     ):
-        """THE 'real bullet' gap: a doc that never had a list gets one."""
+        """The 'real bullet' case: a doc that never had a list gets one."""
         import re
         import zipfile
 
@@ -283,8 +282,8 @@ class DescribeJobSafetyNet:
         for key in ("moves", "format_changes", "fields"):
             assert key in counts, f"blind_region_counts missing {key!r}"
         assert counts["moves"] == 2
-        # v0: 2 (rPrChange + pPrChange); v0.11 gauntlet adds the rich pair
-        # plus a paragraph-mark rPrChange
+        # 2 basic (rPrChange + pPrChange) plus the rich pair and a
+        # paragraph-mark rPrChange in the gauntlet
         assert counts["format_changes"] == 5
         assert counts["fields"] == 3  # fldSimple + PAGEREF + multi-paragraph TOC
 
@@ -301,8 +300,8 @@ class DescribeJobSafetyNet:
 
 
 def _assemble_proposal(tmp_path: Path):
-    """The v0.11 proposal-assembly job: base + two clause libraries + a CV
-    section with headings, lists, a table and an image (standing eval)."""
+    """The proposal-assembly job: base + two clause libraries + a CV section
+    with headings, lists, a table and an image (standing eval)."""
     import io
 
     from docx.composition import append_document, insert_blocks_from
@@ -357,8 +356,8 @@ def _assemble_proposal(tmp_path: Path):
 
 
 class DescribeProposalAssemblyJob:
-    """Report assembly (v0.11 Phase 5): compose from libraries without
-    corruption — the job either completes or refuses loudly."""
+    """Report assembly: compose from libraries without corruption — the job
+    either completes or refuses loudly."""
 
     def it_assembles_a_proposal_that_reopens_clean(self, tmp_path: Path):
         from .harness import checks

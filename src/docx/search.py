@@ -1,4 +1,4 @@
-"""Normalized text search over visibility-complete traversal (paper-docx).
+"""Normalized text search over visibility-complete traversal.
 
 `find_text` matches the way people (and models) actually quote documents:
 smart quotes, dashes, exotic spaces and case differences are normalized away
@@ -174,8 +174,8 @@ def _collect_block_atoms(
 def _story_atoms(document: "Document", story_name: str, root: "_Element") -> "List[_Atom]":
     atoms: "List[_Atom]" = []
     # ONE field-depth cell for the whole story: a field opened in one block
-    # stays open into the next (TOC shape) — resetting per block was the
-    # false-state hole the v0.1 review sweep found
+    # stays open into the next (TOC shape) — resetting per block would be a
+    # false-state hole
     field_depth = [0]
     for kind, index, element, _in_sdt, in_txbx in _iter_block_elements(story_name, root):
         skip_boxes = kind == "paragraph"  # text-box paragraphs are their own blocks
@@ -317,18 +317,18 @@ class Span:
         initials: Optional[str] = None,
         date: Optional[dt.datetime] = None,
     ) -> "object":
-        """Anchor a new comment to exactly this span's text (v0.1 V4).
+        """Anchor a new comment to exactly this span's text.
 
         Returns the upstream |Comment|. The comment range marks wrap the
-        span's runs; `date` defaults to the injectable clock. v0.1 anchors
-        comments in the main document story only.
+        span's runs; `date` defaults to the injectable clock. Comments can
+        only be anchored in the main document story.
         """
         if not author:
             raise ValueError("author is required")
         _refuse_if_protected(self._document, "anchor a comment")
         if self.story != "word/document.xml":
             raise UnsupportedStructureError(
-                "comments anchor in the main document story in v0.1"
+                "comments anchor in the main document story"
                 f" (span is in {self.story})"
             )
         self._validate_fresh()
@@ -437,7 +437,7 @@ class Span:
         cannot shrink this span (caller falls through to normal validation).
 
         In the kept prefix/suffix, a whitespace character in `new_text`
-        aligns with an existing tab/break: callers cannot write `\\t` (H6),
+        aligns with an existing tab/break: callers cannot write `\\t`,
         so "Section 4. Termination" against "Section 3.<TAB>Termination"
         keeps the document's tab and changes only the "3" — matching is
         normalized, documents keep their original characters.
@@ -556,7 +556,7 @@ class Span:
                 f" ({self.anchor.to_dict()}) but the document has changed"
             )
         # detached atoms still hold their text; an edit landing in an orphaned
-        # subtree would report success and reach nothing (§1.4's nightmare)
+        # subtree would report success and reach nothing
         story_roots = {id(root) for _, root in _story_elements(self._document)}
         for atom in self._atoms:
             top = atom.element
@@ -644,7 +644,7 @@ class Span:
         the placeholder state (`w:showingPlcHdr` + `PlaceholderText` style)
         so Word treats the control as genuinely filled.
 
-        All refusal conditions are checked before any mutation (§1.3).
+        All refusal conditions are checked before any mutation.
         """
         if tracked and not author:
             raise ValueError("author is required when tracked=True")
@@ -654,8 +654,8 @@ class Span:
         if any(atom.is_synthetic for atom in self._atoms) or self.crosses_paragraphs:
             # spans matched ACROSS a tab/break/paragraph boundary may still
             # edit safely when the actual change lies within one segment:
-            # narrow to the changed region (v0.1 S5); if the change itself
-            # crosses a break or boundary, validation below refuses as before
+            # narrow to the changed region; if the change itself crosses a
+            # break or boundary, validation below refuses as before
             narrowed = self._narrow_to_change(new_text)
             if narrowed is not None:
                 sub_span, sub_new = narrowed
@@ -745,8 +745,8 @@ class Span:
         # layered revisions: a span straddling a pending w:ins would emit a
         # w:del claiming inserted text was base-document content — fabricated
         # history that corrupts reject/original views. Two shapes are safe:
-        # fully inside ONE w:ins (nests correctly), and — v0.1 S4 — the SAME
-        # author extending their own insertion where the span starts in base
+        # fully inside ONE w:ins (nests correctly), and the SAME author
+        # extending their own insertion where the span starts in base
         # text and ends in/at their insertion (their inserted text is simply
         # removed, never re-marked as a base-text deletion).
         enclosing = [_enclosing_insertion(atom.element) for atom in self._atoms]
@@ -1266,7 +1266,7 @@ def replace_all(
     author: Optional[str] = None,
     date: Optional[dt.datetime] = None,
 ) -> ReplaceAllResult:
-    """Replace every match of `needle` in one pass (v0.1 S3).
+    """Replace every match of `needle` in one pass.
 
     Pinned invalidation semantics: one scan finds all matches, then
     replacements apply in REVERSE document order within each story, so no

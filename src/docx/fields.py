@@ -1,4 +1,4 @@
-"""Field authoring — formulas, never values (v0.11 Phase 6).
+"""Field authoring — formulas, never values.
 
 A field is a formula; static text is a pasted value. This module authors
 PAGE/NUMPAGES/DATE simple fields, REF/PAGEREF cross-references, and the TOC
@@ -7,7 +7,7 @@ sets the document's update-fields-on-open flag: **this package never
 computes a field's value** — pagination and evaluation belong to a renderer
 (Word, or headless LibreOffice in the harness).
 
-The v0.1 `in_field` guard recognizes everything authored here, so a span
+The `in_field` guard recognizes everything authored here, so a span
 landing inside one of our own fields refuses exactly like one landing in
 Word's (self-consistency, tested).
 """

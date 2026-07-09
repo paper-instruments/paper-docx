@@ -1,9 +1,9 @@
 """Content-control (structured document tag) surface — the templating
-primitive (paper-docx v0.1, V1).
+primitive (paper-docx).
 
 Enumerate a document's controls by tag/alias, read their values, and set
 them type-correctly: text controls get their runs replaced (placeholder
-state cleared — the H5 machinery), checkboxes flip `w14:checked` AND their
+state cleared), checkboxes flip `w14:checked` AND their
 glyph, dropdowns/combos validate against their `w:listItem` choices, dates
 set `w:fullDate` alongside the display text. Data-bound controls
 (`w:dataBinding`) refuse: their value lives in a custom XML part Word
@@ -220,7 +220,7 @@ class Control:
             return
         if control_type in ("picture", "group", "building_block"):
             raise UnsupportedStructureError(
-                f"{control_type} controls are not settable in v0.1"
+                f"{control_type} controls are not settable"
             )
         if isinstance(value, bool):
             raise ValueError(f"{control_type} controls take text, not bool")

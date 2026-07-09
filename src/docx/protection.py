@@ -1,10 +1,10 @@
-"""Document-protection awareness (paper-docx, v0.11 Phase 3).
+"""Document-protection awareness (paper-docx).
 
 Word's Restrict Editing pane writes `w:documentProtection` into
 word/settings.xml; Word then blocks or restricts editing. This package's own
 mutating APIs check that setting and refuse with |DocumentProtectedError|
 rather than silently editing a locked template — the same fail-loudly
-species as the v0.1 honesty recall. Upstream python-docx APIs are untouched
+principle applied elsewhere in this fork. Upstream python-docx APIs are untouched
 (strict superset).
 
 Protection is ADVISORY, not security: the setting is plain XML anyone can

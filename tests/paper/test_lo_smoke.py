@@ -1,7 +1,6 @@
 """Independent-loader smoke: LibreOffice must open every clean fixture.
 
-Marked `lo_smoke`; skipped automatically when no soffice binary is installed
-(CONVENTIONS §4, assertion 4).
+Marked `lo_smoke`; skipped automatically when no soffice binary is installed.
 """
 
 from __future__ import annotations
@@ -34,8 +33,8 @@ class DescribeLibreOfficeSmoke:
         assert_libreoffice_opens(fixture_path(relpath))
 
     def it_opens_a_compare_engine_redline(self, tmp_path):
-        """v0.11 Phase 4: emitted tracked-changes markup must be valid to an
-        independent loader."""
+        """Emitted tracked-changes markup must be valid to an independent
+        loader."""
         import datetime as dt
 
         from docx.package import compare
@@ -51,8 +50,8 @@ class DescribeLibreOfficeSmoke:
         assert_libreoffice_opens(out)
 
     def it_opens_the_finalized_and_scrubbed_gauntlet(self, tmp_path):
-        """v0.11 Phase 3: the compliance output must survive an independent
-        loader, not just our own reopen."""
+        """The compliance output must survive an independent loader, not just
+        our own reopen."""
         import docx
 
         document = docx.Document(

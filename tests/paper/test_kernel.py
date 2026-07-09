@@ -1,6 +1,6 @@
-"""Tests for the CONVENTIONS §7 package kernel (docx.package / docx._paperpkg).
+"""Tests for the package kernel (docx.package / docx._paperpkg).
 
-Every pinned §7 requirement is covered here: the meaningful-whitespace trap,
+Every pinned requirement is covered here: the meaningful-whitespace trap,
 the no-op byte-identity round trip, zip determinism, single-part change
 isolation, and mid-write failure injection.
 """
@@ -62,7 +62,7 @@ class DescribeXmlEquivalent:
         assert not xml_equivalent(a.encode(), b.encode())
 
     def it_treats_a_preserved_trailing_space_as_meaningful(self):
-        """THE §7 trap test: two documents differing only by a trailing space
+        """THE trap test: two documents differing only by a trailing space
         inside a text node are NOT equivalent."""
         a = (
             f'<w:p {W_DECL}><w:r>'
@@ -143,7 +143,7 @@ class DescribeDiffPackage:
 class DescribePatchSave:
     @pytest.mark.parametrize("relpath", _noop_roundtrip_relpaths())
     def it_makes_a_noop_roundtrip_byte_identical(self, relpath: str, tmp_path: Path):
-        """THE §7 no-op invariant, on every clean fixture in the corpus."""
+        """THE no-op invariant, on every clean fixture in the corpus."""
         source = fixture_path(relpath)
         out = tmp_path / "out.docx"
         result = patch_save(source, docx.Document(str(source)), out)
@@ -151,7 +151,7 @@ class DescribePatchSave:
         assert out.read_bytes() == source.read_bytes()
 
     def it_isolates_a_single_part_edit(self, tmp_path: Path):
-        """§7: single-part edit -> exactly that part differs, bytewise."""
+        """Single-part edit -> exactly that part differs, bytewise."""
         source = fixture_path(LO_TRACKED)
         out = tmp_path / "out.docx"
         document = docx.Document(str(source))
@@ -160,7 +160,7 @@ class DescribePatchSave:
         assert result.changed_parts == ("word/document.xml",)
         assert not result.verbatim_copy
         with zipfile.ZipFile(source) as za, zipfile.ZipFile(out) as zb:
-            # entry ORDER follows the candidate serialization (pinned F2);
+            # entry ORDER follows the candidate serialization;
             # the part SET and all unchanged bytes must match the original
             assert sorted(za.namelist()) == sorted(zb.namelist())
             differing = [n for n in sorted(za.namelist()) if za.read(n) != zb.read(n)]
@@ -194,7 +194,7 @@ class DescribePatchSave:
     def it_survives_a_midwrite_failure_with_the_original_intact(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        """§7 failure injection: a crash between temp-write and rename leaves
+        """Failure injection: a crash between temp-write and rename leaves
         the existing output file untouched and no temp litter behind."""
         source = fixture_path(MINIMAL)
         out = tmp_path / "out.docx"

@@ -1,7 +1,7 @@
 """Mechanical package-fact checks, ported from the reference `verify_docx.py`.
 
-Only the checks that assert *package facts* are ported (CONVENTIONS §5):
-required parts, XML parseability, undefined style references, undefined
+Only the checks that assert *package facts* are ported: required parts,
+XML parseability, undefined style references, undefined
 numbering references, broken relationship targets, and fake-bullet detection.
 The reference's domain/styling checks (placeholder text, minimum paragraph
 count, heading requirements) are deliberately NOT ported — they are

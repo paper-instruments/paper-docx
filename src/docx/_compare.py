@@ -1,4 +1,4 @@
-"""Compare: generate a native tracked-changes redline (v0.11 Phase 4).
+"""Compare: generate a native tracked-changes redline.
 
 `compare(original, revised, *, author, ...)` returns a new document — the
 original with `w:ins`/`w:del` markup that transforms it into the revised
@@ -16,7 +16,7 @@ merged-cell tables refuse; images/objects and formatting-only differences
 are REPORTED in `CompareResult.findings`, not redlined; a block budget of
 `_MAX_BLOCKS` per story refuses above it.
 
-Public path: `docx.package.compare` (kernel re-export, F1).
+Public path: `docx.package.compare` (kernel re-export).
 """
 
 from __future__ import annotations
@@ -212,7 +212,7 @@ def compare(
             "the documents carry different story parts"
             f" (only-original: {sorted(names_o - names_r)},"
             f" only-revised: {sorted(names_r - names_o)}); compare cannot"
-            " redline story-part addition or removal in v0.11"
+            " redline story-part addition or removal"
         )
     numbering_ids = _numbering_ids(document)
     compared: List[str] = []
@@ -501,13 +501,13 @@ def _refuse_unrepresentable_children(
             raise UnsupportedStructureError(
                 f"compare cannot {verb} a paragraph containing <w:{local}>"
                 f" in {ctx.story}; restructure the change or resolve it"
-                " manually (declared v0.11 limit)"
+                " manually (a declared limit)"
             )
     if _fldchar_unbalanced(paragraph):
         raise UnsupportedStructureError(
             f"compare cannot {verb} one paragraph of a multi-paragraph"
             f" complex field in {ctx.story} — the begin/end markers would"
-            " unbalance (declared v0.11 limit)"
+            " unbalance (a declared limit)"
         )
     from docx.blocks import _named_bookmarks_in
 
@@ -516,7 +516,7 @@ def _refuse_unrepresentable_children(
         raise UnsupportedStructureError(
             f"compare cannot {verb} a paragraph carrying named bookmark(s)"
             f" {sorted(named)} in {ctx.story} — cross-references would"
-            " dangle (declared v0.11 limit)"
+            " dangle (a declared limit)"
         )
 
 
@@ -563,7 +563,7 @@ def _require_container_anchor(ctx: _Ctx, reference: "_Element") -> None:
     if parent is None or parent.tag == qn("w:txbxContent"):
         raise UnsupportedStructureError(
             f"compare cannot add or remove whole blocks next to text-box"
-            f" content in {ctx.story} (declared v0.11 limit)"
+            f" content in {ctx.story} (a declared limit)"
         )
     if ctx.story.startswith("word/footnotes") or ctx.story.startswith(
         "word/endnotes"
@@ -571,7 +571,7 @@ def _require_container_anchor(ctx: _Ctx, reference: "_Element") -> None:
         raise UnsupportedStructureError(
             f"compare cannot add or remove whole blocks in {ctx.story};"
             " note-content edits must stay within existing notes"
-            " (declared v0.11 limit)"
+            " (a declared limit)"
         )
 
 
@@ -605,7 +605,7 @@ def _sanitize_clone(ctx: _Ctx, clone: "_Element") -> None:
                 detail=(
                     "an image/object in inserted content was not carried"
                     " into the redline (relationships do not transfer;"
-                    " report-only in v0.11)"
+                    " report-only)"
                 ),
             )
         )
@@ -681,8 +681,8 @@ def _sanitize_clone(ctx: _Ctx, clone: "_Element") -> None:
                 story=ctx.story,
                 detail=(
                     "bookmark or comment anchors in inserted content were"
-                    " dropped (their ids/targets do not transfer; report-only"
-                    " in v0.11)"
+                    " dropped (their ids/targets do not transfer;"
+                    " report-only)"
                 ),
             )
         )
@@ -690,7 +690,7 @@ def _sanitize_clone(ctx: _Ctx, clone: "_Element") -> None:
         raise UnsupportedStructureError(
             f"compare cannot insert one paragraph of a multi-paragraph"
             f" complex field in {ctx.story} — the begin/end markers would"
-            " unbalance (declared v0.11 limit)"
+            " unbalance (a declared limit)"
         )
 
 
@@ -708,7 +708,7 @@ def _refuse_merged_rows(ctx: _Ctx, rows) -> None:
             if row.find(f".//{tag}") is not None:
                 raise UnsupportedStructureError(
                     f"compare cannot redline changed table rows containing"
-                    f" merged cells in {ctx.story} (declared v0.11 limit)"
+                    f" merged cells in {ctx.story} (a declared limit)"
                 )
 
 
@@ -763,7 +763,7 @@ def _compare_table(ctx: _Ctx, table_o: "_Element", table_r: "_Element") -> None:
 def _visible_paragraph_text(paragraph: "_Element") -> str:
     """Paragraph text with tabs/breaks as their synthetic characters —
     matching the atom stream _paragraph_span slices, so word-diff offsets
-    never desynchronize (v0.11 review sweep)."""
+    never desynchronize."""
     pieces: List[str] = []
     for child in paragraph:
         if child.tag == _PPR:
@@ -807,7 +807,7 @@ def _replace_row_cells(ctx: _Ctx, row_o: "_Element", row_r: "_Element") -> bool:
 
 def _mark_row_deleted(ctx: _Ctx, row: "_Element") -> None:
     """`w:trPr/w:del` + cell content in `w:del`/`w:delText` + del-stamped
-    cell paragraph marks — the Phase 1 row-deletion shape, emitted."""
+    cell paragraph marks — the row-deletion shape, emitted."""
     from docx.oxml.parser import OxmlElement
 
     revision_id = _next_id(ctx)
@@ -894,8 +894,8 @@ def _replace_paragraph_text(
 
     A refusal can arrive AFTER earlier regions already emitted revisions;
     falling back on the half-redlined paragraph would nest fresh w:del
-    inside w:del (v0.11 review sweep) — so the pristine paragraph is
-    swapped back in before the fallback runs."""
+    inside w:del — so the pristine paragraph is swapped back in before the
+    fallback runs."""
     regions = _token_regions(text_o, text_r)
     pristine = copy.deepcopy(paragraph)
     try:

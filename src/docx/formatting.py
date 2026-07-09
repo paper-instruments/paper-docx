@@ -1,9 +1,9 @@
-"""Effective-format resolver — read-only, provenance-bearing (v0.11 Phase 7).
+"""Effective-format resolver — read-only, provenance-bearing.
 
 "What formatting does this text ACTUALLY carry": document defaults →
 paragraph-style inheritance chain → character style → direct formatting,
 with correct toggle-property semantics. Every resolved value names the
-layer it came from; what this version cannot resolve is declared in
+layer it came from; what this resolver cannot resolve is declared in
 `EffectiveFormat.unresolved` — "unresolved" is a legal answer, a wrong
 guess is not.
 
@@ -15,7 +15,7 @@ root→leaf, then the character-style chain root→leaf) that specifies TRUE —
 the famous nested-bold-cancels gotcha, pinned by tests. Ordinary
 properties take the nearest specification instead.
 
-Declared out of scope in v0.11 (listed in `unresolved`): table-style
+Declared out of scope (listed in `unresolved`): table-style
 conditional formatting, numbering-mark properties, and East-Asian/
 complex-script variants beyond the toggle pair (bCs/iCs).
 """
@@ -52,7 +52,7 @@ _TOGGLES = {
     "w:vanish": "vanish",
 }
 
-#: declared-unresolvable areas in v0.11
+#: declared-unresolvable areas
 _UNRESOLVED = (
     "table_style_conditional_formatting",
     "numbering_mark_properties",
@@ -81,7 +81,7 @@ class ResolvedValue:
 
 @dataclass(frozen=True)
 class EffectiveFormat:
-    """The resolved property map, plus what v0.11 declares unresolvable."""
+    """The resolved property map, plus what is declared unresolvable."""
 
     properties: Dict[str, ResolvedValue]
     unresolved: Tuple[str, ...]
@@ -135,7 +135,8 @@ def format_of(target) -> EffectiveFormat:
 
 def surrounding_format(document: "Document", anchor) -> EffectiveFormat:
     """The effective format AT an anchor — what inserted content should
-    match to adopt its neighbors' look (the Phase 5/6 insertion helper).
+    match to adopt its neighbors' look (the insertion helper used when
+    adopting a neighbor's formatting).
 
     Resolves the anchor paragraph's first text run; an empty paragraph
     resolves the paragraph itself.
@@ -247,7 +248,7 @@ def _attr_of(container: "Optional[_Element]", tag: str, attr: str) -> Optional[s
 def _font_name_of(r_pr: "Optional[_Element]") -> Optional[str]:
     """The ascii font name; theme references report honestly as
     "theme:<token>" rather than a guessed literal (theme_font_resolution is
-    declared unresolved in v0.11)."""
+    declared unresolved)."""
     literal = _attr_of(r_pr, "w:rFonts", "w:ascii")
     if literal is not None:
         return literal

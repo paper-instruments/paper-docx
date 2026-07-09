@@ -1,4 +1,4 @@
-"""Shared contract-harness utilities for the paper test suite (CONVENTIONS §4).
+"""Shared contract-harness utilities for the paper test suite.
 
 Import surface for tests:
 

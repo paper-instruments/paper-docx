@@ -142,5 +142,5 @@ hierarchy, so a caller can tell a *safe refusal* apart from a bug:
         ...                                      # any safe refusal, distinct from bugs
 
 Programmer mistakes still raise the ordinary :exc:`TypeError`/:exc:`ValueError`.
-For the full lineage, shipped surface and design principles, see ``PAPER.md``
-and ``API-PROPOSAL.md`` in the repository.
+The ``docx.api.paper-*`` reference pages document the full surface; the
+repository README summarizes the fork and its relationship to python-docx.

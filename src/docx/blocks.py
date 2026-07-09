@@ -6,7 +6,7 @@ safety rule (kept from the battle-tested reference): every selected paragraph
 must share one parent element — selections that would span story regions,
 table boundaries, or content-control boundaries are refused loudly.
 
-Improvements over the reference helpers (documented in API-PROPOSAL.md §7):
+Improvements over the reference helpers:
 
 * Tracked deletion moves the paragraph's own runs into `w:del`, retagging
   `w:t` -> `w:delText` in place, so every run keeps its `rPr` and a later
@@ -59,7 +59,7 @@ _SAFE_RUN_CHILDREN = frozenset(
     {_RPR, _T, _TAB, _BR, _CR, qn("w:commentReference"), qn("w:lastRenderedPageBreak")}
 )
 
-#: markup Word scatters through virtually every saved document (v0.1 S2):
+#: markup Word scatters through virtually every saved document:
 #: spell/grammar flags, point bookmarks, comment anchors. Tracked block ops
 #: treat these as transparent — preserved in place (proofErr dropped: it is
 #: transient checker state Word regenerates) instead of refusing the edit.
@@ -109,7 +109,7 @@ def _resolve_anchor_paragraph(
     """(story, paragraph element) for `anchor`, staleness-verified.
 
     Every block operation resolves its MUTATION anchor here, so this is
-    also the protection choke point (v0.11 Phase 3); read-only anchor
+    also the protection choke point; read-only anchor
     resolution (e.g. a composition SOURCE range) uses
     `_locate_anchor_paragraph` directly.
     """
@@ -242,7 +242,7 @@ def _field_open_flags(story: str, root: "_Element", paragraph: "_Element"):
 
     A multi-paragraph field (every Word TOC) keeps begin..end open across
     blocks; block operations inside that region would write content Word
-    erases on the next field update (v0.1 H4 at block level).
+    erases on the next field update (at block level).
     """
     from docx.story import _count_fldchar_delta
 
@@ -570,7 +570,7 @@ def tracked_replace_paragraphs(
 
 
 # ---------------------------------------------------------------------------
-# v0.1 V3 — rich block insertion (a small TYPED block vocabulary, not
+# rich block insertion (a small TYPED block vocabulary, not
 # arbitrary richness)
 # ---------------------------------------------------------------------------
 
@@ -631,7 +631,7 @@ def _validate_rich_blocks(document: "Document", blocks, *, tracked: bool) -> Non
         elif isinstance(block, TableBlock):
             if tracked:
                 raise UnsupportedStructureError(
-                    "tracked table insertion is not supported in v0.1 (Word"
+                    "tracked table insertion is not supported (Word"
                     " marks table revisions row-by-row; that vocabulary is a"
                     " later phase) — insert the table untracked or as text"
                 )
@@ -722,7 +722,7 @@ def insert_blocks_after(
     author: Optional[str] = None,
     date: Optional[dt.datetime] = None,
 ) -> BlockEditResult:
-    """Insert a typed block list (v0.1 V3) after `anchor`.
+    """Insert a typed block list after `anchor`.
 
     `blocks` mixes |RichParagraph| (styled runs), |ListBlock| (REAL bullet or
     decimal lists — the numbering definition is created on demand), and

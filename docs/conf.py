@@ -51,8 +51,8 @@ source_suffix = ".rst"
 master_doc = "index"
 
 # General information about the project.
-# paper-docx is a strict-superset fork; attribution is appended, never
-# erased (same discipline as LICENSE and PAPER.md).
+# paper-docx is a strict-superset fork; upstream attribution is appended,
+# never erased (the same discipline as LICENSE).
 project = "paper-docx"
 copyright = "2013, Steve Canny (python-docx); 2026, Paper Instruments (paper-docx fork)"
 

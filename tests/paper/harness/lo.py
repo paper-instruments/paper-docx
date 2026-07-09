@@ -1,4 +1,4 @@
-"""LibreOffice independent-loader smoke oracle (CONVENTIONS §4, assertion 4).
+"""LibreOffice independent-loader smoke oracle.
 
 A document "passes" when headless LibreOffice can open and convert it to PDF
 with a zero exit code. This is an openability gate, not a rendering check.

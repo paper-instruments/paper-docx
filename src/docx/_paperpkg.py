@@ -1,6 +1,6 @@
 """Package kernel: semantic XML comparison, package diff, and narrow save.
 
-Implementation of the CONVENTIONS §7 kernel. The public import path is
+Implementation of the package kernel. The public import path is
 `docx.package.{xml_equivalent, diff_package, patch_save}` — that upstream
 module re-exports these names; this module exists so its diff stays minimal.
 
@@ -123,14 +123,14 @@ def xml_equivalent(a: bytes, b: bytes) -> bool:
     choices never matter while namespace URIs always do. Attribute order is
     insignificant (XML defines attributes as unordered); child order is
     significant; text and tail content compare verbatim, whitespace included
-    (CONVENTIONS §3 — a canonicalizer that trims a meaningful trailing space
-    would corrupt documents through `patch_save`). Prolog/epilog comments and
+    (a canonicalizer that trims a meaningful trailing space would corrupt
+    documents through `patch_save`). Prolog/epilog comments and
     processing instructions are compared too.
 
     Raises `lxml.etree.XMLSyntaxError` on malformed input and
     ``UnsupportedXmlError`` on DTD-bearing input — this function never guesses.
 
-    Known limit (documented in API-PROPOSAL.md): attribute VALUES holding
+    Known limit: attribute VALUES holding
     QNames compare textually, so a prefix rebound to a different URI while
     the QName text stays identical is not detected. OOXML producers keep the
     standard prefixes, and the error direction in `diff_package` remains
@@ -406,7 +406,7 @@ def diagnose(path: _PathLike) -> PackageDiagnosis:
 
     The upstream `docx.Document()` entry point raises raw, untyped errors on
     encrypted, macro-enabled, template, or corrupt input; its behavior is
-    frozen (§1.1), so triage ships as this additive API instead: call it when
+    frozen, so triage ships as this additive API instead: call it when
     an open fails (or before opening untrusted input).
     """
     file_path = Path(path)

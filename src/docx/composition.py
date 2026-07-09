@@ -1,14 +1,14 @@
-"""Cross-document composition (v0.11 Phase 5, API-PROPOSAL §11).
+"""Cross-document composition.
 
 Copying formatted content between documents is style/numbering/relationship
 reconciliation — exactly the package-level, corruption-prone mechanics this
 fork exists to own. `insert_blocks_from` copies a block range from a source
 document; `append_document` appends a whole source body. Both return a
 |CompositionReport| declaring every part the operation may touch
-(report-matches-diff, never small-diff) plus the style/numbering/bookmark
+plus the style/numbering/bookmark
 maps and report-only findings.
 
-Pinned semantics (see the proposal): styles reconcile by
+Semantics: styles reconcile by
 `match_by_name` (destination definition wins) or `import_renamed`
 (colliding-but-different definitions clone under fresh ids/names);
 numbering always REMAPS to fresh restarted definitions; images copy as new
@@ -145,7 +145,7 @@ def append_document(
 ) -> CompositionReport:
     """Append `source`'s whole body to `document`.
 
-    v0.11 keeps the destination's headers/footers and authors no new
+    Keeps the destination's headers/footers and authors no new
     `w:sectPr`: `section="new_page"` prefixes the appended content with a
     page break; `"continuous"` appends flush. (Keeping the source's headers
     is a declared future mode.)
@@ -280,7 +280,6 @@ def _compose(
     )
     # numbering references live in imported STYLE definitions too — an
     # unmapped one silently binds to unrelated destination numbering
-    # (v0.11 review sweep)
     _remap_numbering(document, source, clones + imported_definitions, report)
     _copy_media(document, source, clones, report)
     _recreate_hyperlinks(document, source, clones, report)
@@ -341,7 +340,7 @@ def _refuse_unloadable_media(
 ) -> None:
     """Pre-mutation check: every image in the range must be re-embeddable,
     or _copy_media would raise AFTER styles/numbering were already imported
-    (refusal atomicity, v0.11 review sweep)."""
+    (refusal atomicity)."""
     import io as _io
 
     from docx.image.exceptions import UnrecognizedImageError
@@ -380,7 +379,7 @@ def _refuse_unsupported_content(range_elements: "List[_Element]") -> None:
             if reason is not None:
                 raise UnsupportedStructureError(
                     f"the source range contains {reason}; composition cannot"
-                    " carry it in v0.11 (declared limit)"
+                    " carry it (a declared limit)"
                 )
 
 
@@ -838,8 +837,7 @@ def _remap_field_refs(clones: "List[_Element]", renames: "Dict[str, str]") -> No
 
     All renames apply SIMULTANEOUSLY (one alternation pass — sequential
     substitution chains A->B then B->C), and complex-field instructions are
-    matched on their CONCATENATION across split w:instrText runs (v0.11
-    review sweep)."""
+    matched on their CONCATENATION across split w:instrText runs."""
     from docx.bookmarks import _iter_field_instructions
 
     alternation = re.compile(

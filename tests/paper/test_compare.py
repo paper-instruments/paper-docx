@@ -1,6 +1,6 @@
-"""The compare engine and its algebra (PLAN-v0.11 Phase 4).
+"""The compare engine and its algebra.
 
-The invariants ARE the organ: accept(compare(A,B)) == B, reject == A,
+The invariants are the point: accept(compare(A,B)) == B, reject == A,
 compare(A,A) == nothing, identical inputs -> byte-identical output.
 """
 

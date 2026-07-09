@@ -1,4 +1,4 @@
-"""Tests for docx.blocks — anchor-relative block operations (Phase 7)."""
+"""Tests for docx.blocks — anchor-relative block operations."""
 
 from __future__ import annotations
 

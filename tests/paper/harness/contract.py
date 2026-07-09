@@ -1,4 +1,4 @@
-"""Contract-harness assertion utilities (CONVENTIONS §4).
+"""Contract-harness assertion utilities.
 
 Every mutating paper API must pass five assertions. The helpers here are the
 shared machinery for them:
@@ -73,7 +73,7 @@ def assert_changed_parts(
     `expected_added`/`expected_removed` name parts that may appear/disappear.
     Anything outside those sets — in either direction — fails the assertion.
     Byte-level churn that is semantically neutral (reserialization noise) is
-    tolerated by design until `patch_save` (Phase 2) makes it disappear.
+    tolerated by design until `patch_save` makes it disappear.
 
     Returns the diff so callers can make further assertions on it.
     """
@@ -97,8 +97,8 @@ def assert_changed_parts(
 def assert_no_op_roundtrip_is_semantically_clean(original: Path, resaved: Path) -> PartsDiff:
     """Assert an open->save round trip changed nothing semantically.
 
-    (Byte identity is the *patch_save* kernel invariant, pinned for Phase 2;
-    upstream `save()` reserializes and is not byte-stable.)
+    (Byte identity is the *patch_save* kernel invariant; upstream `save()`
+    reserializes and is not byte-stable.)
     """
     diff = diff_parts(original, resaved)
     assert diff.is_semantically_empty, (

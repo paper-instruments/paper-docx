@@ -1,5 +1,5 @@
-"""Regression tests for the confirmed findings of the v0.1 adversarial
-review sweep — one test (at least) per fixed defect."""
+"""Regression tests for confirmed defects — at least one test per fixed
+defect."""
 
 from __future__ import annotations
 

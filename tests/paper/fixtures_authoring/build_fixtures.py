@@ -8,7 +8,7 @@ Run manually from the repo root:
 This script is development tooling, NOT code under test and NOT run by tests.
 Fixtures it writes are frozen by ``tests/paper/fixtures/MANIFEST.sha256``; the
 manifest test fails on any hash drift, so regenerating a fixture is always a
-deliberate, reviewed act (CONVENTIONS §4).
+deliberate, reviewed act.
 
 Determinism: every date stamped into a fixture is a fixed constant below, and
 generated packages are rewritten with fixed zip entry timestamps so that
@@ -287,8 +287,8 @@ def inline_content_control_paragraph() -> "docx.oxml.xmlchemy.BaseOxmlElement":
 
 #: A wps (wordprocessingShape) inline text box. Deliberately the plain
 #: `w:drawing` form without the `mc:AlternateContent` + VML fallback wrapper
-#: desktop Word emits — the realistic double-content shape is requested from a
-#: human in FIXTURE-REQUESTS.md.
+#: desktop Word emits — the realistic double-content shape is a pending
+#: request for a real-Word capture.
 TEXTBOX_PARAGRAPH_XML = (
     "<w:p"
     ' xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main"'
@@ -586,7 +586,7 @@ def build_gauntlet(out: Path) -> None:
     apply_custom_numbering(doc.add_paragraph("Gauntlet numbered item one"), ilvl=0)
     apply_custom_numbering(doc.add_paragraph("Gauntlet numbered item two"), ilvl=0)
 
-    # v0.11: row revisions, rich format changes, tracked paragraph merge/split
+    # row revisions, rich format changes, tracked paragraph merge/split
     append_block(doc, row_revision_table(base_id=81))
     for p in rich_format_change_paragraphs():
         append_block(doc, p)
@@ -783,7 +783,7 @@ def build_bookmarks(out: Path) -> None:
 def build_noisy_markup(out: Path) -> None:
     """proofErr spell-check noise + comment anchors + _GoBack around ordinary
     paragraphs — the markup Word scatters through virtually every saved doc.
-    (Hand-built; a real-Word capture is requested in FIXTURE-REQUESTS.md.)"""
+    (Hand-built; a real-Word capture is a pending request.)"""
     doc = Document()
     p1 = doc.add_paragraph("Paragrah with a spelling issue.")
     p1._p.insert(  # noqa: SLF001 - authoring tool
@@ -803,7 +803,7 @@ def build_noisy_markup(out: Path) -> None:
 def toc_field_paragraphs() -> "List[docx.oxml.xmlchemy.BaseOxmlElement]":
     """A TOC-shaped multi-paragraph complex field: begin+instr+separate in the
     first paragraph, an entry paragraph in the middle, end in the last —
-    the canonical shape whose cross-block state the v0.1 review caught."""
+    the canonical shape whose field state spans block boundaries."""
     first = parse_xml(
         f"<w:p {W}>"
         '<w:r><w:fldChar w:fldCharType="begin"/></w:r>'
@@ -834,7 +834,7 @@ def build_toc_field(out: Path) -> None:
 
 
 # ---------------------------------------------------------------------------
-# v0.11 redline-pipeline fixtures (PLAN-v0.11 Phase 0)
+# redline-pipeline fixtures
 # ---------------------------------------------------------------------------
 
 
@@ -1009,13 +1009,13 @@ MULTIROUND_MOVED_TEXT = "The indemnity clause shall survive termination of this 
 
 
 def multiround_paragraphs() -> "List[docx.oxml.xmlchemy.BaseOxmlElement]":
-    """The two-author, two-round redline body (FIXTURE-REQUESTS §15 bootstrap).
+    """The two-author, two-round redline body.
 
-    Every revision type v0.11 resolves, in one document: rPrChange (empty and
-    rich stored properties), pPrChange, a mark-stamped whole-paragraph move,
-    tracked row insert/delete, tracked paragraph merge + split, and a comment
-    anchored inside a tracked insertion. Hand-built; the real-Word capture
-    requested in FIXTURE-REQUESTS.md supersedes this bootstrap on arrival.
+    Every revision type the resolver handles, in one document: rPrChange
+    (empty and rich stored properties), pPrChange, a mark-stamped
+    whole-paragraph move, tracked row insert/delete, tracked paragraph merge +
+    split, and a comment anchored inside a tracked insertion. Hand-built; a
+    real-Word capture supersedes this bootstrap on arrival.
     """
     blocks: "List[docx.oxml.xmlchemy.BaseOxmlElement]" = [
         parse_xml(
@@ -1114,8 +1114,8 @@ def build_redline_multiround(out: Path) -> None:
 
 def build_redline_multiround_accepted(out: Path) -> None:
     """`multiround.docx` with every revision applied, hand-computed to Word's
-    Accept All semantics — the resolution ground truth until the real-Word
-    capture (FIXTURE-REQUESTS §16) supersedes it."""
+    Accept All semantics — the resolution ground truth until a real-Word
+    capture supersedes it."""
     doc = Document()
     for block in [
         parse_xml(

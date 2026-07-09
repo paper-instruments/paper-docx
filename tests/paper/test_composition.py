@@ -1,4 +1,4 @@
-"""Cross-document composition (PLAN-v0.11 Phase 5, API-PROPOSAL §11)."""
+"""Cross-document composition."""
 
 from __future__ import annotations
 

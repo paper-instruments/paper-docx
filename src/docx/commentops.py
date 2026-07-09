@@ -1,4 +1,4 @@
-"""Comment thread operations: anchored text, replies, resolution (v0.1 V4).
+"""Comment thread operations: anchored text, replies, resolution.
 
 Word models threading and resolution OUTSIDE `word/comments.xml`, in the
 `w15` extension part `word/commentsExtended.xml`: one `w15:commentEx` per

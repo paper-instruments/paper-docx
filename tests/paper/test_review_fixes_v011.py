@@ -1,7 +1,7 @@
-"""Regression pins for the v0.11 adversarial review sweep (34 confirmed).
+"""Regression pins for confirmed defects.
 
 Every test here reproduces a confirmed silent-corruption / false-state /
-atomicity finding and pins its fix. Names reference the sweep dimensions.
+atomicity finding and pins its fix.
 """
 
 from __future__ import annotations
