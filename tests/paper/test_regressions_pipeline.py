@@ -56,7 +56,7 @@ def _compare_pair(build_a, build_b, tmp_path, **kwargs):
     return compare(str(a), str(b), **kwargs), str(a), str(b)
 
 
-class DescribeResolutionSweepFixes:
+class DescribeResolutionRegressions:
     def it_fully_resolves_a_move_whose_source_sits_in_a_deleted_row(self):
         """Moves resolve FIRST in a batch — a row removal must never take a
         move site with it and then refuse claiming nothing changed."""
@@ -180,7 +180,7 @@ class DescribeResolutionSweepFixes:
             document.revisions.accept_all()
 
 
-class DescribeScrubSweepFixes:
+class DescribeScrubRegressions:
     def it_never_fabricates_missing_metadata_or_settings_parts(self, tmp_path):
         import zipfile
 
@@ -234,7 +234,7 @@ class DescribeScrubSweepFixes:
         assert any("commentsExtended" in p for p in report.removed_parts)
 
 
-class DescribeCompareSweepFixes:
+class DescribeCompareRegressions:
     def it_redlines_nested_table_differences(self, tmp_path: Path):
         def build(inner_text):
             def _build(document):
@@ -395,7 +395,7 @@ class DescribeCompareSweepFixes:
         assert len(dates) == 1, dates
 
 
-class DescribeCompositionSweepFixes:
+class DescribeCompositionRegressions:
     def it_drops_half_bookmarks_at_range_edges_with_a_finding(self, tmp_path):
         from docx.composition import insert_blocks_from
 
@@ -553,7 +553,7 @@ class DescribeCompositionSweepFixes:
         assert destination.styles.element.xml == styles_before
 
 
-class DescribeBookmarkFieldSweepFixes:
+class DescribeBookmarkFieldRegressions:
     def it_refuses_deleting_a_bookmark_referenced_by_a_split_instruction(self):
         from docx.bookmarks import delete_bookmark
 
@@ -630,7 +630,7 @@ class DescribeBookmarkFieldSweepFixes:
         assert all(b.name != "Dup" for b in list_bookmarks(document))
 
 
-class DescribeFormattingSweepFixes:
+class DescribeFormattingRegressions:
     def it_resolves_the_paragraph_style_for_runs_inside_hyperlinks(self):
         from docx.enum.style import WD_STYLE_TYPE
         from docx.formatting import format_of

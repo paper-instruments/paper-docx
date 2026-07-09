@@ -28,7 +28,7 @@ def _doc(relpath: str = MINIMAL):
     return docx.Document(str(fixture_path(relpath)))
 
 
-class DescribeKernelComparisonHardening:
+class DescribeKernelComparison:
     def it_distinguishes_processing_instruction_targets(self):
         a = b'<a><?foo x="1"?></a>'
         b = b'<a><?bar x="1"?></a>'
