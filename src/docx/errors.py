@@ -17,6 +17,16 @@ class PaperRefusal(Exception):
     """
 
 
+class PackageLimitError(PaperRefusal):
+    """A package archive is too large, ambiguous, or unsafe to expand.
+
+    Package reads validate ZIP structure and resource bounds before any XML is
+    parsed or output is replaced. This exception therefore represents a safe
+    refusal, including for encrypted entries, duplicate/noncanonical member
+    names, unsupported entry types, and forged ZIP size metadata.
+    """
+
+
 class AmbiguousTargetError(PaperRefusal):
     """The target specification matches more than one location.
 

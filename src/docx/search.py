@@ -18,7 +18,7 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterator, List, Optional, Sequence, Tuple
 
-from docx import _clock
+from docx import _clock, _textatoms
 from docx._normalize import normalize_text  # noqa: F401 - public re-export
 from docx.errors import (
     AmbiguousTargetError,
@@ -43,14 +43,11 @@ if TYPE_CHECKING:
 
     from docx.document import Document
 
-_T = qn("w:t")
-_DEL_TEXT = qn("w:delText")
-_INSTR_TEXT = qn("w:instrText")
-_TEXT_TAGS = (_T, _DEL_TEXT, _INSTR_TEXT)
-#: tab/break elements contribute fixed characters to the search text so
-#: needles can match across them; spans containing them refuse to replace
-_SYNTHETIC_TAGS = {qn("w:tab"): "\t", qn("w:br"): "\n", qn("w:cr"): "\n"}
-_R = qn("w:r")
+_T = _textatoms.T
+_DEL_TEXT = _textatoms.DEL_TEXT
+_INSTR_TEXT = _textatoms.INSTR_TEXT
+_TEXT_TAGS = _textatoms.TEXT_TAGS
+_R = _textatoms.R
 _INS = qn("w:ins")
 _DEL = qn("w:del")
 _MOVE_FROM = qn("w:moveFrom")
@@ -69,9 +66,10 @@ _FLD_CHAR_TYPE = qn("w:fldCharType")
 class _Atom:
     """One text node in search space, with its structural context.
 
-    `fixed_text` marks a synthetic atom: a `w:tab`/`w:br`/`w:cr` that
-    contributes a fixed character to the search text so needles can match
-    across it, but that can never be edited through a span (replace refuses).
+    `fixed_text` marks a synthetic atom such as a tab, break, or no-break
+    hyphen. ``barrier`` marks visible run XML with no safe text model; it
+    contributes an object-replacement sentinel solely to split search text.
+    Neither kind can be edited directly through a span.
     """
 
     element: "_Element"
@@ -87,6 +85,7 @@ class _Atom:
     hyperlink: "Optional[_Element]" = None  # innermost w:hyperlink, if any
     in_field: bool = False
     fixed_text: Optional[str] = None
+    barrier: bool = False
 
     @property
     def in_hyperlink(self) -> bool:
@@ -101,6 +100,57 @@ class _Atom:
     @property
     def is_synthetic(self) -> bool:
         return self.fixed_text is not None
+
+
+_CONTEXT_SCOPE_TAGS = frozenset(
+    (_INS, _DEL, _MOVE_FROM, _MOVE_TO, _SDT, _HYPERLINK, _FLD_SIMPLE, _TXBX)
+)
+
+
+def _atom_context_signature(atom: _Atom) -> tuple:
+    """Snapshot the edit-sensitive structural context of one atom.
+
+    Element identity catches reparenting into a different run, paragraph, or
+    edit-sensitive scope without coupling freshness to absolute sibling
+    indexes. Attributes catch retargeted hyperlinks and re-authored revisions;
+    SDT properties catch lock/placeholder/type changes. Complex-field
+    membership is carried separately because its begin/end markers are
+    siblings rather than ancestors of the result text.
+    """
+    from lxml import etree
+
+    scopes = []
+    current = atom.element.getparent()
+    while current is not None:
+        if current.tag in _CONTEXT_SCOPE_TAGS:
+            extra = b""
+            if current.tag == _SDT:
+                sdt_pr = current.find(qn("w:sdtPr"))
+                if sdt_pr is not None:
+                    extra = etree.tostring(sdt_pr, with_tail=False)
+            scopes.append(
+                (
+                    current,
+                    current.tag,
+                    tuple(sorted(current.attrib.items())),
+                    extra,
+                )
+            )
+        current = current.getparent()
+    scopes.reverse()
+    return (
+        atom.story,
+        atom.tag,
+        atom.paragraph,
+        atom.run,
+        atom.in_insert,
+        atom.in_delete,
+        atom.in_text_box,
+        atom.in_field,
+        atom.fixed_text,
+        atom.barrier,
+        tuple(scopes),
+    )
 
 
 def _collect_block_atoms(
@@ -138,7 +188,10 @@ def _collect_block_atoms(
                 elif fld_type == "end" and field_depth[0] > 0:
                     field_depth[0] -= 1
                 continue
-            if tag in _TEXT_TAGS or tag in _SYNTHETIC_TAGS:
+            if _textatoms.is_direct_run_child(child):
+                projection = _textatoms.project_run_child(child)
+                if not projection.text and not projection.barrier:
+                    continue
                 yield _Atom(
                     element=child,
                     tag=tag,
@@ -152,7 +205,10 @@ def _collect_block_atoms(
                     in_text_box=in_box,
                     hyperlink=hlink,
                     in_field=in_fld or field_depth[0] > 0,
-                    fixed_text=_SYNTHETIC_TAGS.get(tag),
+                    fixed_text=(
+                        None if tag in _TEXT_TAGS else projection.text
+                    ),
+                    barrier=projection.barrier,
                 )
                 continue
             yield from walk(
@@ -306,6 +362,21 @@ class Span:
     _end_offset: int = field(repr=False)  # exclusive, into last atom's text
     _norm_start: int = field(repr=False)  # position in the story's normalized text
     _consumed: bool = field(default=False, repr=False)  # set by tracked replace
+    _context_signatures: "Tuple[tuple, ...]" = field(init=False, repr=False)
+    _atom_sequence: "Tuple[_Element, ...]" = field(init=False, repr=False)
+    _sequence_view: "Optional[str]" = field(init=False, repr=False)
+    _view: str = field(init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        self._context_signatures = tuple(
+            _atom_context_signature(atom) for atom in self._atoms
+        )
+        # Constructors outside search build current-view spans. Search replaces
+        # this fallback with the full captured interval, including atoms hidden
+        # by the selected view.
+        self._atom_sequence = tuple(atom.element for atom in self._atoms)
+        self._sequence_view = "current"
+        self._view = "current"
 
     # -- comments ---------------------------------------------------------
 
@@ -325,6 +396,12 @@ class Span:
         """
         if not author:
             raise ValueError("author is required")
+        _validate_xml_characters(text, argument="text")
+        _validate_xml_characters(author, argument="author")
+        if initials is not None:
+            _validate_xml_characters(initials, argument="initials")
+        if date is not None and not isinstance(date, dt.datetime):
+            raise TypeError("date must be a datetime or None")
         _refuse_if_protected(self._document, "anchor a comment")
         if self.story != "word/document.xml":
             raise UnsupportedStructureError(
@@ -337,6 +414,9 @@ class Span:
                 raise UnsupportedStructureError(
                     "span text is not inside runs; cannot anchor a comment"
                 )
+        from docx.commentops import _preflight_comment_add
+
+        _preflight_comment_add(self._document)
         self._isolate_edge_runs()
         runs = []
         for atom in self._atoms:
@@ -517,6 +597,21 @@ class Span:
             _end_offset=end_off,
             _norm_start=self._norm_start,
         )
+        sub_span._view = self._view
+        sub_span._sequence_view = self._sequence_view
+        sequence_positions = {
+            id(element): index for index, element in enumerate(self._atom_sequence)
+        }
+        sequence_start = sequence_positions.get(id(sub_atoms[0].element))
+        sequence_end = sequence_positions.get(id(sub_atoms[-1].element))
+        if (
+            sequence_start is not None
+            and sequence_end is not None
+            and sequence_start <= sequence_end
+        ):
+            sub_span._atom_sequence = self._atom_sequence[
+                sequence_start : sequence_end + 1
+            ]
         return sub_span, changed_new
 
     # -- validation -------------------------------------------------------
@@ -555,24 +650,78 @@ class Span:
                 f"span is stale: expected {self.text!r} at its anchor"
                 f" ({self.anchor.to_dict()}) but the document has changed"
             )
-        # detached atoms still hold their text; an edit landing in an orphaned
-        # subtree would report success and reach nothing
-        story_roots = {id(root) for _, root in _story_elements(self._document)}
-        for atom in self._atoms:
-            top = atom.element
-            while top.getparent() is not None:
-                top = top.getparent()
-            if id(top) not in story_roots:
+        # Text equality is insufficient: moving the same w:t into a field,
+        # hyperlink, content control, or revision changes whether/how it may be
+        # edited. Rebuild the story atom census and compare the captured scope
+        # of each live element. Detached and alternate-branch-switched atoms
+        # naturally disappear from this census.
+        story_root = next(
+            (
+                root
+                for story_name, root in _story_elements(self._document)
+                if story_name == self.story
+            ),
+            None,
+        )
+        if story_root is None:
+            raise TargetNotFoundError(
+                "span is stale: its story part was removed from the document"
+            )
+        current_atoms = _story_atoms(self._document, self.story, story_root)
+        current_by_element = {id(atom.element): atom for atom in current_atoms}
+        for captured, expected in zip(self._atoms, self._context_signatures):
+            current = current_by_element.get(id(captured.element))
+            if current is None or _atom_context_signature(current) != expected:
                 raise TargetNotFoundError(
-                    "span is stale: its containing structure was removed from"
-                    " the document"
+                    "span is stale: its field, hyperlink, content-control,"
+                    " revision, or containing structure has changed or was"
+                    " removed"
                 )
+        sequence_atoms = (
+            current_atoms
+            if self._sequence_view is None
+            else [
+                atom
+                for atom in current_atoms
+                if _include_atom(atom, self._sequence_view)
+            ]
+        )
+        sequence_positions = {
+            id(atom.element): index for index, atom in enumerate(sequence_atoms)
+        }
+        expected_first = self._atom_sequence[0]
+        expected_last = self._atom_sequence[-1]
+        sequence_start = sequence_positions.get(id(expected_first))
+        sequence_end = sequence_positions.get(id(expected_last))
+        current_sequence = (
+            ()
+            if sequence_start is None
+            or sequence_end is None
+            or sequence_start > sequence_end
+            else tuple(
+                atom.element
+                for atom in sequence_atoms[sequence_start : sequence_end + 1]
+            )
+        )
+        if len(current_sequence) != len(self._atom_sequence) or any(
+            current is not expected
+            for current, expected in zip(current_sequence, self._atom_sequence)
+        ):
+            raise TargetNotFoundError(
+                "span is stale: the text-atom sequence inside its captured"
+                " interval has changed"
+            )
 
     def _validate_replaceable(self) -> None:
         for atom in self._atoms:
             if atom.is_synthetic:
+                detail = (
+                    "unmodeled visible run content"
+                    if atom.barrier
+                    else "a tab or line break, or a no-break hyphen"
+                )
                 raise UnsupportedStructureError(
-                    "span crosses a tab or line break; replace the text"
+                    f"span crosses {detail}; replace the text"
                     " segments on either side individually"
                 )
             if atom.tag == _DEL_TEXT or atom.in_delete:
@@ -723,13 +872,17 @@ class Span:
         self.text = new_text
         self._end_offset = self._start_offset + len(new_text)
         del self._atoms[1:]
+        self._context_signatures = tuple(
+            _atom_context_signature(atom) for atom in self._atoms
+        )
+        self._atom_sequence = (first.element,)
+        self._sequence_view = "current"
+        self._view = "current"
         return result
 
     def _tracked_replace(
         self, new_text: str, *, author: str, date: Optional[dt.datetime]
     ) -> ReplaceResult:
-        import copy
-
         from docx.oxml.revision import CT_RunTrackChange
 
         if self.story == "word/comments.xml":
@@ -981,6 +1134,27 @@ _W_ID = qn("w:id")
 _W_NAME = qn("w:name")
 
 
+def _validate_xml_characters(value: str, *, argument: str) -> None:
+    """Reject characters XML 1.0 cannot represent before any mutation."""
+    invalid = sorted(
+        {
+            f"U+{ord(char):04X}"
+            for char in value
+            if not (
+                ord(char) in (0x09, 0x0A, 0x0D)
+                or 0x20 <= ord(char) <= 0xD7FF
+                or 0xE000 <= ord(char) <= 0xFFFD
+                or 0x10000 <= ord(char) <= 0x10FFFF
+            )
+        }
+    )
+    if invalid:
+        raise ValueError(
+            f"{argument} contains character(s) XML 1.0 cannot represent:"
+            f" {invalid!r}"
+        )
+
+
 def _validate_writable_text(value: str, *, argument: str) -> None:
     """Refuse control characters in text written into `w:t` (programmer error).
 
@@ -989,6 +1163,7 @@ def _validate_writable_text(value: str, *, argument: str) -> None:
     structure. The search side refuses spans crossing `w:br`/`w:tab` for the
     mirror reason: replacing across one would silently drop it.
     """
+    _validate_xml_characters(value, argument=argument)
     found = sorted({c for c in value if c in _CONTROL_CHARS})
     if found:
         raise ValueError(
@@ -1116,9 +1291,15 @@ def _spans_for_story(
     story_name: str,
     atoms: "List[_Atom]",
     needle_norm: str,
+    *,
+    all_atoms: "Sequence[_Atom]",
+    view: str,
 ) -> "List[Span]":
     raw_text, char_map = _assemble(atoms)
     normalized, norm_map = _normalized_with_map(raw_text)
+    all_atom_positions = {
+        id(atom.element): index for index, atom in enumerate(all_atoms)
+    }
     spans: "List[Span]" = []
     search_from = 0
     while True:
@@ -1144,28 +1325,34 @@ def _spans_for_story(
         )
         span_atoms = atoms[start_atom_idx : end_atom_idx + 1]
         start_block = atoms[start_atom_idx].block_index
-        spans.append(
-            Span(
-                text=raw_text[raw_start:raw_end],
+        span = Span(
+            text=raw_text[raw_start:raw_end],
+            story=story_name,
+            anchor=Anchor(
                 story=story_name,
-                anchor=Anchor(
-                    story=story_name,
-                    index=start_block,
-                    content_hash=content_hash(raw_text[raw_start:raw_end]),
-                ),
-                in_insert=any(a.in_insert for a in span_atoms),
-                in_delete=any(a.in_delete or a.tag == _DEL_TEXT for a in span_atoms),
-                in_content_control=any(a.sdt is not None for a in span_atoms),
-                in_text_box=any(a.in_text_box for a in span_atoms),
-                in_field=any(a.in_field for a in span_atoms),
-                crosses_paragraphs=crosses,
-                _document=document,
-                _atoms=list(span_atoms),
-                _start_offset=start_offset,
-                _end_offset=end_offset + 1,
-                _norm_start=found_at,
-            )
+                index=start_block,
+                content_hash=content_hash(raw_text[raw_start:raw_end]),
+            ),
+            in_insert=any(a.in_insert for a in span_atoms),
+            in_delete=any(a.in_delete or a.tag == _DEL_TEXT for a in span_atoms),
+            in_content_control=any(a.sdt is not None for a in span_atoms),
+            in_text_box=any(a.in_text_box for a in span_atoms),
+            in_field=any(a.in_field for a in span_atoms),
+            crosses_paragraphs=crosses,
+            _document=document,
+            _atoms=list(span_atoms),
+            _start_offset=start_offset,
+            _end_offset=end_offset + 1,
+            _norm_start=found_at,
         )
+        sequence_start = all_atom_positions[id(span_atoms[0].element)]
+        sequence_end = all_atom_positions[id(span_atoms[-1].element)]
+        span._atom_sequence = tuple(
+            atom.element for atom in all_atoms[sequence_start : sequence_end + 1]
+        )
+        span._sequence_view = None
+        span._view = view
+        spans.append(span)
     return spans
 
 
@@ -1204,14 +1391,18 @@ def find_text(
     for story_name, root in _story_elements(document):
         if story is not None and story_name != story:
             continue
-        atoms = [
-            atom
-            for atom in _story_atoms(document, story_name, root)
-            if _include_atom(atom, view)
-        ]
+        all_atoms = _story_atoms(document, story_name, root)
+        atoms = [atom for atom in all_atoms if _include_atom(atom, view)]
         if not atoms:
             continue
-        spans = _spans_for_story(document, story_name, atoms, needle_norm)
+        spans = _spans_for_story(
+            document,
+            story_name,
+            atoms,
+            needle_norm,
+            all_atoms=all_atoms,
+            view=view,
+        )
         if not spans:
             continue
         near_positions: "List[int]" = []

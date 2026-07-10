@@ -60,9 +60,10 @@ result.document.paragraphs[0].text
 # 'Payment is due within thirty business days of the invoice date.'
 ```
 
-`compare` emits markup Word renders as tracked changes. Accepting the redline
-reproduces the revised document; rejecting it reproduces the original. That
-round-trip guarantee holds across every part of the file.
+`compare` emits markup Word renders as tracked changes. Before returning, it
+accepts and rejects private copies and verifies both outcomes. If a difference
+cannot be represented safely as a redline, such as a style or package-part
+change, it raises a typed refusal instead of returning an incomplete result.
 
 ## What it adds
 
@@ -119,21 +120,35 @@ and model priors.
 
 - GitHub repository / PyPI distribution: **`paper-docx`**
 - Python import: **`docx`**
-- Fork sentinel: `docx.__paper_version__ = "0.1.0"`
+- Fork sentinel: `docx.__paper_version__ = "0.1.1"`
 
 ## Installation
 
 Install from PyPI:
 
 ```bash
-pip install paper-docx
+python -m pip uninstall -y python-docx paper-docx
+python -m pip install paper-docx
 ```
+
+The clean uninstall is required when migrating from `python-docx`. Both
+distributions use the frozen `docx` import package, and pip cannot safely
+overlay or uninstall two distributions that own the same files.
 
 Confirm the install:
 
 ```bash
-python -c "import docx; print(docx.__paper_version__)"
+paper-docx-doctor
 ```
+
+Pip does not treat `paper-docx` as satisfying another package's declared
+dependency on `python-docx`. That dependency will reinstall upstream and
+overwrite shared `docx` files. Replace or remove the dependency, or run that
+package in a separate environment.
+
+In a controlled deployment, a constraint containing `python-docx<0` makes pip
+reject direct or transitive attempts to install upstream. The constraint must
+be applied to every install in that environment.
 
 ## Documentation
 

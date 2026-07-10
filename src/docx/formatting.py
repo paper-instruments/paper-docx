@@ -15,9 +15,9 @@ root→leaf, then the character-style chain root→leaf) that specifies TRUE —
 the famous nested-bold-cancels gotcha, pinned by tests. Ordinary
 properties take the nearest specification instead.
 
-Declared out of scope (listed in `unresolved`): table-style
-conditional formatting, numbering-mark properties, and East-Asian/
-complex-script variants beyond the toggle pair (bCs/iCs).
+Declared out of scope (listed in `unresolved`): table-style conditional
+formatting, numbering-mark properties, theme resolution, and every run or
+paragraph property category this focused resolver does not compute.
 """
 
 from __future__ import annotations
@@ -52,12 +52,33 @@ _TOGGLES = {
     "w:vanish": "vanish",
 }
 
-#: declared-unresolvable areas
+#: Declared-unresolvable areas. Keep omitted OOXML property categories
+#: explicit: the finite ``properties`` map is a supported subset, not a claim
+#: that unlisted formatting is absent.
 _UNRESOLVED = (
     "table_style_conditional_formatting",
     "numbering_mark_properties",
     "east_asian_and_complex_script_variants",
     "theme_font_resolution",  # theme-referenced fonts report "theme:<token>"
+    "theme_color_resolution",
+    "run_border",
+    "run_shading",
+    "run_character_spacing",
+    "run_character_scaling",
+    "run_character_position",
+    "run_kerning",
+    "run_language",
+    "run_proofing",
+    "run_additional_text_effects",
+    "paragraph_indentation",
+    "paragraph_spacing",
+    "paragraph_tabs",
+    "paragraph_borders",
+    "paragraph_shading",
+    "paragraph_pagination",
+    "paragraph_text_flow",
+    "paragraph_frame_properties",
+    "section_properties",
 )
 
 
@@ -106,10 +127,11 @@ class EffectiveFormat:
 def format_of(target) -> EffectiveFormat:
     """The effective formatting of a |Run|, |Paragraph| or |Span|.
 
-    Runs resolve the full run-property set; paragraphs resolve their
-    paragraph-level properties (alignment, style) plus the run defaults
-    their style chain implies; spans resolve every run they touch and
-    report disagreeing properties as "mixed".
+    Runs resolve the supported run-property subset in ``properties``;
+    paragraphs resolve alignment and style plus the supported run defaults
+    their style chain implies. Spans resolve every run they touch and report
+    disagreeing properties as "mixed". Omitted categories are named in
+    ``unresolved`` rather than implicitly reported as absent.
     """
     from docx.search import Span
     from docx.text.paragraph import Paragraph

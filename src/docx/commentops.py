@@ -13,6 +13,8 @@ import datetime as dt
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from docx import _clock
+from docx._ownership import require_comment_owner
+from docx._textatoms import DEL_TEXT, INSTR_TEXT, is_direct_run_child, project_run_child
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.oxml.ns import nsdecls, qn
 from docx.oxml.parser import parse_xml
@@ -32,14 +34,14 @@ _PARA_ID_ATTR = qn("w14:paraId")
 _PARA_ID = f"{{{_W15_NS}}}paraId"
 _PARA_ID_PARENT = f"{{{_W15_NS}}}paraIdParent"
 _DONE = f"{{{_W15_NS}}}done"
+_COMMENTS = qn("w:comments")
+_COMMENT = qn("w:comment")
 _P = qn("w:p")
 _R = qn("w:r")
 _W_ID = qn("w:id")
 _RANGE_START = qn("w:commentRangeStart")
 _RANGE_END = qn("w:commentRangeEnd")
 _REFERENCE = qn("w:commentReference")
-_T = qn("w:t")
-_DEL_TEXT = qn("w:delText")
 
 COMMENTS_EXTENDED_CONTENT_TYPE = (
     "application/vnd.openxmlformats-officedocument.wordprocessingml"
@@ -54,12 +56,79 @@ _COMMENTS_EX_TEMPLATE = (
     ' xmlns:w14="http://schemas.microsoft.com/office/word/2010/wordml"/>'
 )
 
+_COMMENTS_PARTNAME = "/word/comments.xml"
+_COMMENTS_EXTENDED_PARTNAME = "/word/commentsExtended.xml"
+
+
+def _part_with_name(document: "Document", partname: str):
+    package = document.part.package
+    if package is None:
+        return None
+    return next(
+        (part for part in package.iter_parts() if str(part.partname) == partname),
+        None,
+    )
+
+
+def _preflight_comment_add(document: "Document") -> None:
+    """Validate the existing comments collection before upstream mutates it."""
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    try:
+        part = document.part.part_related_by(RT.COMMENTS)
+    except KeyError:
+        if _part_with_name(document, _COMMENTS_PARTNAME) is not None:
+            raise UnsupportedStructureError(
+                "a package part already occupies /word/comments.xml without"
+                " the document comments relationship; nothing was changed"
+            )
+        return
+    except ValueError:
+        raise UnsupportedStructureError(
+            "multiple comments relationships make comment authoring"
+            " ambiguous; nothing was changed"
+        ) from None
+
+    root = getattr(part, "_element", None)
+    if root is None or root.tag != _COMMENTS:
+        raise UnsupportedStructureError(
+            "the comments relationship does not target a live w:comments"
+            " part; nothing was changed"
+        )
+    seen: "set[int]" = set()
+    for comment in root.findall(_COMMENT):
+        raw = comment.get(_W_ID)
+        try:
+            if raw is None:
+                raise ValueError
+            comment_id = int(raw)
+        except (TypeError, ValueError):
+            raise UnsupportedStructureError(
+                f"malformed comment w:id={raw!r}; nothing was changed"
+            ) from None
+        if comment_id in seen:
+            raise UnsupportedStructureError(
+                f"duplicate comment w:id={comment_id}; nothing was changed"
+            )
+        seen.add(comment_id)
+
+
+def _validate_para_id(raw: "Optional[str]", *, attribute: str) -> str:
+    if raw is None or len(raw) != 8 or any(
+        character not in "0123456789abcdefABCDEF" for character in raw
+    ):
+        raise UnsupportedStructureError(
+            f"malformed {attribute}={raw!r}; nothing was changed"
+        )
+    return raw
+
 
 def _comments_part(document: "Document"):
     return document.part._comments_part  # noqa: SLF001 - same-package broker
 
 
 def _comment_element(document: "Document", comment: "Comment") -> "_Element":
+    require_comment_owner(document, comment)
     return comment._comment_elm  # noqa: SLF001 - same-package access
 
 
@@ -74,18 +143,22 @@ def _existing_para_ids(comments_root: "_Element") -> "List[int]":
     values = []
     for paragraph in comments_root.iter(_P):
         raw = paragraph.get(_PARA_ID_ATTR)
-        if raw:
-            try:
-                values.append(int(raw, 16))
-            except ValueError:
-                continue
+        if raw is not None:
+            values.append(
+                int(_validate_para_id(raw, attribute="w14:paraId"), 16)
+            )
+    if len(values) != len(set(values)):
+        raise UnsupportedStructureError(
+            "duplicate w14:paraId values make comment threading ambiguous;"
+            " nothing was changed"
+        )
     return values
 
 
 def _ensure_para_id(document: "Document", paragraph: "_Element") -> str:
     existing = paragraph.get(_PARA_ID_ATTR)
-    if existing:
-        return existing
+    if existing is not None:
+        return _validate_para_id(existing, attribute="w14:paraId")
     comments_root = _comments_part(document)._element  # noqa: SLF001
     next_value = max(_existing_para_ids(comments_root), default=0x10000000) + 1
     para_id = f"{next_value:08X}"
@@ -99,6 +172,11 @@ def _comments_extended_root(document: "Document", *, create: bool) -> "Optional[
         extended = part.part_related_by(COMMENTS_EXTENDED_RELATIONSHIP_TYPE)
     except KeyError:
         extended = None
+    except ValueError:
+        raise UnsupportedStructureError(
+            "multiple commentsExtended relationships make comment threading"
+            " ambiguous; nothing was changed"
+        ) from None
     if extended is not None:
         element = getattr(extended, "_element", None)
         if element is None:  # pragma: no cover - registration in docx/__init__
@@ -107,9 +185,34 @@ def _comments_extended_root(document: "Document", *, create: bool) -> "Optional[
                 " registration is missing, and writing to a parsed copy would"
                 " be silently lost on save"
             )
+        if element.tag != f"{{{_W15_NS}}}commentsEx":
+            raise UnsupportedStructureError(
+                "commentsExtended has an unexpected root element; nothing"
+                " was changed"
+            )
+        seen: "set[str]" = set()
+        for entry in element.findall(_COMMENT_EX):
+            para_id = _validate_para_id(
+                entry.get(_PARA_ID), attribute="w15:paraId"
+            )
+            parent_id = entry.get(_PARA_ID_PARENT)
+            if parent_id is not None:
+                _validate_para_id(parent_id, attribute="w15:paraIdParent")
+            normalized = para_id.upper()
+            if normalized in seen:
+                raise UnsupportedStructureError(
+                    "duplicate w15:paraId values make comment threading"
+                    " ambiguous; nothing was changed"
+                )
+            seen.add(normalized)
         return element
     if not create:
         return None
+    if _part_with_name(document, _COMMENTS_EXTENDED_PARTNAME) is not None:
+        raise UnsupportedStructureError(
+            "a package part already occupies /word/commentsExtended.xml"
+            " without the commentsExtended relationship; nothing was changed"
+        )
     from docx.opc.packuri import PackURI
     from docx.opc.part import XmlPart
 
@@ -122,6 +225,16 @@ def _comments_extended_root(document: "Document", *, create: bool) -> "Optional[
     )
     part.relate_to(new_part, COMMENTS_EXTENDED_RELATIONSHIP_TYPE)
     return root
+
+
+def _preflight_comments_extended_write(document: "Document") -> None:
+    """Validate extension state and any partname needed for its creation."""
+    root = _comments_extended_root(document, create=False)
+    if root is None and _part_with_name(document, _COMMENTS_EXTENDED_PARTNAME) is not None:
+        raise UnsupportedStructureError(
+            "a package part already occupies /word/commentsExtended.xml"
+            " without the commentsExtended relationship; nothing was changed"
+        )
 
 
 def _entry_for(root: "_Element", para_id: str, *, create: bool) -> "Optional[_Element]":
@@ -140,10 +253,11 @@ def _entry_for(root: "_Element", para_id: str, *, create: bool) -> "Optional[_El
 
 def is_resolved(document: "Document", comment: "Comment") -> bool:
     """Whether `comment` is marked resolved (`w15:done`)."""
+    comment_elm = _comment_element(document, comment)
     root = _comments_extended_root(document, create=False)
     if root is None:
         return False
-    para_id = _last_paragraph(_comment_element(document, comment)).get(_PARA_ID_ATTR)
+    para_id = _last_paragraph(comment_elm).get(_PARA_ID_ATTR)
     if not para_id:
         return False
     entry = _entry_for(root, para_id, create=False)
@@ -152,8 +266,12 @@ def is_resolved(document: "Document", comment: "Comment") -> bool:
 
 def resolve(document: "Document", comment: "Comment", *, resolved: bool = True) -> None:
     """Mark `comment` resolved (or reopened) the way Word does."""
+    comment_elm = _comment_element(document, comment)
     _refuse_if_protected(document, "resolve a comment")
-    para_id = _ensure_para_id(document, _last_paragraph(_comment_element(document, comment)))
+    # Validate a pre-existing extension part before adding a paraId to the
+    # comment. An opaque extension must refuse without touching comments.xml.
+    _preflight_comments_extended_write(document)
+    para_id = _ensure_para_id(document, _last_paragraph(comment_elm))
     root = _comments_extended_root(document, create=True)
     entry = _entry_for(root, para_id, create=True)
     entry.set(_DONE, "1" if resolved else "0")
@@ -161,10 +279,11 @@ def resolve(document: "Document", comment: "Comment", *, resolved: bool = True) 
 
 def parent_of(document: "Document", comment: "Comment") -> Optional[int]:
     """The comment-id this comment replies to, or None for a top-level one."""
+    comment_elm = _comment_element(document, comment)
     root = _comments_extended_root(document, create=False)
     if root is None:
         return None
-    para_id = _last_paragraph(_comment_element(document, comment)).get(_PARA_ID_ATTR)
+    para_id = _last_paragraph(comment_elm).get(_PARA_ID_ATTR)
     if not para_id:
         return None
     entry = _entry_for(root, para_id, create=False)
@@ -182,7 +301,7 @@ def _anchor_elements(document: "Document", comment_id: int):
     body = document.element.body
     start = end = reference_run = None
     for node in body.iter(_RANGE_START, _RANGE_END, _REFERENCE):
-        if int(node.get(_W_ID)) != comment_id:
+        if node.get(_W_ID) != str(comment_id):
             continue
         if node.tag == _RANGE_START:
             start = node
@@ -195,6 +314,7 @@ def _anchor_elements(document: "Document", comment_id: int):
 
 def anchored_text(document: "Document", comment: "Comment") -> str:
     """The document text `comment` is anchored to (its range marks' span)."""
+    _comment_element(document, comment)
     start, end, _ = _anchor_elements(document, comment.comment_id)
     if start is None or end is None:
         raise TargetNotFoundError(
@@ -205,14 +325,28 @@ def anchored_text(document: "Document", comment: "Comment") -> str:
     pieces: "List[str]" = []
     root = start.getroottree().getroot()
     inside = False
+    last_paragraph = None
     for node in root.iter():
         if node is start:
             inside = True
             continue
         if node is end:
             break
-        if inside and node.tag == _T:
-            pieces.append(node.text or "")
+        if (
+            inside
+            and is_direct_run_child(node)
+            and node.tag not in (DEL_TEXT, INSTR_TEXT)
+        ):
+            projection = project_run_child(node)
+            if projection.barrier or not projection.text:
+                continue
+            paragraph = node.getparent()
+            while paragraph is not None and paragraph.tag != qn("w:p"):
+                paragraph = paragraph.getparent()
+            if last_paragraph is not None and paragraph is not last_paragraph:
+                pieces.append("\n")
+            last_paragraph = paragraph
+            pieces.append(projection.text)
     return "".join(pieces)
 
 
@@ -228,13 +362,23 @@ def reply(
     """Add a threaded reply to `comment`, anchored to the same text range."""
     if not author:
         raise ValueError("author is required")
-    _refuse_if_protected(document, "reply to a comment")
+    from docx.search import _validate_xml_characters
+
+    _validate_xml_characters(text, argument="text")
+    _validate_xml_characters(author, argument="author")
+    if initials is not None:
+        _validate_xml_characters(initials, argument="initials")
+    if date is not None and not isinstance(date, dt.datetime):
+        raise TypeError("date must be a datetime or None")
     parent_elm = _comment_element(document, comment)
+    _refuse_if_protected(document, "reply to a comment")
     start, end, reference_run = _anchor_elements(document, comment.comment_id)
     if start is None or end is None or reference_run is None:
         raise TargetNotFoundError(
             f"comment {comment.comment_id} has no range anchor to thread onto"
         )
+    _preflight_comment_add(document)
+    _preflight_comments_extended_write(document)
     parent_para_id = _ensure_para_id(document, _last_paragraph(parent_elm))
 
     new_comment = document.comments.add_comment(
@@ -283,4 +427,3 @@ def comment_thread(document: "Document") -> Tuple[dict, ...]:
             }
         )
     return tuple(entries)
-

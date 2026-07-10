@@ -14,7 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Tuple
 
-from docx.errors import TargetNotFoundError
+from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml.ns import qn
 from docx.protection import _refuse_if_protected
@@ -129,6 +129,74 @@ def _definitions(numbering: "Optional[_Element]") -> Tuple[NumberingDefinition, 
     return tuple(sorted(definitions, key=lambda d: d.num_id))
 
 
+def _styles_index(document: "Document") -> "dict[str, _Element]":
+    return {
+        style_id: style
+        for style in document.styles.element.findall(qn("w:style"))
+        if (style_id := style.get(qn("w:styleId"))) is not None
+    }
+
+
+def _default_paragraph_style_id(document: "Document") -> Optional[str]:
+    default = None
+    for style in document.styles.element.findall(qn("w:style")):
+        if style.get(qn("w:type")) != "paragraph":
+            continue
+        if (style.get(qn("w:default")) or "").lower() in ("1", "true", "on"):
+            default = style.get(qn("w:styleId"))
+    return default
+
+
+def _paragraph_style_chain(
+    styles: "dict[str, _Element]", style_id: Optional[str]
+) -> "list[_Element]":
+    chain = []
+    seen = set()
+    current = style_id
+    while current is not None and current in styles and current not in seen:
+        seen.add(current)
+        style = styles[current]
+        chain.append(style)
+        based_on = style.find(qn("w:basedOn"))
+        current = based_on.get(qn("w:val")) if based_on is not None else None
+    chain.reverse()
+    return chain
+
+
+def _effective_paragraph_numbering(
+    document: "Document", paragraph: "_Element"
+) -> "Optional[Tuple[int, int]]":
+    """Effective ``(numId, ilvl)`` after paragraph-style inheritance."""
+    p_pr = paragraph.find(qn("w:pPr"))
+    style_elm = p_pr.find(qn("w:pStyle")) if p_pr is not None else None
+    style_id = (
+        style_elm.get(qn("w:val"))
+        if style_elm is not None
+        else _default_paragraph_style_id(document)
+    )
+    layers = [
+        style.find(qn("w:pPr"))
+        for style in _paragraph_style_chain(_styles_index(document), style_id)
+    ]
+    layers.append(p_pr)
+    num_id = None
+    level = None
+    for layer in layers:
+        num_pr = layer.find(qn("w:numPr")) if layer is not None else None
+        if num_pr is None:
+            continue
+        num_id_elm = num_pr.find(qn("w:numId"))
+        ilvl_elm = num_pr.find(qn("w:ilvl"))
+        if num_id_elm is not None and num_id_elm.get(qn("w:val")) is not None:
+            num_id = int(num_id_elm.get(qn("w:val")))
+        if ilvl_elm is not None and ilvl_elm.get(qn("w:val")) is not None:
+            level = int(ilvl_elm.get(qn("w:val")))
+    # ECMA-376 reserves numId 0 as an explicit "no numbering" override.
+    if num_id in (None, 0):
+        return None
+    return num_id, level if level is not None else 0
+
+
 def list_numbering(document: "Document") -> NumberingReport:
     """Every numbering definition and every numbered paragraph in `document`."""
     numbered = []
@@ -136,14 +204,10 @@ def list_numbering(document: "Document") -> NumberingReport:
         for kind, index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
             if kind != "paragraph":
                 continue
-            num_prs = element.xpath("./w:pPr/w:numPr")
-            if not num_prs:
+            effective = _effective_paragraph_numbering(document, element)
+            if effective is None:
                 continue
-            num_pr = num_prs[0]
-            num_id_elm = num_pr.find(qn("w:numId"))
-            ilvl_elm = num_pr.find(qn("w:ilvl"))
-            if num_id_elm is None:
-                continue
+            num_id, level = effective
             block = _build_block(
                 story, kind, index, element, "current", in_sdt=in_sdt, in_txbx=in_txbx
             )
@@ -151,8 +215,8 @@ def list_numbering(document: "Document") -> NumberingReport:
                 NumberedParagraph(
                     story=story,
                     index=index,
-                    num_id=int(num_id_elm.get(qn("w:val"))),
-                    level=int(ilvl_elm.get(qn("w:val"))) if ilvl_elm is not None else 0,
+                    num_id=num_id,
+                    level=level,
                     text=block.text,
                 )
             )
@@ -265,11 +329,13 @@ _CANONICAL_ABSTRACT_XML = {
         '<w:lvl w:ilvl="1"><w:start w:val="1"/><w:numFmt w:val="bullet"/>'
         '<w:lvlText w:val="o"/><w:lvlJc w:val="left"/>'
         '<w:pPr><w:ind w:left="1440" w:hanging="360"/></w:pPr>'
-        '<w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New" w:hint="default"/></w:rPr></w:lvl>'
+        '<w:rPr><w:rFonts w:ascii="Courier New" w:hAnsi="Courier New"'
+        ' w:hint="default"/></w:rPr></w:lvl>'
         '<w:lvl w:ilvl="2"><w:start w:val="1"/><w:numFmt w:val="bullet"/>'
         '<w:lvlText w:val="▪"/><w:lvlJc w:val="left"/>'
         '<w:pPr><w:ind w:left="2160" w:hanging="360"/></w:pPr>'
-        '<w:rPr><w:rFonts w:ascii="Wingdings" w:hAnsi="Wingdings" w:hint="default"/></w:rPr></w:lvl>'
+        '<w:rPr><w:rFonts w:ascii="Wingdings" w:hAnsi="Wingdings"'
+        ' w:hint="default"/></w:rPr></w:lvl>'
         "</w:abstractNum>"
     ),
     "decimal": (
@@ -338,24 +404,81 @@ def _append_definition(numbering: "_Element", abstract: "_Element", num: "_Eleme
         numbering.append(num)
 
 
+def _structural_signature(
+    element: "_Element", *, ignore_root_abstract_id: bool = False
+) -> tuple:
+    """Prefix/attribute-order-independent exact XML structure signature."""
+    abstract_id_attr = qn("w:abstractNumId")
+    attributes = tuple(
+        sorted(
+            (name, value)
+            for name, value in element.attrib.items()
+            if not (ignore_root_abstract_id and name == abstract_id_attr)
+        )
+    )
+    text = element.text or ""
+    if not text.strip():
+        text = ""
+    return (
+        element.tag,
+        attributes,
+        text,
+        tuple(_structural_signature(child) for child in element),
+    )
+
+
+def _canonical_abstract(kind: str, abstract_id: int) -> "_Element":
+    from docx.oxml.ns import nsdecls
+    from docx.oxml.parser import parse_xml
+
+    _name, template = _CANONICAL_ABSTRACT_XML[kind]
+    ids = f'{nsdecls("w")} w:abstractNumId="{abstract_id}"'
+    return parse_xml(template.format(ids=ids))
+
+
+def _is_canonical_abstract(abstract: "_Element", kind: str) -> bool:
+    expected = _canonical_abstract(kind, 0)
+    return _structural_signature(
+        abstract, ignore_root_abstract_id=True
+    ) == _structural_signature(expected, ignore_root_abstract_id=True)
+
+
+def _is_plain_num_reference(num: "_Element", abstract_id: str) -> bool:
+    """Whether ``num`` is exactly the canonical abstract reference shape."""
+    children = list(num)
+    if len(children) != 1 or children[0].tag != qn("w:abstractNumId"):
+        return False
+    ref = children[0]
+    return (
+        tuple(ref.attrib.items()) == ((qn("w:val"), abstract_id),)
+        and set(num.attrib) == {qn("w:numId")}
+    )
+
+
 def _ensure_definition(document: "Document", kind: str) -> int:
     from docx.oxml.ns import nsdecls
     from docx.oxml.parser import parse_xml
 
-    name, template = _CANONICAL_ABSTRACT_XML[kind]
+    name, _template = _CANONICAL_ABSTRACT_XML[kind]
     numbering = _get_or_create_numbering_root(document)
-    # idempotent: reuse the canonical definition if it is already here
+    # A name is only a marker, not proof. Reuse requires the exact canonical
+    # abstract shape and a plain w:num reference with no hidden overrides.
     for abstract in numbering.findall(qn("w:abstractNum")):
         name_elm = abstract.find(qn("w:name"))
-        if name_elm is not None and name_elm.get(qn("w:val")) == name:
-            abstract_id = abstract.get(qn("w:abstractNumId"))
-            for num in numbering.findall(qn("w:num")):
-                ref = num.find(qn("w:abstractNumId"))
-                if ref is not None and ref.get(qn("w:val")) == abstract_id:
-                    return int(num.get(qn("w:numId")))
+        if (
+            name_elm is None
+            or name_elm.get(qn("w:val")) != name
+            or not _is_canonical_abstract(abstract, kind)
+        ):
+            continue
+        abstract_id = abstract.get(qn("w:abstractNumId"))
+        if abstract_id is None:
+            continue
+        for num in numbering.findall(qn("w:num")):
+            if _is_plain_num_reference(num, abstract_id):
+                return int(num.get(qn("w:numId")))
     abstract_id, num_id = _next_free_ids(numbering)
-    ids = f'{nsdecls("w")} w:abstractNumId="{abstract_id}"'
-    abstract = parse_xml(template.format(ids=ids))
+    abstract = _canonical_abstract(kind, abstract_id)
     num = parse_xml(
         f'<w:num {nsdecls("w")} w:numId="{num_id}">'
         f'<w:abstractNumId w:val="{abstract_id}"/></w:num>'
@@ -392,7 +515,15 @@ def restart_numbering(document: "Document", *, num_id: int) -> int:
     definition = None
     if numbering is not None:
         for num in numbering.findall(qn("w:num")):
-            if int(num.get(qn("w:numId"))) == num_id:
+            raw_num_id = num.get(qn("w:numId"))
+            try:
+                candidate_num_id = int(raw_num_id) if raw_num_id is not None else -1
+            except ValueError:
+                raise UnsupportedStructureError(
+                    f"numbering contains a malformed numId {raw_num_id!r};"
+                    " nothing was changed"
+                ) from None
+            if candidate_num_id == num_id:
                 definition = num
                 break
     if definition is None:
@@ -402,7 +533,28 @@ def restart_numbering(document: "Document", *, num_id: int) -> int:
     from docx.oxml.ns import nsdecls
     from docx.oxml.parser import parse_xml
 
-    abstract_id = definition.find(qn("w:abstractNumId")).get(qn("w:val"))
+    children = list(definition)
+    abstract_ref = definition.find(qn("w:abstractNumId"))
+    abstract_id = abstract_ref.get(qn("w:val")) if abstract_ref is not None else None
+    if abstract_id is None:
+        raise UnsupportedStructureError(
+            f"numbering definition numId={num_id} has no abstractNumId;"
+            " nothing was changed"
+        )
+    if len(children) != 1 or children[0] is not abstract_ref:
+        raise UnsupportedStructureError(
+            f"numbering definition numId={num_id} carries level overrides or"
+            " other customizations that restart_numbering cannot preserve;"
+            " nothing was changed"
+        )
+    if not any(
+        abstract.get(qn("w:abstractNumId")) == abstract_id
+        for abstract in numbering.findall(qn("w:abstractNum"))
+    ):
+        raise UnsupportedStructureError(
+            f"numbering definition numId={num_id} references missing"
+            f" abstractNumId={abstract_id!r}; nothing was changed"
+        )
     _, new_num_id = _next_free_ids(numbering)
     new_num = parse_xml(
         f'<w:num {nsdecls("w")} w:numId="{new_num_id}">'

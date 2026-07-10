@@ -21,6 +21,13 @@ disk byte-for-byte unchanged. Programmer mistakes remain ordinary
    :show-inheritance:
 
 
+|PackageLimitError|
+-------------------
+
+.. autoexception:: PackageLimitError
+   :show-inheritance:
+
+
 |AmbiguousTargetError|
 ----------------------
 

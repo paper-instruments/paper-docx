@@ -131,7 +131,7 @@ The comments collection supports random access to a comment by its id::
 Adding rich content to a comment
 --------------------------------
 
-A comment is a _block-item container_, just like the document body or a table cell, so
+A comment is a *block-item container*, just like the document body or a table cell, so
 it can contain any content that can appear in those places. It does not contain
 page-layout sections and cannot contain a comment reference, but it can contain multiple
 paragraphs and/or tables, and runs within paragraphs can have emphasis such as bold or

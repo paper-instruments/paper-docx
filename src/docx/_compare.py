@@ -2,19 +2,20 @@
 
 `compare(original, revised, *, author, ...)` returns a new document — the
 original with `w:ins`/`w:del` markup that transforms it into the revised
-text. The algebra is the contract:
+document. The algebra is the contract:
 
-* `accept_all(compare(A, B))` == B in visible text, across every story;
+* `accept_all(compare(A, B))` == B, across every supported story;
 * `reject_all(compare(A, B))` == A;
 * `compare(A, A)` emits zero revisions;
 * identical inputs produce byte-identical output (with a fixed `date`).
 
-Declared limits (typed refusals or report-only findings, never silence):
+Declared limits (typed refusals, never lossy output):
 insertions/deletions only — no move or rPrChange synthesis; no cross-story
 detection; paragraph add/remove outside the main body refuses; changed
-merged-cell tables refuse; images/objects and formatting-only differences
-are REPORTED in `CompareResult.findings`, not redlined; a block budget of
-`_MAX_BLOCKS` per story refuses above it.
+merged-cell tables refuse; images/objects, fields, content controls, package
+part changes, and formatting differences refuse; a block budget of
+`_MAX_BLOCKS` per story plus sequence-matching and changed-region pairing
+budgets refuse before quadratic work.
 
 Public path: `docx.package.compare` (kernel re-export).
 """
@@ -22,8 +23,9 @@ Public path: `docx.package.compare` (kernel re-export).
 from __future__ import annotations
 
 import copy
+import io
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
@@ -77,6 +79,18 @@ _PROOF_ERR = qn("w:proofErr")
 #: perf budget — documented typed refusal above this many blocks per story
 _MAX_BLOCKS = 10_000
 
+#: Pairing is quadratic in both memory and expensive SequenceMatcher calls.
+#: Refuse before allocating the matrix; block granularity never uses it.
+_MAX_PAIR_CELLS = 10_000
+
+#: SequenceMatcher has quadratic worst-case behavior on repeated sequences.
+#: Apply this budget before both story-block and table-row matching.
+_MAX_SEQUENCE_CELLS = 1_000_000
+
+#: Bound character-similarity and token diff matchers independently from
+#: block/row sequence matching so each expensive layer has its own envelope.
+_MAX_TEXT_SEQUENCE_CELLS = 1_000_000
+
 #: similarity threshold below which paired blocks redline as del+ins rather
 #: than a word-level edit
 _PAIR_RATIO = 0.5
@@ -111,6 +125,16 @@ class CompareResult:
             "stories": list(self.stories),
             "findings": [finding.to_dict() for finding in self.findings],
         }
+
+
+@dataclass(frozen=True)
+class _RawPackage:
+    """Guarded package bytes and the raw parts compare can model as stories."""
+
+    parts: dict[str, bytes]
+    order: Tuple[str, ...]
+    story_parts: frozenset[str]
+    has_revisions: bool
 
 
 @dataclass
@@ -157,8 +181,23 @@ def compare(
             f"materialize must be None, 'accept' or 'reject', got {materialize!r}"
         )
     stamp = date if date is not None else _clock.now()
-    document = _docx.Document(str(original))
-    revised_doc = _docx.Document(str(revised))
+    raw_original = _read_raw_package(original, label="original")
+    raw_revised = _read_raw_package(revised, label="revised")
+    if materialize is None:
+        for which, raw_package in (
+            ("original", raw_original),
+            ("revised", raw_revised),
+        ):
+            if raw_package.has_revisions:
+                raise UnsupportedStructureError(
+                    f"the {which} document carries pending tracked revisions;"
+                    " compare would conflate them with its own redline. Pass"
+                    " materialize='accept' or 'reject' to resolve working"
+                    " copies first (the input files are not modified)"
+                )
+    _refuse_unsupported_package_differences(raw_original, raw_revised)
+    document = _docx.Document(_document_source(original))
+    revised_doc = _docx.Document(_document_source(revised))
     findings: List[CompareFinding] = []
     for which, doc in (("original", document), ("revised", revised_doc)):
         if len(doc.revisions):
@@ -172,6 +211,8 @@ def compare(
             from docx.scrubbing import finalize
 
             finalize(doc, revisions=materialize)
+    original_reference = _serialize_document(document)
+    revised_reference = _serialize_document(revised_doc)
     from docx.protection import acknowledge_protection, protection_status
 
     status = protection_status(document)
@@ -189,22 +230,9 @@ def compare(
             )
         )
 
-    stories_o = {s: root for s, root in _story_elements(document)}
-    stories_r = {s: root for s, root in _story_elements(revised_doc)}
+    stories_o = dict(_story_elements(document))
+    stories_r = dict(_story_elements(revised_doc))
     comments = "word/comments.xml"
-    if _story_text_of(comments, stories_o.get(comments)) != _story_text_of(
-        comments, stories_r.get(comments)
-    ):
-        findings.append(
-            CompareFinding(
-                kind="comments_differ",
-                story=comments,
-                detail=(
-                    "comment content differs between the documents; compare"
-                    " never redlines the comments story (report-only)"
-                ),
-            )
-        )
     names_o = set(stories_o) - {comments}
     names_r = set(stories_r) - {comments}
     if names_o != names_r:
@@ -213,6 +241,18 @@ def compare(
             f" (only-original: {sorted(names_o - names_r)},"
             f" only-revised: {sorted(names_r - names_o)}); compare cannot"
             " redline story-part addition or removal"
+        )
+    if names_o != set(raw_original.story_parts):
+        raise UnsupportedStructureError(
+            "the original package contains a story part compare could not load"
+            f" safely (raw: {sorted(raw_original.story_parts)},"
+            f" loaded: {sorted(names_o)})"
+        )
+    if names_r != set(raw_revised.story_parts):
+        raise UnsupportedStructureError(
+            "the revised package contains a story part compare could not load"
+            f" safely (raw: {sorted(raw_revised.story_parts)},"
+            f" loaded: {sorted(names_r)})"
         )
     numbering_ids = _numbering_ids(document)
     compared: List[str] = []
@@ -230,12 +270,343 @@ def compare(
         )
         _compare_story(ctx, stories_o[story], stories_r[story])
         compared.append(story)
+    _verify_compare_algebra(
+        document,
+        original_reference=original_reference,
+        revised_reference=revised_reference,
+    )
     return CompareResult(
         document=document,
         findings=findings,
         revision_count=len(document.revisions),
         stories=tuple(compared),
     )
+
+
+def _serialize_document(document: "Document") -> bytes:
+    stream = io.BytesIO()
+    document.save(stream)
+    return stream.getvalue()
+
+
+def _document_source(source):
+    """Return a fresh source suitable for ``Document()`` after raw inspection."""
+    return io.BytesIO(source) if isinstance(source, bytes) else str(source)
+
+
+def _read_raw_package(source, *, label: str) -> _RawPackage:
+    """Guard-read and validate one package graph before document loading."""
+    from lxml import etree
+
+    from docx._paperpkg import _effective_content_types, _read_zip
+    from docx.opc.constants import CONTENT_TYPE as CT
+
+    parts, order = _read_zip(source)
+    try:
+        reachable = _reachable_raw_parts(parts)
+        unreachable = sorted(set(parts) - reachable)
+        if unreachable:
+            raise UnsupportedStructureError(
+                f"the {label} contains unreachable package part(s) {unreachable};"
+                " compare cannot preserve parts omitted by the OPC relationship graph"
+            )
+
+        content_types = parts.get("[Content_Types].xml")
+        if content_types is None:
+            raise UnsupportedStructureError(
+                f"the {label} package has no [Content_Types].xml part"
+            )
+        defaults, overrides = _effective_content_types(content_types, order)
+        supported_types = frozenset(
+            (
+                CT.WML_DOCUMENT_MAIN,
+                CT.WML_ENDNOTES,
+                CT.WML_FOOTER,
+                CT.WML_FOOTNOTES,
+                CT.WML_HEADER,
+            )
+        )
+        revision_story_types = supported_types | {CT.WML_COMMENTS}
+        revision_parts = frozenset(
+            name
+            for name in reachable
+            if _raw_content_type(name, defaults, overrides) in revision_story_types
+        )
+        story_parts = frozenset(
+            name
+            for name in reachable
+            if _raw_content_type(name, defaults, overrides) in supported_types
+        )
+        has_revisions = _raw_parts_have_revisions(parts, revision_parts)
+    except UnsupportedStructureError:
+        raise
+    except (KeyError, TypeError, ValueError, etree.XMLSyntaxError) as exc:
+        raise UnsupportedStructureError(
+            f"the {label} package graph cannot be validated safely: {exc}"
+        ) from exc
+    return _RawPackage(parts, tuple(order), story_parts, has_revisions)
+
+
+def _reachable_raw_parts(parts: dict[str, bytes]) -> set[str]:
+    """Return members reachable from package relationships, plus OPC metadata."""
+    from docx._paperpkg import _parse
+    from docx.opc.packuri import PACKAGE_URI, PackURI
+
+    rel_ns = "http://schemas.openxmlformats.org/package/2006/relationships"
+    relationships_tag = f"{{{rel_ns}}}Relationships"
+    relationship_tag = f"{{{rel_ns}}}Relationship"
+    reachable = {"[Content_Types].xml"}
+    pending = [PACKAGE_URI]
+    visited = set()
+    while pending:
+        source_uri = pending.pop()
+        if source_uri in visited:
+            continue
+        visited.add(source_uri)
+        rels_name = source_uri.rels_uri.membername
+        rels_bytes = parts.get(rels_name)
+        if rels_bytes is None:
+            continue
+        reachable.add(rels_name)
+        root = _parse(rels_bytes)
+        if root.tag != relationships_tag:
+            raise UnsupportedStructureError(
+                f"relationship part {rels_name!r} has unexpected root {root.tag!r}"
+            )
+        for relationship in root:
+            if relationship.tag != relationship_tag:
+                continue
+            if relationship.get("TargetMode", "Internal") == "External":
+                continue
+            target_ref = relationship.get("Target")
+            if not target_ref:
+                raise UnsupportedStructureError(
+                    f"relationship part {rels_name!r} contains an internal"
+                    " relationship without a target"
+                )
+            target_uri = PackURI.from_rel_ref(source_uri.baseURI, target_ref)
+            target_name = target_uri.membername
+            if target_name not in parts:
+                raise UnsupportedStructureError(
+                    f"relationship part {rels_name!r} targets missing part"
+                    f" {target_name!r}"
+                )
+            if target_name not in reachable:
+                reachable.add(target_name)
+                pending.append(target_uri)
+    return reachable
+
+
+def _raw_content_type(
+    name: str, defaults: dict[str, str], overrides: dict[str, str]
+) -> str:
+    override = overrides.get(f"/{name}")
+    if override is not None:
+        return override
+    extension = name.rsplit(".", 1)[-1].lower() if "." in name else ""
+    return defaults.get(extension, "")
+
+
+def _raw_parts_have_revisions(
+    parts: dict[str, bytes], story_parts: frozenset[str]
+) -> bool:
+    from docx._paperpkg import _parse
+    from docx.revision import _MARKUP_SCAN_TAGS
+
+    revision_tags = frozenset(_MARKUP_SCAN_TAGS)
+    return any(
+        node.tag in revision_tags
+        for name in story_parts
+        for node in _parse(parts[name]).iter()
+    )
+
+
+def _refuse_unsupported_package_differences(
+    original: _RawPackage,
+    revised: _RawPackage,
+) -> None:
+    """Refuse raw package changes outside stories before document loading."""
+    from docx._paperpkg import (
+        _parts_semantically_equal,
+        is_xml_part_name,
+    )
+
+    original_parts = original.parts
+    revised_parts = revised.parts
+    added = sorted(set(revised_parts) - set(original_parts))
+    removed = sorted(set(original_parts) - set(revised_parts))
+    if added or removed:
+        raise UnsupportedStructureError(
+            "compare cannot redline package-part addition or removal"
+            f" (only-original: {removed}, only-revised: {added})"
+        )
+    for name in sorted(original_parts):
+        before, after = original_parts[name], revised_parts[name]
+        if before == after:
+            continue
+        if name in original.story_parts and name in revised.story_parts:
+            continue
+        if is_xml_part_name(name) and _parts_semantically_equal(
+            name, before, after, list(original.order), list(revised.order)
+        ):
+            continue
+        raise UnsupportedStructureError(
+            f"compare cannot redline a change in package part {name!r};"
+            " make that change separately or compare documents whose"
+            " non-story parts are equivalent"
+        )
+
+
+def _verify_compare_algebra(
+    redline: "Document",
+    *,
+    original_reference: bytes,
+    revised_reference: bytes,
+) -> None:
+    """Prove accept/reject on private copies before returning the redline."""
+    import docx as _docx
+
+    redline_bytes = _serialize_document(redline)
+    for verb, expected in (
+        ("accept", revised_reference),
+        ("reject", original_reference),
+    ):
+        candidate = _docx.Document(io.BytesIO(redline_bytes))
+        if verb == "accept":
+            candidate.revisions.accept_all()
+        else:
+            candidate.revisions.reject_all()
+        from docx.revision import _remaining_markup
+
+        leftover = _remaining_markup(candidate)
+        if leftover:
+            raise UnsupportedStructureError(
+                f"compare could not prove its {verb} contract; revision"
+                f" markup remains after verification: {leftover}"
+            )
+        _assert_packages_match(
+            _serialize_document(candidate),
+            expected,
+            outcome=verb,
+        )
+
+
+def _assert_packages_match(
+    actual_bytes: bytes, expected_bytes: bytes, *, outcome: str
+) -> None:
+    """Compare every part, allowing only inert run fragmentation in stories."""
+    import docx as _docx
+    from docx._paperpkg import (
+        _parts_semantically_equal,
+        _read_zip,
+        is_xml_part_name,
+    )
+
+    actual = _docx.Document(io.BytesIO(actual_bytes))
+    expected = _docx.Document(io.BytesIO(expected_bytes))
+    stories_actual = dict(_story_elements(actual))
+    stories_expected = dict(_story_elements(expected))
+    if set(stories_actual) != set(stories_expected):
+        raise UnsupportedStructureError(
+            f"compare could not prove its {outcome} contract; story parts differ"
+        )
+    for name in sorted(stories_actual):
+        if _canonical_story_bytes(stories_actual[name]) != _canonical_story_bytes(
+            stories_expected[name]
+        ):
+            raise UnsupportedStructureError(
+                f"compare could not prove its {outcome} contract;"
+                f" story {name!r} does not match"
+            )
+
+    actual_parts, actual_order = _read_zip(actual_bytes)
+    expected_parts, expected_order = _read_zip(expected_bytes)
+    if set(actual_parts) != set(expected_parts):
+        raise UnsupportedStructureError(
+            f"compare could not prove its {outcome} contract; package parts differ"
+        )
+    story_names = set(stories_actual)
+    for name in sorted(actual_parts):
+        if name in story_names:
+            continue
+        before, after = actual_parts[name], expected_parts[name]
+        if before == after:
+            continue
+        if is_xml_part_name(name) and _parts_semantically_equal(
+            name, before, after, actual_order, expected_order
+        ):
+            continue
+        raise UnsupportedStructureError(
+            f"compare could not prove its {outcome} contract;"
+            f" package part {name!r} does not match"
+        )
+
+
+def _canonical_story_bytes(root: "_Element") -> bytes:
+    """Canonical story form for semantically inert redline run splitting."""
+    from lxml import etree
+
+    clone = copy.deepcopy(root)
+    xml_space = "{http://www.w3.org/XML/1998/namespace}space"
+    for property_tag in (_PPR, _RPR):
+        for node in list(clone.iter(property_tag)):
+            if not node.attrib and not len(node) and not (node.text or ""):
+                parent = node.getparent()
+                if parent is not None:
+                    parent.remove(node)
+    for parent in list(clone.iter()):
+        index = 0
+        while index + 1 < len(parent):
+            left, right = parent[index], parent[index + 1]
+            if not _mergeable_runs(left, right):
+                index += 1
+                continue
+            for child in list(right):
+                if child.tag != _RPR:
+                    left.append(child)
+            parent.remove(right)
+    for run in clone.iter(_R):
+        index = 0
+        while index + 1 < len(run):
+            left, right = run[index], run[index + 1]
+            if left.tag != _T or right.tag != _T:
+                index += 1
+                continue
+            left.text = (left.text or "") + (right.text or "")
+            run.remove(right)
+    for text_node in clone.iter(_T):
+        value = text_node.text or ""
+        if value[:1].isspace() or value[-1:].isspace():
+            text_node.set(xml_space, "preserve")
+        else:
+            text_node.attrib.pop(xml_space, None)
+    return etree.tostring(clone)
+
+
+def _mergeable_runs(left: "_Element", right: "_Element") -> bool:
+    if left.tag != _R or right.tag != _R or left.attrib != right.attrib:
+        return False
+    from lxml import etree
+
+    def shape(run):
+        children = list(run)
+        if not any(child.tag == _T for child in children):
+            return None
+        safe_content = (
+            _RPR,
+            _T,
+            qn("w:tab"),
+            qn("w:br"),
+            qn("w:cr"),
+            qn("w:noBreakHyphen"),
+        )
+        if any(child.tag not in safe_content for child in children):
+            return None
+        r_pr = run.find(_RPR)
+        return etree.tostring(r_pr) if r_pr is not None else b""
+
+    left_shape = shape(left)
+    return left_shape is not None and left_shape == shape(right)
 
 
 def _story_text_of(story: str, root) -> Optional[str]:
@@ -274,6 +645,9 @@ def _compare_story(ctx: _Ctx, root_o: "_Element", root_r: "_Element") -> None:
             f"story {ctx.story} exceeds the compare block budget"
             f" ({_MAX_BLOCKS} blocks); split the documents"
         )
+    _enforce_sequence_budget(
+        len(blocks_o), len(blocks_r), subject=f"story {ctx.story}"
+    )
     matcher = SequenceMatcher(
         None,
         [f"{k}\x00{t}" for k, _e, t in blocks_o],
@@ -297,10 +671,38 @@ def _compare_story(ctx: _Ctx, root_o: "_Element", root_r: "_Element") -> None:
         _compare_region(ctx, blocks_o[i1:i2], blocks_r[j1:j2])
 
 
+def _enforce_sequence_budget(left: int, right: int, *, subject: str) -> None:
+    cells = left * right
+    if cells > _MAX_SEQUENCE_CELLS:
+        raise UnsupportedStructureError(
+            f"{subject} exceeds the sequence-matching budget"
+            f" ({left} x {right} > {_MAX_SEQUENCE_CELLS} cells);"
+            " split the documents"
+        )
+
+
 def _pair_region(old_run, new_run) -> "List[Tuple[str, Optional[int], Optional[int]]]":
     """Order-preserving best-similarity block pairing within a changed region
     (LCS-style DP maximizing summed pair ratios above `_PAIR_RATIO`)."""
     m, n = len(old_run), len(new_run)
+    if m * n > _MAX_PAIR_CELLS:
+        raise UnsupportedStructureError(
+            "changed region exceeds the word-level compare pairing budget"
+            f" ({m} x {n} > {_MAX_PAIR_CELLS} cells); use"
+            " granularity='block' or split the documents"
+        )
+    text_cells = sum(
+        len(text_o) * len(text_r)
+        for kind_o, _element_o, text_o in old_run
+        for kind_r, _element_r, text_r in new_run
+        if kind_o == kind_r
+    )
+    if text_cells > _MAX_TEXT_SEQUENCE_CELLS:
+        raise UnsupportedStructureError(
+            "changed-region text exceeds the sequence-matching budget"
+            f" ({text_cells} > {_MAX_TEXT_SEQUENCE_CELLS} character cells);"
+            " use granularity='block' or split the documents"
+        )
     ratios: dict = {}
 
     def ratio(i: int, j: int) -> float:
@@ -343,6 +745,11 @@ def _pair_region(old_run, new_run) -> "List[Tuple[str, Optional[int], Optional[i
 def _compare_region(ctx: _Ctx, old_run, new_run) -> None:
     """Emit tracked changes for one changed region; a cursor threads the
     output position so unpaired insertions land in document order."""
+    if ctx.granularity == "block":
+        _insert_blocks(ctx, old_run, 0, new_run)
+        for kind, element, text in old_run:
+            _delete_block(ctx, kind, element, text)
+        return
     cursor: "Optional[_Element]" = None
     for op, index_o, index_r in _pair_region(old_run, new_run):
         if op == "pair":
@@ -352,14 +759,9 @@ def _compare_region(ctx: _Ctx, old_run, new_run) -> None:
                 _compare_table(ctx, element_o, element_r)
                 cursor = element_o
             elif ctx.granularity == "word":
+                _refuse_non_text_paragraph_change(ctx, element_o, element_r)
                 _replace_paragraph_text(ctx, element_o, text_o, text_r)
                 cursor = element_o
-            else:
-                _delete_block(ctx, kind_o, element_o, text_o)
-                clone = _cloned_as_insertion(ctx, "paragraph", element_r)
-                _require_container_anchor(ctx, element_o)
-                element_o.addnext(clone)
-                cursor = clone
         elif op == "delete":
             kind_o, element_o, text_o = old_run[index_o]
             _delete_block(ctx, kind_o, element_o, text_o)
@@ -378,21 +780,35 @@ def _compare_region(ctx: _Ctx, old_run, new_run) -> None:
 
 
 def _report_formatting_difference(ctx: _Ctx, block_o, block_r) -> None:
-    from lxml import etree
-
     _kind, element_o, text = block_o
     _kind_r, element_r, _text_r = block_r
-    if etree.tostring(element_o) != etree.tostring(element_r):
-        ctx.findings.append(
-            CompareFinding(
-                kind="formatting_only_difference",
-                story=ctx.story,
-                detail=(
-                    "identical visible text with differing markup"
-                    f" (formatting or metadata): {text[:80]!r}"
-                ),
-            )
+    if _canonical_story_bytes(element_o) != _canonical_story_bytes(element_r):
+        raise UnsupportedStructureError(
+            "compare cannot redline a formatting or structural difference"
+            f" in {ctx.story}: {text[:80]!r}"
         )
+
+
+def _refuse_non_text_paragraph_change(
+    ctx: _Ctx, original: "_Element", revised: "_Element"
+) -> None:
+    """Allow text changes only when the surrounding paragraph markup agrees."""
+    if _textless_story_bytes(original) == _textless_story_bytes(revised):
+        return
+    raise UnsupportedStructureError(
+        "compare cannot combine a text edit with a formatting or structural"
+        f" change in {ctx.story}; apply the formatting change separately"
+    )
+
+
+def _textless_story_bytes(element: "_Element") -> bytes:
+    clone = copy.deepcopy(element)
+    xml_space = "{http://www.w3.org/XML/1998/namespace}space"
+    for text_tag in (_T, _DEL_TEXT, _INSTR_TEXT, _DEL_INSTR_TEXT):
+        for text_node in clone.iter(text_tag):
+            text_node.text = ""
+            text_node.attrib.pop(xml_space, None)
+    return _canonical_story_bytes(clone)
 
 
 # ---------------------------------------------------------------------------
@@ -590,102 +1006,47 @@ def _cloned_as_insertion(ctx: _Ctx, kind: str, element: "_Element") -> "_Element
 
 
 def _sanitize_clone(ctx: _Ctx, clone: "_Element") -> None:
-    """Strip everything a clone cannot carry across packages (relationship
-    ids resolve against the ORIGINAL part) — each removal is a finding."""
-    for node in list(clone.iter(qn("w:drawing"), qn("w:object"), qn("w:pict"))):
-        holder = node.getparent()
-        target = holder if (holder is not None and holder.tag == _R) else node
-        if target.getparent() is None:
-            continue  # already removed with its sibling
-        target.getparent().remove(target)
-        ctx.findings.append(
-            CompareFinding(
-                kind="image_or_object_change",
-                story=ctx.story,
-                detail=(
-                    "an image/object in inserted content was not carried"
-                    " into the redline (relationships do not transfer;"
-                    " report-only)"
-                ),
+    """Validate that an inserted clone can be carried without degradation."""
+    refused = (
+        (qn("w:drawing"), "an image or drawing"),
+        (qn("w:object"), "an embedded object"),
+        (qn("w:pict"), "legacy VML content"),
+        (_HYPERLINK, "a hyperlink"),
+        (qn("w:sdt"), "a content control"),
+        (qn("w:sectPr"), "a section break"),
+        (qn("w:fldSimple"), "a field"),
+        (_FLD_CHAR, "a complex field"),
+    )
+    for tag, description in refused:
+        if clone.find(f".//{tag}") is not None:
+            raise UnsupportedStructureError(
+                f"compare cannot insert {description} in {ctx.story} without"
+                " changing its package relationships or behavior"
             )
-        )
-    for hyperlink in list(clone.iter(_HYPERLINK)):
-        parent = hyperlink.getparent()
-        for child in list(hyperlink):
-            hyperlink.addprevious(child)
-        parent.remove(hyperlink)
-        ctx.findings.append(
-            CompareFinding(
-                kind="hyperlink_flattened",
-                story=ctx.story,
-                detail=(
-                    "an inserted hyperlink was flattened to its text (its"
-                    " relationship id does not transfer)"
-                ),
-            )
-        )
-    for sdt in list(clone.iter(qn("w:sdt"))):
-        content = sdt.find(qn("w:sdtContent"))
-        parent = sdt.getparent()
-        if content is not None:
-            for child in list(content):
-                sdt.addprevious(child)
-        parent.remove(sdt)
-        ctx.findings.append(
-            CompareFinding(
-                kind="content_control_flattened",
-                story=ctx.story,
-                detail="an inserted content control was flattened to its content",
-            )
-        )
-    for sect_pr in list(clone.iter(qn("w:sectPr"))):
-        sect_pr.getparent().remove(sect_pr)
-        ctx.findings.append(
-            CompareFinding(
-                kind="section_break_not_carried",
-                story=ctx.story,
-                detail=(
-                    "a section break in inserted content was dropped (its"
-                    " header/footer relationships do not transfer)"
-                ),
-            )
-        )
     for num_pr in list(clone.iter(qn("w:numPr"))):
         num_id = num_pr.find(qn("w:numId"))
         value = num_id.get(qn("w:val")) if num_id is not None else None
-        if value is None or int(value) not in ctx.numbering_ids:
-            num_pr.getparent().remove(num_pr)
-            ctx.findings.append(
-                CompareFinding(
-                    kind="numbering_reference_stripped",
-                    story=ctx.story,
-                    detail=(
-                        f"inserted content referenced numbering id {value}"
-                        " which the original does not define; the reference"
-                        " was stripped"
-                    ),
-                )
+        try:
+            numeric_value = int(value) if value is not None else None
+        except ValueError:
+            numeric_value = None
+        if numeric_value is None or numeric_value not in ctx.numbering_ids:
+            raise UnsupportedStructureError(
+                f"compare cannot insert content referencing undefined"
+                f" numbering id {value!r} in {ctx.story}"
             )
-    for proof_err in list(clone.iter(_PROOF_ERR)):
-        proof_err.getparent().remove(proof_err)
-    stripped_anchor = False
-    for tag in ("w:bookmarkStart", "w:bookmarkEnd", "w:commentRangeStart",
-                "w:commentRangeEnd", "w:commentReference"):
-        for node in list(clone.iter(qn(tag))):
-            node.getparent().remove(node)
-            stripped_anchor = True
-    if stripped_anchor:
-        ctx.findings.append(
-            CompareFinding(
-                kind="anchor_not_carried",
-                story=ctx.story,
-                detail=(
-                    "bookmark or comment anchors in inserted content were"
-                    " dropped (their ids/targets do not transfer;"
-                    " report-only)"
-                ),
+    for tag in (
+        "w:bookmarkStart",
+        "w:bookmarkEnd",
+        "w:commentRangeStart",
+        "w:commentRangeEnd",
+        "w:commentReference",
+    ):
+        if clone.find(f".//{qn(tag)}") is not None:
+            raise UnsupportedStructureError(
+                f"compare cannot insert bookmark or comment anchors in"
+                f" {ctx.story}; their ids and targets cannot be transferred"
             )
-        )
     if _fldchar_unbalanced(clone):
         raise UnsupportedStructureError(
             f"compare cannot insert one paragraph of a multi-paragraph"
@@ -721,6 +1082,9 @@ def _row_text(row: "_Element") -> str:
 def _compare_table(ctx: _Ctx, table_o: "_Element", table_r: "_Element") -> None:
     rows_o = table_o.findall(_TR)
     rows_r = table_r.findall(_TR)
+    _enforce_sequence_budget(
+        len(rows_o), len(rows_r), subject=f"table in {ctx.story}"
+    )
     matcher = SequenceMatcher(
         None, [_row_text(r) for r in rows_o], [_row_text(r) for r in rows_r],
         autojunk=False,
@@ -906,52 +1270,14 @@ def _replace_paragraph_text(
             span.replace(
                 replacement, tracked=True, author=ctx.author, date=ctx.stamp
             )
-    except PaperRefusal:
+    except PaperRefusal as exc:
         parent = paragraph.getparent()
         if parent is not None:
             parent.replace(paragraph, pristine)
-            paragraph = pristine
-        _fallback_paragraph_replace(ctx, paragraph, text_r)
-
-
-def _fallback_paragraph_replace(
-    ctx: _Ctx, paragraph: "_Element", text_r: str
-) -> None:
-    from docx.blocks import _stamp_paragraph_mark, _wrap_paragraph_content_as_insertion
-    from docx.oxml.parser import OxmlElement
-
-    if (
-        paragraph.find(f".//{_FLD_CHAR}") is not None
-        or paragraph.find(f".//{qn('w:fldSimple')}") is not None
-    ):
-        ctx.findings.append(
-            CompareFinding(
-                kind="field_flattened",
-                story=ctx.story,
-                detail=(
-                    "a changed paragraph containing a field was redlined as"
-                    " whole-paragraph delete+insert; the replacement carries"
-                    " the field's TEXT, not the field itself (report-only)"
-                ),
-            )
+        raise UnsupportedStructureError(
+            f"compare cannot safely redline this paragraph in {ctx.story};"
+            f" the text-edit primitive refused: {exc}"
         )
-
-    replacement = OxmlElement("w:p")
-    p_pr = paragraph.find(_PPR)
-    if p_pr is not None:
-        cloned_ppr = copy.deepcopy(p_pr)
-        for r_pr in list(cloned_ppr.findall(_RPR)):
-            cloned_ppr.remove(r_pr)  # mark stamps belong to the new mark only
-        replacement.append(cloned_ppr)
-    run = OxmlElement("w:r")
-    run.add_t(text_r)
-    replacement.append(run)
-    _wrap_paragraph_content_as_insertion(
-        replacement, _next_id(ctx), ctx.author, ctx.stamp
-    )
-    _stamp_paragraph_mark(replacement, "w:ins", _next_id(ctx), ctx.author, ctx.stamp)
-    _mark_paragraph_deleted(ctx, paragraph)
-    paragraph.addnext(replacement)
 
 
 def _token_regions(old: str, new: str) -> "List[Tuple[int, int, str]]":
@@ -960,6 +1286,13 @@ def _token_regions(old: str, new: str) -> "List[Tuple[int, int, str]]":
     every region maps to at least one atom."""
     tokens_o = re.findall(r"\S+|\s+", old)
     tokens_r = re.findall(r"\S+|\s+", new)
+    token_cells = len(tokens_o) * len(tokens_r)
+    if token_cells > _MAX_TEXT_SEQUENCE_CELLS:
+        raise UnsupportedStructureError(
+            "paragraph token diff exceeds the sequence-matching budget"
+            f" ({token_cells} > {_MAX_TEXT_SEQUENCE_CELLS} token cells);"
+            " use granularity='block' or split the documents"
+        )
     offsets = [0]
     for token in tokens_o:
         offsets.append(offsets[-1] + len(token))

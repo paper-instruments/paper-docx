@@ -25,6 +25,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple, Union
 
 from docx import _clock
+from docx._ownership import require_anchor_owner
 from docx.errors import (
     BoundaryViolationError,
     TargetNotFoundError,
@@ -32,8 +33,8 @@ from docx.errors import (
 )
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
-from docx.protection import _refuse_if_protected
 from docx.oxml.revision import CT_RunTrackChange
+from docx.protection import _refuse_if_protected
 from docx.search import Span, _validate_writable_text, find_one
 from docx.story import Anchor, Block, _iter_block_elements, _story_elements
 
@@ -113,6 +114,7 @@ def _resolve_anchor_paragraph(
     resolution (e.g. a composition SOURCE range) uses
     `_locate_anchor_paragraph` directly.
     """
+    require_anchor_owner(document, anchor)
     _refuse_if_protected(document, "insert or remove paragraphs")
     return _locate_anchor_paragraph(document, anchor)
 
@@ -126,6 +128,7 @@ def _locate_anchor_paragraph(
     are re-verified by content hash against the current-view text of the
     block at their recorded position.
     """
+    require_anchor_owner(document, anchor)
     if isinstance(anchor, str):
         span = find_one(document, anchor)
         paragraph = span._atoms[0].paragraph  # noqa: SLF001 - same-package access
@@ -387,6 +390,11 @@ def _select_paragraph_range(
 ) -> "Tuple[str, List[_Element]]":
     if count < 1:
         raise ValueError("count must be >= 1")
+    # Validate every live proxy before the first protection check. Otherwise
+    # a foreign end span can be masked by resolving the start anchor first.
+    require_anchor_owner(document, start_anchor, argument="start_anchor")
+    if end_anchor is not None:
+        require_anchor_owner(document, end_anchor, argument="end_anchor")
     story, start_p = _resolve_anchor_paragraph(document, start_anchor)
     root = dict(_story_elements(document))[story]
     _refuse_paragraph_in_open_field(story, root, start_p, for_insertion=False)

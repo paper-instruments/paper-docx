@@ -1,10 +1,13 @@
 """Provides a general interface to a `physical` OPC package, such as a zip file."""
 
 import os
-from zipfile import ZIP_DEFLATED, ZipFile, is_zipfile
+from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo, is_zipfile
 
+from docx._zipguard import GuardedZipReader, enforce_compressed_size, preflight_zip
 from docx.opc.exceptions import PackageNotFoundError
 from docx.opc.packuri import CONTENT_TYPES_URI
+
+_FIXED_ZIP_DATE = (1980, 1, 1, 0, 0, 0)
 
 
 class PhysPkgReader:
@@ -73,14 +76,21 @@ class _ZipPkgReader(PhysPkgReader):
 
     def __init__(self, pkg_file):
         super(_ZipPkgReader, self).__init__()
+        enforce_compressed_size(pkg_file)
+        preflight_zip(pkg_file)
         self._zipf = ZipFile(pkg_file, "r")
+        try:
+            self._guarded_reader = GuardedZipReader(self._zipf)
+        except Exception:
+            self._zipf.close()
+            raise
 
     def blob_for(self, pack_uri):
         """Return blob corresponding to `pack_uri`.
 
         Raises |ValueError| if no matching member is present in zip archive.
         """
-        return self._zipf.read(pack_uri.membername)
+        return self._guarded_reader.read(pack_uri.membername)
 
     def close(self):
         """Close the zip archive, releasing any resources it is using."""
@@ -116,4 +126,8 @@ class _ZipPkgWriter(PhysPkgWriter):
     def write(self, pack_uri, blob):
         """Write `blob` to this zip package with the membername corresponding to
         `pack_uri`."""
-        self._zipf.writestr(pack_uri.membername, blob)
+        info = ZipInfo(pack_uri.membername, date_time=_FIXED_ZIP_DATE)
+        info.compress_type = ZIP_DEFLATED
+        info.create_system = 3
+        info.external_attr = 0o600 << 16
+        self._zipf.writestr(info, blob)

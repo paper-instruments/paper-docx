@@ -26,6 +26,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+from docx._ownership import require_anchor_owner
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
@@ -38,7 +39,10 @@ if TYPE_CHECKING:
 
 _P = qn("w:p")
 _TBL = qn("w:tbl")
+_SDT = qn("w:sdt")
 _SECT_PR = qn("w:sectPr")
+_CUSTOM_XML = qn("w:customXml")
+_DATA_BINDING = qn("w:dataBinding")
 _BOOKMARK_START = qn("w:bookmarkStart")
 _BOOKMARK_END = qn("w:bookmarkEnd")
 _ID = qn("w:id")
@@ -52,8 +56,15 @@ _BLIP = qn("a:blip")
 _IMAGEDATA = "{urn:schemas-microsoft-com:vml}imagedata"
 _R_EMBED = qn("r:embed")
 _R_ID = qn("r:id")
+_R_LINK = qn("r:link")
+_RELATIONSHIP_ATTRIBUTE_PREFIX = (
+    "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+)
+_OFFICE_REL_ID = "{urn:schemas-microsoft-com:office:office}relid"
 _HYPERLINK = qn("w:hyperlink")
 _SDT_ID = qn("w:id")
+
+_BODY_BLOCK_TAGS = frozenset((_P, _TBL, _SDT))
 
 _STYLE_REF_TAGS = (qn("w:pStyle"), qn("w:rStyle"), qn("w:tblStyle"))
 _STYLE_CHAIN_TAGS = (qn("w:basedOn"), qn("w:link"), qn("w:next"))
@@ -62,6 +73,8 @@ _STYLE_CHAIN_TAGS = (qn("w:basedOn"), qn("w:link"), qn("w:next"))
 _REFUSED_TAGS = {
     qn("w:object"): "an embedded OLE object",
     qn("w:altChunk"): "an altChunk import",
+    _CUSTOM_XML: "customXml content whose backing part cannot be carried",
+    _DATA_BINDING: ("a data-bound content control whose custom XML binding cannot be carried"),
     qn("w:footnoteReference"): "a footnote reference (its note cannot be carried)",
     qn("w:endnoteReference"): "an endnote reference (its note cannot be carried)",
     qn("w:commentRangeStart"): "a comment anchor (scrub the source's comments first)",
@@ -102,14 +115,26 @@ class CompositionReport:
             "style_map": dict(sorted(self.style_map.items())),
             "imported_styles": sorted(self.imported_styles),
             "renamed_styles": dict(sorted(self.renamed_styles.items())),
-            "numbering_map": {
-                str(k): v for k, v in sorted(self.numbering_map.items())
-            },
+            "numbering_map": {str(k): v for k, v in sorted(self.numbering_map.items())},
             "media_copied": sorted(self.media_copied),
             "bookmarks_renamed": dict(sorted(self.bookmarks_renamed.items())),
             "findings": [finding.to_dict() for finding in self.findings],
             "declared_parts": sorted(set(self.declared_parts)),
         }
+
+
+@dataclass(frozen=True)
+class _NumberingRemap:
+    source_num_id: int
+    destination_num_id: int
+    destination_abstract_id: int
+    source_num: "_Element"
+    source_abstract: "_Element"
+
+
+@dataclass(frozen=True)
+class _NumberingPlan:
+    remaps: "Tuple[_NumberingRemap, ...]" = ()
 
 
 def insert_blocks_from(
@@ -131,6 +156,10 @@ def insert_blocks_from(
     `anchor` addresses the DESTINATION paragraph to insert after.
     """
     _validate_styles_mode(styles)
+    require_anchor_owner(source, start_anchor, argument="start_anchor")
+    if end_anchor is not None:
+        require_anchor_owner(source, end_anchor, argument="end_anchor")
+    require_anchor_owner(document, anchor)
     _refuse_if_protected(document, "compose content into the document")
     range_elements = _source_range(source, start_anchor, end_anchor, count)
     return _compose(document, source, range_elements, anchor, styles)
@@ -152,24 +181,20 @@ def append_document(
     """
     _validate_styles_mode(styles)
     if section not in ("new_page", "continuous"):
-        raise ValueError(
-            f"section must be 'new_page' or 'continuous', got {section!r}"
-        )
+        raise ValueError(f"section must be 'new_page' or 'continuous', got {section!r}")
     _refuse_if_protected(document, "append a document")
-    range_elements = [
-        child
-        for child in source.element.body
-        if child.tag in (_P, _TBL)
-    ]
+    range_elements = [child for child in source.element.body if child.tag != _SECT_PR]
     if not range_elements:
         raise TargetNotFoundError("the source document body has no blocks")
-    destination_blocks = [
-        child for child in document.element.body if child.tag in (_P, _TBL)
-    ]
+    destination_blocks = [child for child in document.element.body if child.tag in _BODY_BLOCK_TAGS]
     if not destination_blocks:
         raise TargetNotFoundError("the destination document body has no blocks")
     report = _compose(
-        document, source, range_elements, destination_blocks[-1], styles,
+        document,
+        source,
+        range_elements,
+        destination_blocks[-1],
+        styles,
         anchor_is_element=True,
     )
     if section == "new_page":
@@ -185,14 +210,10 @@ def append_document(
 
 def _validate_styles_mode(styles: str) -> None:
     if styles not in ("match_by_name", "import_renamed"):
-        raise ValueError(
-            f"styles must be 'match_by_name' or 'import_renamed', got {styles!r}"
-        )
+        raise ValueError(f"styles must be 'match_by_name' or 'import_renamed', got {styles!r}")
 
 
-def _source_range(
-    source: "Document", start_anchor, end_anchor, count: int
-) -> "List[_Element]":
+def _source_range(source: "Document", start_anchor, end_anchor, count: int) -> "List[_Element]":
     from docx.blocks import _locate_anchor_paragraph
 
     if count < 1:
@@ -200,29 +221,28 @@ def _source_range(
     story, start_p = _locate_anchor_paragraph(source, start_anchor)
     if story != "word/document.xml":
         raise UnsupportedStructureError(
-            f"composition copies from the main document body only"
-            f" (start anchor is in {story})"
+            f"composition copies from the main document body only (start anchor is in {story})"
         )
     body = source.element.body
-    blocks = [child for child in body if child.tag in (_P, _TBL)]
-    if start_p not in blocks:
+    body_children = [child for child in body if child.tag != _SECT_PR]
+    blocks = [child for child in body_children if child.tag in _BODY_BLOCK_TAGS]
+    start_block = _body_block_for_paragraph(body, start_p)
+    if start_block not in blocks:
         raise UnsupportedStructureError(
             "the start anchor is not a top-level body block (text boxes and"
             " table cells cannot anchor a composition range)"
         )
-    start_index = blocks.index(start_p)
+    start_index = blocks.index(start_block)
     if end_anchor is not None:
         end_story, end_p = _locate_anchor_paragraph(source, end_anchor)
-        if end_story != story or end_p not in blocks:
+        end_block = _body_block_for_paragraph(body, end_p)
+        if end_story != story or end_block not in blocks:
             raise UnsupportedStructureError(
-                "the end anchor must be a top-level body block of the same"
-                " source document"
+                "the end anchor must be a top-level body block of the same source document"
             )
-        end_index = blocks.index(end_p)
+        end_index = blocks.index(end_block)
         if end_index < start_index:
-            raise TargetNotFoundError(
-                "end anchor precedes start anchor in the source body"
-            )
+            raise TargetNotFoundError("end anchor precedes start anchor in the source body")
     else:
         end_index = start_index + count - 1
         if end_index >= len(blocks):
@@ -230,7 +250,30 @@ def _source_range(
                 f"the source body has only {len(blocks) - start_index} blocks"
                 f" from the start anchor; {count} requested"
             )
-    return blocks[start_index : end_index + 1]
+    first = body_children.index(blocks[start_index])
+    last = body_children.index(blocks[end_index])
+    # Keep the physical slice. Unsupported body children between selected
+    # blocks must reach preflight and refuse, never disappear by filtering.
+    return body_children[first : last + 1]
+
+
+def _body_block_for_paragraph(body: "_Element", paragraph: "_Element"):
+    """Top-level body block containing `paragraph`, or None.
+
+    A paragraph directly under a top-level block content control addresses
+    that whole control. Paragraphs in top-level tables and other wrappers do
+    not become range anchors merely because they are descendants of `body`.
+    """
+    current = paragraph
+    while current.getparent() is not None and current.getparent() is not body:
+        current = current.getparent()
+    if current.getparent() is not body:
+        return None
+    if current.tag == _P:
+        return current
+    if current.tag == _SDT:
+        return current
+    return None
 
 
 def _compose(
@@ -260,27 +303,27 @@ def _compose(
         story, anchor_p = _resolve_anchor_paragraph(document, anchor)
         if story != "word/document.xml":
             raise UnsupportedStructureError(
-                f"composition inserts into the main document body only"
-                f" (anchor is in {story})"
+                f"composition inserts into the main document body only (anchor is in {story})"
             )
         _refuse_cell_anchor(anchor_p)
-        root = next(
-            r for s, r in _story_elements_of(document) if s == story
-        )
+        root = next(r for s, r in _story_elements_of(document) if s == story)
         _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
+    _refuse_malformed_numeric_ids(document, range_elements)
+    _preflight_relationships(source, range_elements)
     chained_definitions = _chained_source_definitions(source, range_elements)
-    _refuse_missing_numbering_part(
-        document, range_elements + chained_definitions
-    )
+    numbering_plan = _preflight_numbering(document, source, range_elements + chained_definitions)
     _refuse_unloadable_media(source, range_elements)
 
     clones = [copy.deepcopy(element) for element in range_elements]
-    imported_definitions = _reconcile_styles(
-        document, source, clones, styles_mode, report
-    )
+    imported_definitions = _reconcile_styles(document, source, clones, styles_mode, report)
     # numbering references live in imported STYLE definitions too — an
     # unmapped one silently binds to unrelated destination numbering
-    _remap_numbering(document, source, clones + imported_definitions, report)
+    _remap_numbering(
+        document,
+        clones + imported_definitions,
+        numbering_plan,
+        report,
+    )
     _copy_media(document, source, clones, report)
     _recreate_hyperlinks(document, source, clones, report)
     _reconcile_bookmarks(document, clones, report)
@@ -306,43 +349,64 @@ def _story_elements_of(document: "Document"):
     return _story_elements(document)
 
 
-def _refuse_missing_numbering_part(
-    document: "Document", range_elements: "List[_Element]"
-) -> None:
-    """Pre-mutation check for the numbering remap's only failure mode."""
-    needs_numbering = any(
-        int(node.get(_VAL) or 0) > 0
-        for element in range_elements
-        for node in element.iter(qn("w:numId"))
-    )
-    if needs_numbering and _numbering_root_of(document) is None:
-        raise UnsupportedStructureError(
-            "the destination document has no numbering part; create a list"
-            " definition first (ensure_bullet_definition /"
-            " ensure_decimal_definition)"
-        )
-
-
-def _chained_source_definitions(
-    source: "Document", elements: "List[_Element]"
-) -> "List[_Element]":
+def _chained_source_definitions(source: "Document", elements: "List[_Element]") -> "List[_Element]":
     """The source style definitions the copied range pulls in (transitive
     basedOn/link/next chains) — they carry numbering references too."""
     _root, by_id, _by_name = _style_definitions(source)
     return [
-        by_id[style_id]
-        for style_id in _expand_style_chain(by_id, _referenced_style_ids(elements))
+        by_id[style_id] for style_id in _expand_style_chain(by_id, _referenced_style_ids(elements))
     ]
 
 
-def _refuse_unloadable_media(
-    source: "Document", range_elements: "List[_Element]"
-) -> None:
+def _preflight_relationships(source: "Document", range_elements: "List[_Element]") -> None:
+    """Refuse every relationship the composition pipeline cannot remap."""
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    for element in range_elements:
+        for node in element.iter():
+            for attribute, r_id in node.attrib.items():
+                if not (
+                    attribute.startswith(_RELATIONSHIP_ATTRIBUTE_PREFIX)
+                    or attribute == _OFFICE_REL_ID
+                ):
+                    continue
+                rel = source.part.rels.get(r_id)
+                if node.tag == _BLIP and attribute == _R_EMBED:
+                    if rel is not None and rel.reltype == RT.IMAGE and not rel.is_external:
+                        continue
+                    _refuse_relationship(node, attribute, r_id, rel, "embedded image")
+                if node.tag == _IMAGEDATA and attribute == _R_ID:
+                    if rel is not None and rel.reltype == RT.IMAGE and not rel.is_external:
+                        continue
+                    _refuse_relationship(node, attribute, r_id, rel, "embedded image")
+                if node.tag == _HYPERLINK and attribute == _R_ID:
+                    if rel is not None and rel.reltype == RT.HYPERLINK and rel.is_external:
+                        continue
+                    _refuse_relationship(node, attribute, r_id, rel, "external hyperlink")
+                expected = "linked image" if attribute == _R_LINK else None
+                _refuse_relationship(node, attribute, r_id, rel, expected)
+
+
+def _refuse_relationship(node, attribute, r_id, rel, expected=None) -> None:
+    node_name = node.tag.rsplit("}", 1)[-1]
+    attribute_name = attribute.rsplit("}", 1)[-1]
+    if rel is None:
+        kind = expected or "unresolved"
+    else:
+        kind = rel.reltype.rsplit("/", 1)[-1]
+        if expected == "linked image":
+            kind = expected
+    raise UnsupportedStructureError(
+        f"the source range contains an unsupported {kind} relationship"
+        f" ({node_name}@{attribute_name}={r_id!r}); composition cannot remap"
+        " it. Nothing was changed"
+    )
+
+
+def _refuse_unloadable_media(source: "Document", range_elements: "List[_Element]") -> None:
     """Pre-mutation check: every image in the range must be re-embeddable,
     or _copy_media would raise AFTER styles/numbering were already imported
     (refusal atomicity)."""
-    import io as _io
-
     from docx.image.exceptions import UnrecognizedImageError
     from docx.image.image import Image
 
@@ -354,7 +418,10 @@ def _refuse_unloadable_media(
                 continue
             rel = source.part.rels.get(r_id)
             if rel is None or rel.is_external:
-                continue  # dropped later with a finding
+                raise UnsupportedStructureError(
+                    f"image relationship {r_id!r} changed after composition"
+                    " preflight. Nothing was changed"
+                )
             try:
                 Image.from_blob(rel.target_part.blob)
             except UnrecognizedImageError:
@@ -369,6 +436,14 @@ def _refuse_unsupported_content(range_elements: "List[_Element]") -> None:
     from docx.revision import _MARKUP_SCAN_TAGS
 
     for element in range_elements:
+        if element.tag not in _BODY_BLOCK_TAGS:
+            reason = _REFUSED_TAGS.get(element.tag)
+            if reason is None:
+                reason = f"unsupported top-level body content {element.tag.rsplit('}', 1)[-1]!r}"
+            raise UnsupportedStructureError(
+                f"the source range contains {reason}; composition cannot"
+                " carry it (a declared limit)"
+            )
         for node in element.iter():
             if node.tag in _MARKUP_SCAN_TAGS:
                 raise UnsupportedStructureError(
@@ -383,12 +458,46 @@ def _refuse_unsupported_content(range_elements: "List[_Element]") -> None:
                 )
 
 
+def _refuse_malformed_numeric_ids(document: "Document", range_elements: "List[_Element]") -> None:
+    """Parse ids used after imports now, while refusal is still atomic."""
+    roots = [root for _story, root in _story_elements_of(document)]
+    roots.extend(range_elements)
+    for root in roots:
+        for marker in root.iter(_BOOKMARK_START, _BOOKMARK_END):
+            raw = marker.get(_ID)
+            try:
+                value = int(raw) if raw is not None else -1
+            except ValueError:
+                value = -1
+            if value < 0:
+                raise UnsupportedStructureError(
+                    "composition found a bookmark marker with a missing or"
+                    f" non-numeric w:id {raw!r}; nothing was changed"
+                )
+        for sdt_pr in root.iter(qn("w:sdtPr")):
+            id_element = sdt_pr.find(_SDT_ID)
+            raw = id_element.get(_VAL) if id_element is not None else None
+            if raw is None:
+                continue
+            try:
+                value = int(raw)
+            except ValueError:
+                value = -1
+            if value < 0:
+                raise UnsupportedStructureError(
+                    "composition found a content control with a non-numeric"
+                    f" w:id {raw!r}; nothing was changed"
+                )
+
+
 # ---------------------------------------------------------------------------
 # styles
 # ---------------------------------------------------------------------------
 
 
-def _style_definitions(document: "Document") -> "Tuple[_Element, Dict[str, _Element], Dict[str, _Element]]":
+def _style_definitions(
+    document: "Document",
+) -> "Tuple[_Element, Dict[str, _Element], Dict[str, _Element]]":
     root = document.styles.element
     by_id: "Dict[str, _Element]" = {}
     by_name: "Dict[str, _Element]" = {}
@@ -414,20 +523,28 @@ def _referenced_style_ids(clones: "List[_Element]") -> "List[str]":
     return seen
 
 
-def _expand_style_chain(
-    source_by_id: "Dict[str, _Element]", wanted: "List[str]"
-) -> "List[str]":
+def _expand_style_chain(source_by_id: "Dict[str, _Element]", wanted: "List[str]") -> "List[str]":
     ordered: "List[str]" = []
-    queue = list(wanted)
+    queue = [(style_id, None, None) for style_id in wanted]
     while queue:
-        style_id = queue.pop(0)
-        if style_id in ordered or style_id not in source_by_id:
+        style_id, parent_style_id, chain_tag = queue.pop(0)
+        if style_id in ordered:
             continue
+        if style_id not in source_by_id:
+            owner = (
+                "the source content"
+                if parent_style_id is None
+                else f"source style {parent_style_id!r} through w:{chain_tag}"
+            )
+            raise UnsupportedStructureError(
+                f"{owner} references undefined source style {style_id!r}; nothing was changed"
+            )
         ordered.append(style_id)
         for tag in _STYLE_CHAIN_TAGS:
-            chained = source_by_id[style_id].find(tag)
-            if chained is not None and chained.get(_VAL):
-                queue.append(chained.get(_VAL))
+            for chained in source_by_id[style_id].findall(tag):
+                chained_style_id = chained.get(_VAL)
+                if chained_style_id:
+                    queue.append((chained_style_id, style_id, tag.rsplit("}", 1)[-1]))
     return ordered
 
 
@@ -450,9 +567,7 @@ def _reconcile_styles(
 ) -> "List[_Element]":
     """Reconcile and remap; returns the IMPORTED definitions (their
     numbering references still need remapping by the caller)."""
-    destination_root, destination_by_id, destination_by_name = _style_definitions(
-        document
-    )
+    destination_root, destination_by_id, destination_by_name = _style_definitions(document)
     _root, source_by_id, _source_by_name = _style_definitions(source)
     wanted = _expand_style_chain(source_by_id, _referenced_style_ids(clones))
     style_map: "Dict[str, str]" = {}
@@ -467,9 +582,7 @@ def _reconcile_styles(
             if mode == "match_by_name":
                 style_map[style_id] = existing.get(qn("w:styleId"))
                 continue
-            if _normalized_style_bytes(existing) == _normalized_style_bytes(
-                definition
-            ):
+            if _normalized_style_bytes(existing) == _normalized_style_bytes(definition):
                 style_map[style_id] = existing.get(qn("w:styleId"))
                 continue
             # import_renamed: clone under a fresh id AND name
@@ -480,22 +593,18 @@ def _reconcile_styles(
             report.renamed_styles[name] = new_name
             to_import.append((new_id, _renamed_clone(definition, new_id, new_name)))
             continue
-        new_id = (
-            style_id
-            if style_id not in taken_ids
-            else _fresh_style_id(taken_ids, style_id)
-        )
+        new_id = style_id if style_id not in taken_ids else _fresh_style_id(taken_ids, style_id)
         taken_ids.add(new_id)
         style_map[style_id] = new_id
         to_import.append((new_id, _renamed_clone(definition, new_id, None)))
     for new_id, definition in to_import:
         # remap chain references to their final destination ids
         for tag in _STYLE_CHAIN_TAGS:
-            chained = definition.find(tag)
-            if chained is not None and chained.get(_VAL) in style_map:
-                chained.set(_VAL, style_map[chained.get(_VAL)])
-            elif chained is not None:
-                definition.remove(chained)  # dangling chain link
+            for chained in definition.findall(tag):
+                if chained.get(_VAL) in style_map:
+                    chained.set(_VAL, style_map[chained.get(_VAL)])
+                else:
+                    definition.remove(chained)  # empty/malformed chain link
         destination_root.append(definition)
         report.imported_styles.append(new_id)
         destination_by_id[new_id] = definition
@@ -509,9 +618,7 @@ def _reconcile_styles(
     return [definition for _new_id, definition in to_import]
 
 
-def _renamed_clone(
-    definition: "_Element", new_id: str, new_name: Optional[str]
-) -> "_Element":
+def _renamed_clone(definition: "_Element", new_id: str, new_name: Optional[str]) -> "_Element":
     clone = copy.deepcopy(definition)
     clone.set(qn("w:styleId"), new_id)
     if new_name is not None:
@@ -550,13 +657,173 @@ def _numbering_root_of(document: "Document") -> "Optional[_Element]":
     return _numbering_root(document)
 
 
-def _remap_numbering(
+def _preflight_numbering(
     document: "Document",
     source: "Document",
+    elements: "List[_Element]",
+) -> _NumberingPlan:
+    """Validate both numbering graphs and allocate every remap up front."""
+    referenced = _referenced_numbering_ids(elements)
+    if not referenced:
+        return _NumberingPlan()
+
+    source_root = _numbering_root_of(source)
+    if source_root is None:
+        raise UnsupportedStructureError(
+            "the source content references numbering but the source document"
+            " has no numbering part. Nothing was changed"
+        )
+    destination_root = _numbering_root_of(document)
+    if destination_root is None:
+        raise UnsupportedStructureError(
+            "the destination document has no numbering part; create a list"
+            " definition first (ensure_bullet_definition /"
+            " ensure_decimal_definition)"
+        )
+
+    source_nums, source_abstracts, source_abstract_refs = _validated_numbering_graph(
+        source_root, "source numbering"
+    )
+    destination_nums, destination_abstracts, _destination_abstract_refs = (
+        _validated_numbering_graph(destination_root, "destination numbering")
+    )
+
+    next_num_id = max(destination_nums, default=0) + 1
+    next_abstract_id = max(destination_abstracts, default=-1) + 1
+    remaps = []
+    for source_num_id in referenced:
+        source_num = source_nums.get(source_num_id)
+        if source_num is None:
+            raise UnsupportedStructureError(
+                f"source numbering id {source_num_id} has no w:num definition. Nothing was changed"
+            )
+        source_abstract_id = source_abstract_refs[source_num_id]
+        source_abstract = source_abstracts[source_abstract_id]
+        if any(source_abstract.iter(qn("w:lvlPicBulletId"))):
+            raise UnsupportedStructureError(
+                f"source numbering id {source_num_id} uses a picture bullet;"
+                " composition cannot carry its numbering-part relationships."
+                " Nothing was changed"
+            )
+        remaps.append(
+            _NumberingRemap(
+                source_num_id=source_num_id,
+                destination_num_id=next_num_id,
+                destination_abstract_id=next_abstract_id,
+                source_num=source_num,
+                source_abstract=source_abstract,
+            )
+        )
+        next_num_id += 1
+        next_abstract_id += 1
+    return _NumberingPlan(tuple(remaps))
+
+
+def _referenced_numbering_ids(elements: "List[_Element]") -> "List[int]":
+    referenced = []
+    for element in elements:
+        for num_id_element in element.iter(qn("w:numId")):
+            num_id = _parse_numbering_id(
+                num_id_element.get(_VAL),
+                "source content has a w:numId with",
+            )
+            if num_id > 0 and num_id not in referenced:
+                referenced.append(num_id)
+    return referenced
+
+
+def _validated_numbering_graph(
+    root: "_Element", label: str
+) -> "Tuple[Dict[int, _Element], Dict[int, _Element], Dict[int, int]]":
+    picture_ids = _index_numbering_elements(
+        root.findall(qn("w:numPicBullet")),
+        qn("w:numPicBulletId"),
+        label,
+        "w:numPicBullet",
+    )
+    abstracts = _index_numbering_elements(
+        root.findall(qn("w:abstractNum")),
+        qn("w:abstractNumId"),
+        label,
+        "w:abstractNum",
+    )
+    nums = _index_numbering_elements(
+        root.findall(qn("w:num")),
+        qn("w:numId"),
+        label,
+        "w:num",
+    )
+
+    abstract_refs: "Dict[int, int]" = {}
+    for num_id, num in nums.items():
+        refs = num.findall(qn("w:abstractNumId"))
+        if len(refs) != 1:
+            raise UnsupportedStructureError(
+                f"{label} w:num {num_id} must contain exactly one"
+                " w:abstractNumId. Nothing was changed"
+            )
+        abstract_id = _parse_numbering_id(
+            refs[0].get(_VAL),
+            f"{label} w:num {num_id} has a w:abstractNumId with",
+        )
+        if abstract_id not in abstracts:
+            raise UnsupportedStructureError(
+                f"{label} w:num {num_id} references missing abstract"
+                f" numbering definition {abstract_id}. Nothing was changed"
+            )
+        abstract_refs[num_id] = abstract_id
+
+    for abstract_id, abstract in abstracts.items():
+        for picture_ref in abstract.iter(qn("w:lvlPicBulletId")):
+            picture_id = _parse_numbering_id(
+                picture_ref.get(_VAL),
+                f"{label} w:abstractNum {abstract_id} has a w:lvlPicBulletId with",
+            )
+            if picture_id not in picture_ids:
+                raise UnsupportedStructureError(
+                    f"{label} w:abstractNum {abstract_id} references missing"
+                    f" picture-bullet definition {picture_id}. Nothing was"
+                    " changed"
+                )
+    return nums, abstracts, abstract_refs
+
+
+def _index_numbering_elements(
+    elements, attribute, label: str, element_name: str
+) -> "Dict[int, _Element]":
+    indexed = {}
+    for element in elements:
+        value = _parse_numbering_id(
+            element.get(attribute),
+            f"{label} has a {element_name} with",
+        )
+        if value in indexed:
+            raise UnsupportedStructureError(
+                f"{label} contains duplicate {element_name} id {value}. Nothing was changed"
+            )
+        indexed[value] = element
+    return indexed
+
+
+def _parse_numbering_id(raw: Optional[str], prefix: str) -> int:
+    try:
+        value = int(raw) if raw is not None else -1
+    except ValueError:
+        value = -1
+    if value < 0:
+        raise UnsupportedStructureError(
+            f"{prefix} missing or non-numeric id {raw!r}. Nothing was changed"
+        )
+    return value
+
+
+def _remap_numbering(
+    document: "Document",
     clones: "List[_Element]",
+    plan: _NumberingPlan,
     report: CompositionReport,
 ) -> None:
-    referenced: "List[int]" = []
+    referenced = []
     for clone in clones:
         for num_id_element in clone.iter(qn("w:numId")):
             value = num_id_element.get(_VAL)
@@ -564,90 +831,31 @@ def _remap_numbering(
                 referenced.append(int(value))
     if not referenced:
         return
-    source_root = _numbering_root_of(source)
     destination_root = _numbering_root_of(document)
     numbering_map: "Dict[int, int]" = {}
-    for num_id in referenced:
-        source_num = _find_num(source_root, num_id)
-        if source_num is None:
-            for clone in clones:
-                _strip_num_refs(clone, num_id)
-            report.findings.append(
-                CompositionFinding(
-                    kind="numbering_reference_stripped",
-                    detail=(
-                        f"source numbering id {num_id} has no definition;"
-                        " the reference was stripped"
-                    ),
-                )
-            )
+    for remap in plan.remaps:
+        if remap.source_num_id not in referenced:
             continue
-        abstract_ref = source_num.find(qn("w:abstractNumId"))
-        source_abstract = (
-            _find_abstract(source_root, abstract_ref.get(_VAL))
-            if abstract_ref is not None
-            else None
-        )
-        new_num_id = _max_attr(destination_root, qn("w:num"), qn("w:numId")) + 1
-        new_abstract_id = (
-            _max_attr(destination_root, qn("w:abstractNum"), qn("w:abstractNumId")) + 1
-        )
-        if source_abstract is not None:
-            abstract_clone = copy.deepcopy(source_abstract)
-            abstract_clone.set(qn("w:abstractNumId"), str(new_abstract_id))
-            # nsid/tmpl uniqueness is advisory; leaving them is Word-tolerated
-            first_num = destination_root.find(qn("w:num"))
-            if first_num is not None:
-                first_num.addprevious(abstract_clone)
-            else:
-                destination_root.append(abstract_clone)
-        num_clone = copy.deepcopy(source_num)
-        num_clone.set(qn("w:numId"), str(new_num_id))
+        abstract_clone = copy.deepcopy(remap.source_abstract)
+        abstract_clone.set(qn("w:abstractNumId"), str(remap.destination_abstract_id))
+        # nsid/tmpl uniqueness is advisory; leaving them is Word-tolerated
+        first_num = destination_root.find(qn("w:num"))
+        if first_num is not None:
+            first_num.addprevious(abstract_clone)
+        else:
+            destination_root.append(abstract_clone)
+        num_clone = copy.deepcopy(remap.source_num)
+        num_clone.set(qn("w:numId"), str(remap.destination_num_id))
         new_ref = num_clone.find(qn("w:abstractNumId"))
-        if new_ref is not None:
-            new_ref.set(_VAL, str(new_abstract_id))
+        new_ref.set(_VAL, str(remap.destination_abstract_id))
         destination_root.append(num_clone)
-        numbering_map[num_id] = new_num_id
+        numbering_map[remap.source_num_id] = remap.destination_num_id
     for clone in clones:
         for num_id_element in clone.iter(qn("w:numId")):
             value = num_id_element.get(_VAL)
             if value and int(value) in numbering_map:
                 num_id_element.set(_VAL, str(numbering_map[int(value)]))
     report.numbering_map = numbering_map
-
-
-def _find_num(root: "Optional[_Element]", num_id: int) -> "Optional[_Element]":
-    if root is None:
-        return None
-    for num in root.findall(qn("w:num")):
-        if num.get(qn("w:numId")) == str(num_id):
-            return num
-    return None
-
-
-def _find_abstract(root: "_Element", abstract_id: Optional[str]) -> "Optional[_Element]":
-    if abstract_id is None:
-        return None
-    for abstract in root.findall(qn("w:abstractNum")):
-        if abstract.get(qn("w:abstractNumId")) == abstract_id:
-            return abstract
-    return None
-
-
-def _max_attr(root: "_Element", element_tag, attr) -> int:
-    values = [
-        int(element.get(attr))
-        for element in root.findall(element_tag)
-        if element.get(attr) is not None
-    ]
-    return max(values, default=0)
-
-
-def _strip_num_refs(clone: "_Element", num_id: int) -> None:
-    for num_pr in list(clone.iter(qn("w:numPr"))):
-        num_id_element = num_pr.find(qn("w:numId"))
-        if num_id_element is not None and num_id_element.get(_VAL) == str(num_id):
-            num_pr.getparent().remove(num_pr)
 
 
 # ---------------------------------------------------------------------------
@@ -661,28 +869,22 @@ def _copy_media(
     clones: "List[_Element]",
     report: CompositionReport,
 ) -> None:
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
     rel_map: "Dict[str, str]" = {}
     for clone in clones:
-        for node in list(clone.iter(_BLIP, _IMAGEDATA)):
+        for node in clone.iter(_BLIP, _IMAGEDATA):
             attr = _R_EMBED if node.tag == _BLIP else _R_ID
             r_id = node.get(attr)
             if not r_id:
                 continue
             if r_id not in rel_map:
                 rel = source.part.rels.get(r_id)
-                if rel is None or rel.is_external:
-                    _remove_holder_run(node)
-                    report.findings.append(
-                        CompositionFinding(
-                            kind="image_reference_stripped",
-                            detail=(
-                                f"image relationship {r_id} could not be"
-                                " resolved in the source; the image was"
-                                " dropped"
-                            ),
-                        )
+                if rel is None or rel.is_external or rel.reltype != RT.IMAGE:
+                    raise UnsupportedStructureError(
+                        f"image relationship {r_id!r} changed after composition"
+                        " preflight. Nothing was changed"
                     )
-                    continue
                 blob = rel.target_part.blob
                 new_r_id, _image = document.part.get_or_add_image(io.BytesIO(blob))
                 rel_map[r_id] = new_r_id
@@ -690,14 +892,6 @@ def _copy_media(
                     str(document.part.rels[new_r_id].target_part.partname).lstrip("/")
                 )
             node.set(attr, rel_map[r_id])
-
-
-def _remove_holder_run(node: "_Element") -> None:
-    holder = node
-    while holder.getparent() is not None and holder.tag != qn("w:r"):
-        holder = holder.getparent()
-    if holder.getparent() is not None:
-        holder.getparent().remove(holder)
 
 
 def _recreate_hyperlinks(
@@ -714,25 +908,12 @@ def _recreate_hyperlinks(
             if not r_id:
                 continue  # internal anchor link: carried as-is
             rel = source.part.rels.get(r_id)
-            if rel is None or not rel.is_external:
-                # flatten a dangling/internal-target link to its text
-                parent = hyperlink.getparent()
-                for child in list(hyperlink):
-                    hyperlink.addprevious(child)
-                parent.remove(hyperlink)
-                report.findings.append(
-                    CompositionFinding(
-                        kind="hyperlink_flattened",
-                        detail=(
-                            f"hyperlink relationship {r_id} could not be"
-                            " recreated; the link was flattened to text"
-                        ),
-                    )
+            if rel is None or not rel.is_external or rel.reltype != RT.HYPERLINK:
+                raise UnsupportedStructureError(
+                    f"hyperlink relationship {r_id!r} changed after composition"
+                    " preflight. Nothing was changed"
                 )
-                continue
-            new_r_id = document.part.relate_to(
-                rel.target_ref, RT.HYPERLINK, is_external=True
-            )
+            new_r_id = document.part.relate_to(rel.target_ref, RT.HYPERLINK, is_external=True)
             hyperlink.set(_R_ID, new_r_id)
 
 
@@ -792,15 +973,12 @@ def _reconcile_bookmarks(
                     CompositionFinding(
                         kind="bookmark_partially_in_range",
                         detail=(
-                            "a bookmark end whose start lies outside the"
-                            " copied range was dropped"
+                            "a bookmark end whose start lies outside the copied range was dropped"
                         ),
                     )
                 )
     # starts whose end never appeared in the range are half-pairs too
-    ends_present = {
-        end.get(_ID) for clone in clones for end in clone.iter(_BOOKMARK_END)
-    }
+    ends_present = {end.get(_ID) for clone in clones for end in clone.iter(_BOOKMARK_END)}
     for clone in clones:
         for start in list(clone.iter(_BOOKMARK_START)):
             if start.get(_ID) not in ends_present:
@@ -823,12 +1001,18 @@ def _reconcile_bookmarks(
 
 
 def _fresh_bookmark_name(existing: set, base: str) -> str:
-    candidate = f"{base}_imported"
+    # Imported names are authored by this package, so they must obey Word's
+    # public bookmark grammar even when the source name did not.
+    stem = "".join(char if char == "_" or char.isalnum() else "_" for char in base)
+    if not stem or not stem[0].isalpha():
+        stem = f"B_{stem}"
     counter = 1
-    while candidate in existing:
+    while True:
+        suffix = "_imported" if counter == 1 else f"_imported{counter}"
+        candidate = f"{stem[: 40 - len(suffix)]}{suffix}"
+        if candidate not in existing:
+            return candidate
         counter += 1
-        candidate = f"{base}_imported{counter}"
-    return candidate
 
 
 def _remap_field_refs(clones: "List[_Element]", renames: "Dict[str, str]") -> None:
@@ -840,31 +1024,50 @@ def _remap_field_refs(clones: "List[_Element]", renames: "Dict[str, str]") -> No
     matched on their CONCATENATION across split w:instrText runs."""
     from docx.bookmarks import _iter_field_instructions
 
-    alternation = re.compile(
-        "|".join(
-            rf"\b{re.escape(old)}\b"
-            for old in sorted(renames, key=len, reverse=True)
-        )
+    lookup = {old.casefold(): new for old, new in renames.items()}
+    alternatives = "|".join(re.escape(old) for old in sorted(renames, key=len, reverse=True))
+    reference_operand = re.compile(
+        rf"(?P<prefix>\b(?:PAGEREF|NOTEREF|REF)\s+)"
+        rf'(?:"(?P<quoted>{alternatives})"|(?P<bare>{alternatives}))'
+        r"(?=\s|$)",
+        re.IGNORECASE,
     )
 
     def rewrite(text: str) -> str:
-        return alternation.sub(lambda match: renames[match.group(0)], text)
+        def replacement(match) -> str:
+            old = match.group("quoted") or match.group("bare")
+            new = lookup[old.casefold()]
+            operand = f'"{new}"' if match.group("quoted") is not None else new
+            return f"{match.group('prefix')}{operand}"
 
-    ref_family = re.compile(r"\b(?:PAGEREF|NOTEREF|REF)\b")
+        return reference_operand.sub(replacement, text)
+
+    def redistribute(nodes: "List[_Element]", instruction: str) -> None:
+        """Write a rewritten concatenation back across its existing nodes."""
+        offset = 0
+        for position, node in enumerate(nodes):
+            if position == len(nodes) - 1:
+                node.text = instruction[offset:]
+                break
+            width = len(node.text or "")
+            node.text = instruction[offset : offset + width]
+            offset += width
+
     for clone in clones:
         for instruction, nodes in _iter_field_instructions(clone):
-            if ref_family.search(instruction):
-                for node in nodes:
-                    if node.text:
-                        node.text = rewrite(node.text)
+            rewritten = rewrite(instruction)
+            if rewritten != instruction:
+                redistribute(nodes, rewritten)
         for node in clone.iter(_FLD_SIMPLE):
             instr = node.get(_INSTR)
-            if instr and ref_family.search(instr):
-                node.set(_INSTR, rewrite(instr))
+            if instr:
+                rewritten = rewrite(instr)
+                if rewritten != instr:
+                    node.set(_INSTR, rewritten)
         for link in clone.iter(_HYPERLINK):
             anchor = link.get(qn("w:anchor"))
-            if anchor and anchor in renames:
-                link.set(qn("w:anchor"), renames[anchor])
+            if anchor and anchor.casefold() in lookup:
+                link.set(qn("w:anchor"), lookup[anchor.casefold()])
 
 
 def _reallocate_sdt_ids(document: "Document", clones: "List[_Element]") -> None:
@@ -887,6 +1090,10 @@ def _reallocate_sdt_ids(document: "Document", clones: "List[_Element]") -> None:
                 id_element.set(_VAL, str(next_id))
                 existing.add(next_id)
                 next_id += 1
+            elif value:
+                kept_id = int(value)
+                existing.add(kept_id)
+                next_id = max(next_id, kept_id + 1)
 
 
 def _pad_adjacent_tables(anchor_p: "_Element", clones: "List[_Element]") -> None:

@@ -27,6 +27,7 @@ from __future__ import annotations
 import hashlib
 import io
 import os
+import stat
 import tempfile
 import zipfile
 from dataclasses import dataclass
@@ -34,6 +35,14 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Dict, List, Tuple, Union
 
 from lxml import etree
+
+from docx._zipguard import (
+    GuardedZipReader,
+    enforce_compressed_size,
+    preflight_zip,
+    read_compressed_bytes,
+)
+from docx.errors import PackageLimitError
 
 if TYPE_CHECKING:
     from docx.document import Document
@@ -97,9 +106,10 @@ def _elements_equal(a: etree._Element, b: etree._Element) -> bool:
     if a.tag != b.tag:
         return False
     # processing instructions share one tag object; the target is identity
-    if not isinstance(a.tag, str):
-        if getattr(a, "target", None) != getattr(b, "target", None):
-            return False
+    if not isinstance(a.tag, str) and getattr(a, "target", None) != getattr(
+        b, "target", None
+    ):
+        return False
     if dict(a.attrib) != dict(b.attrib):
         return False
     if (a.text or "") != (b.text or ""):
@@ -205,15 +215,15 @@ def _parts_semantically_equal(
         return False
 
 
-def _read_zip(data: bytes) -> Tuple[Dict[str, bytes], List[str]]:
-    """(member-name -> bytes, member order). Duplicate names collapse per
-    `zipfile` resolution (last entry wins) and appear once in the order."""
-    with zipfile.ZipFile(io.BytesIO(data)) as zf:
-        order: List[str] = []
-        for name in zf.namelist():
-            if name not in order:
-                order.append(name)
-        return {name: zf.read(name) for name in order}, order
+def _read_zip(
+    source: Union[_PathLike, IO[bytes], bytes]
+) -> Tuple[Dict[str, bytes], List[str]]:
+    """Return validated member bytes and central-directory order."""
+    source = io.BytesIO(source) if isinstance(source, bytes) else source
+    enforce_compressed_size(source)
+    preflight_zip(source)
+    with zipfile.ZipFile(source) as zf:
+        return GuardedZipReader(zf).read_all()
 
 
 def _sha256(data: bytes) -> str:
@@ -276,8 +286,8 @@ def diff_package(path_a: _PathLike, path_b: _PathLike) -> PackageDiff:
     bytes. A byte-changed XML part that fails to parse counts as semantically
     changed — never silently equal.
     """
-    a_parts, a_order = _read_zip(Path(path_a).read_bytes())
-    b_parts, b_order = _read_zip(Path(path_b).read_bytes())
+    a_parts, a_order = _read_zip(Path(path_a))
+    b_parts, b_order = _read_zip(Path(path_b))
 
     added = tuple(sorted(set(b_parts) - set(a_parts)))
     removed = tuple(sorted(set(a_parts) - set(b_parts)))
@@ -345,7 +355,7 @@ def _deterministic_zip_bytes(parts: Dict[str, bytes], order: List[str]) -> bytes
     return buf.getvalue()
 
 
-def _write_bytes_atomically(out_path: Path, data: bytes) -> None:
+def _write_bytes_atomically(out_path: Path, data: bytes, mode: int) -> None:
     """Write via a same-directory temp file + `os.replace`.
 
     A failure anywhere before the final rename leaves any existing file at
@@ -359,6 +369,7 @@ def _write_bytes_atomically(out_path: Path, data: bytes) -> None:
     try:
         with os.fdopen(fd, "wb") as stream:
             stream.write(data)
+        os.chmod(temp_path, mode)
         os.replace(temp_path, out_path)
     finally:
         if temp_path.exists():
@@ -418,7 +429,8 @@ def diagnose(path: _PathLike) -> PackageDiagnosis:
 
     if not file_path.is_file():
         return result(False, "missing", "file does not exist")
-    header = file_path.read_bytes()[:8]
+    with file_path.open("rb") as stream:
+        header = stream.read(8)
     if header.startswith(_CFB_MAGIC):
         return result(
             False,
@@ -429,7 +441,9 @@ def diagnose(path: _PathLike) -> PackageDiagnosis:
     if not header.startswith(b"PK"):
         return result(False, "not-a-zip", "not a ZIP archive, so not an OPC package")
     try:
-        parts, _ = _read_zip(file_path.read_bytes())
+        parts, _ = _read_zip(file_path)
+    except PackageLimitError as exc:
+        return result(False, "unsafe-archive", str(exc))
     except zipfile.BadZipFile as exc:
         return result(False, "corrupt-zip", f"ZIP structure is damaged: {exc}")
 
@@ -487,7 +501,7 @@ def diagnose(path: _PathLike) -> PackageDiagnosis:
 
 
 def patch_save(
-    original_path: _PathLike, document: "Document | IO[bytes]", out_path: _PathLike
+    original_path: _PathLike, document: "Document", out_path: _PathLike
 ) -> PatchSaveResult:
     """Save `document` to `out_path`, restoring original bytes wherever possible.
 
@@ -500,16 +514,25 @@ def patch_save(
 
     `original_path == out_path` is permitted; the original bytes are read up
     front and the write is atomic (temp file + rename), so the original
-    survives any mid-write failure.
+    survives any mid-write failure. An existing destination keeps its current
+    permission bits; a newly created destination inherits `original_path`'s
+    permission bits.
     """
-    original_bytes = Path(original_path).read_bytes()
+    original_file = Path(original_path)
+    output_file = Path(out_path)
+    try:
+        output_mode = stat.S_IMODE(output_file.stat().st_mode)
+    except FileNotFoundError:
+        output_mode = stat.S_IMODE(original_file.stat().st_mode)
+
+    original_bytes = read_compressed_bytes(original_file)
+    original_parts, _ = _read_zip(io.BytesIO(original_bytes))
 
     buf = io.BytesIO()
-    document.save(buf)  # type: ignore[union-attr]
+    document.save(buf)
     candidate_bytes = buf.getvalue()
 
-    original_parts, _ = _read_zip(original_bytes)
-    candidate_parts, candidate_order = _read_zip(candidate_bytes)
+    candidate_parts, candidate_order = _read_zip(io.BytesIO(candidate_bytes))
     original_names = list(original_parts)
     candidate_names = list(candidate_parts)
 
@@ -538,11 +561,11 @@ def patch_save(
         and all(candidate_parts[name] == original_parts[name] for name in candidate_parts)
     )
     if is_noop:
-        _write_bytes_atomically(Path(out_path), original_bytes)
+        output_bytes = original_bytes
     else:
-        _write_bytes_atomically(
-            Path(out_path), _deterministic_zip_bytes(candidate_parts, candidate_order)
-        )
+        output_bytes = _deterministic_zip_bytes(candidate_parts, candidate_order)
+    enforce_compressed_size(io.BytesIO(output_bytes))
+    _write_bytes_atomically(output_file, output_bytes, output_mode)
     return PatchSaveResult(
         restored_parts=tuple(restored),
         changed_parts=tuple(changed),

@@ -722,7 +722,7 @@ wheels = [
 ]
 
 [[package]]
-name = "python-docx"
+name = "paper-docx"
 source = { editable = "." }
 dependencies = [
     { name = "lxml" },

@@ -9,8 +9,10 @@ Package kernel
 change, so a file-level diff shows your edit and nothing else. ``diff_package``
 and ``text_diff`` report what changed. ``diagnose`` triages an unopenable file
 into a typed verdict. ``compare`` generates a native tracked-change redline
-that transforms one document into another. These names are the pinned public
-path (``docx.package.*``); the implementation lives in private modules.
+that transforms one document into another. It verifies acceptance and
+rejection on private copies before returning and refuses differences it cannot
+encode without loss. These names are the pinned public path
+(``docx.package.*``); the implementation lives in private modules.
 
 .. currentmodule:: docx.package
 

@@ -22,8 +22,8 @@ from docx.errors import (
     UnsupportedStructureError,
 )
 from docx.oxml.ns import qn
-from docx.protection import _refuse_if_protected
 from docx.oxml.revision import CT_RunTrackChange
+from docx.protection import _refuse_if_protected
 from docx.search import (
     ReplaceResult,
     Span,
@@ -45,6 +45,7 @@ _GRID_SPAN = qn("w:gridSpan")
 _V_MERGE = qn("w:vMerge")
 _TBL = qn("w:tbl")
 _TC = qn("w:tc")
+_SDT = qn("w:sdt")
 _W_VAL = qn("w:val")
 
 
@@ -100,6 +101,22 @@ def _row_continues_merge_from_above(tr) -> bool:
     return False
 
 
+def _refuse_tracked_template_row(tr, *, row: int) -> None:
+    from docx.revision import _MARKUP_SCAN_TAGS
+
+    revision = next(
+        (node for node in tr.iter() if node.tag in _MARKUP_SCAN_TAGS),
+        None,
+    )
+    if revision is None:
+        return
+    marker = revision.tag.rpartition("}")[2]
+    raise UnsupportedStructureError(
+        f"template row {row} contains tracked revision metadata ({marker});"
+        " resolve its pending revisions before copying formatting from it"
+    )
+
+
 def _refuse_row_op(table: "Table", *, affected_rows, splits_before=None) -> None:
     """Row-op guard: refuse only when the AFFECTED rows intersect a
     vertical merge or hold a nested table, or when insertion would split a
@@ -116,12 +133,15 @@ def _refuse_row_op(table: "Table", *, affected_rows, splits_before=None) -> None
                 f"row {index} contains a nested table; refusing rather than"
                 " duplicating or destroying it wholesale"
             )
-    if splits_before is not None and splits_before < len(table.rows):
-        if _row_continues_merge_from_above(table.rows[splits_before]._tr):
-            raise UnsupportedStructureError(
-                f"inserting between rows {splits_before - 1} and {splits_before}"
-                " would split a vertical merge"
-            )
+    if (
+        splits_before is not None
+        and splits_before < len(table.rows)
+        and _row_continues_merge_from_above(table.rows[splits_before]._tr)
+    ):
+        raise UnsupportedStructureError(
+            f"inserting between rows {splits_before - 1} and {splits_before}"
+            " would split a vertical merge"
+        )
 
 
 def _document_of(table: "Table") -> "Document":
@@ -215,13 +235,22 @@ def update_cell(
         )
     story, block_index = _locate_table_block(document, table)
     target_paragraph = populated[0] if populated else cell.paragraphs[0]
-    atoms = [
-        atom
-        for atom in _collect_block_atoms(
-            story, block_index, target_paragraph._p, skip_text_boxes=False, in_txbx=False
+    all_atoms = list(
+        _collect_block_atoms(
+            story,
+            block_index,
+            target_paragraph._p,
+            skip_text_boxes=False,
+            in_txbx=False,
         )
-        if atom.tag == _T
-    ]
+    )
+    if any(atom.is_synthetic for atom in all_atoms):
+        raise UnsupportedStructureError(
+            "cell text contains a tab, break, no-break hyphen, or other"
+            " visible run content that cannot be represented by new_text;"
+            " update its text segments individually instead"
+        )
+    atoms = [atom for atom in all_atoms if atom.tag == _T]
     if not atoms:
         return _fill_empty_cell(
             document, story, target_paragraph, new_text,
@@ -306,6 +335,7 @@ def insert_row_after(
     # rows[..].cells, so positional value assignment would silently drop or
     # misplace values — refuse instead
     template_tr = rows[template_index]._tr
+    _refuse_tracked_template_row(template_tr, row=template_index)
     if any(
         tc.find(_TC_PR) is not None and tc.find(_TC_PR).find(_GRID_SPAN) is not None
         for tc in _row_cells(template_tr)
@@ -316,18 +346,32 @@ def insert_row_after(
             " copy formatting from an unmerged row"
         )
 
-    # -- validated; mutate --
+    # Populate the copied row while detached. Any refusal or unexpected error
+    # leaves the table tree untouched.
     new_tr = copy.deepcopy(rows[template_index]._tr)
-    rows[row]._tr.addnext(new_tr)
-    for index, cell in enumerate(table.rows[row + 1].cells):
+    from docx.table import _Cell
+
+    detached_cells = tuple(_Cell(tc, table) for tc in _row_cells(new_tr))
+    for index, cell in enumerate(detached_cells):
         _set_cell_text_keeping_format(
             cell, values[index] if index < len(values) else ""
         )
+    rows[row]._tr.addnext(new_tr)
 
 
 def _set_cell_text_keeping_format(cell: "_Cell", text: str) -> None:
     """Replace a copied cell's text, keeping its paragraph and run formatting
     (the upstream `.text` setter would drop the template's run properties)."""
+    if next(iter(cell._tc.iter(_SDT)), None) is not None:
+        raise UnsupportedStructureError(
+            "template cell contains a content control that cannot be populated"
+            " safely; nothing was changed"
+        )
+    if not cell.paragraphs:
+        raise UnsupportedStructureError(
+            "template cell has no direct paragraph that can be populated safely;"
+            " nothing was changed"
+        )
     paragraph = cell.paragraphs[0]
     template_rpr = None
     for run in paragraph.runs:

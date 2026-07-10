@@ -4,9 +4,15 @@ Export the `Document` constructor function and establish the mapping of part-typ
 the part-classe that implements that type.
 """
 
+# ruff: noqa: E402
+
 from __future__ import annotations
 
 from typing import TYPE_CHECKING, Type
+
+from docx._version import __paper_version__, assert_distribution_identity
+
+assert_distribution_identity()
 
 from docx.api import Document
 
@@ -14,10 +20,9 @@ if TYPE_CHECKING:
     from docx.opc.part import Part
 
 __version__ = "1.2.0"
-__paper_version__ = "0.1.0"
 
 
-__all__ = ["Document"]
+__all__ = ["Document", "__paper_version__"]
 
 
 # -- register custom Part classes with opc package reader --

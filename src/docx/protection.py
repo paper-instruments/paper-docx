@@ -30,19 +30,25 @@ _ACK_ATTR = "_paper_protection_acknowledged"
 _TRUTHY = ("1", "true", "on")
 
 
+def _is_on(value: Optional[str]) -> bool:
+    return (value or "").lower() in _TRUTHY
+
+
 @dataclass(frozen=True)
 class ProtectionStatus:
     """What `w:documentProtection` declares, read-only.
 
     `edit` is the raw `w:edit` token ("readOnly", "forms", "comments",
-    "trackedChanges") or None when no protection element exists; `enforced`
-    reflects `w:enforcement`; `acknowledged` is this package's in-memory
-    override flag (never persisted).
+    "trackedChanges") or None when no edit restriction is declared;
+    `formatting` reflects the independent format restriction. `enforced`
+    reports active enforcement of either kind; `acknowledged` is this
+    package's in-memory override flag (never persisted).
     """
 
     edit: Optional[str]
     enforced: bool
     acknowledged: bool
+    formatting: bool = False
 
     @property
     def blocks_paper_edits(self) -> bool:
@@ -51,6 +57,7 @@ class ProtectionStatus:
     def to_dict(self) -> dict:
         return {
             "edit": self.edit,
+            "formatting": self.formatting,
             "enforced": self.enforced,
             "acknowledged": self.acknowledged,
         }
@@ -80,13 +87,17 @@ def protection_status(document: "Document") -> ProtectionStatus:
     package = _package_of(document)
     element = _protection_element(package)
     if element is None:
-        return ProtectionStatus(edit=None, enforced=False, acknowledged=False)
+        return ProtectionStatus(
+            edit=None, enforced=False, acknowledged=False, formatting=False
+        )
     edit = element.get(qn("w:edit"))
-    enforcement = (element.get(qn("w:enforcement")) or "").lower()
+    formatting = _is_on(element.get(qn("w:formatting")))
+    enforcement = _is_on(element.get(qn("w:enforcement")))
     return ProtectionStatus(
         edit=edit,
-        enforced=edit is not None and enforcement in _TRUTHY,
+        enforced=(edit is not None or formatting) and enforcement,
         acknowledged=bool(getattr(package, _ACK_ATTR, False)),
+        formatting=formatting,
     )
 
 
@@ -105,7 +116,7 @@ def acknowledge_protection(document: "Document") -> ProtectionStatus:
 
 
 def _refuse_if_protected(obj, operation: str) -> None:
-    """Typed refusal when `obj`'s document enforces editing protection.
+    """Typed refusal when `obj`'s document enforces edit/format protection.
 
     `obj` is whatever the mutating API has in hand: a |Document|, or any
     proxy/part with a `.part` (Table, Paragraph, ...). Called BEFORE any
@@ -118,11 +129,13 @@ def _refuse_if_protected(obj, operation: str) -> None:
     if element is None:
         return
     edit = element.get(qn("w:edit"))
-    enforcement = (element.get(qn("w:enforcement")) or "").lower()
-    if edit is None or enforcement not in _TRUTHY:
+    formatting = _is_on(element.get(qn("w:formatting")))
+    enforcement = _is_on(element.get(qn("w:enforcement")))
+    if (edit is None and not formatting) or not enforcement:
         return
+    restriction = f"{edit!r} editing" if edit is not None else "formatting-only"
     raise DocumentProtectedError(
-        f"cannot {operation}: this document enforces {edit!r} editing"
+        f"cannot {operation}: this document enforces {restriction}"
         " protection (w:documentProtection). Protection is advisory, not"
         " security — if editing is intended, call"
         " docx.protection.acknowledge_protection(document) first; paper-docx"

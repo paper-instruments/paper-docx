@@ -17,7 +17,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
-from dataclasses import dataclass
+from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Iterator, List, Optional, Sequence, Tuple
 
 from docx.errors import UnsupportedStructureError
@@ -56,6 +56,23 @@ _RPR_CHANGE = qn("w:rPrChange")
 _PPR_CHANGE = qn("w:pPrChange")
 _AUTHOR = qn("w:author")
 _DATE = qn("w:date")
+_COMMENT = qn("w:comment")
+_COMMENT_RANGE_START = qn("w:commentRangeStart")
+_COMMENT_RANGE_END = qn("w:commentRangeEnd")
+_COMMENT_REFERENCE = qn("w:commentReference")
+_FOOTNOTE = qn("w:footnote")
+_ENDNOTE = qn("w:endnote")
+_FOOTNOTE_REFERENCE = qn("w:footnoteReference")
+_ENDNOTE_REFERENCE = qn("w:endnoteReference")
+_NOTE_TYPE = qn("w:type")
+_W14_PARA_ID = qn("w14:paraId")
+_W15_NS = "http://schemas.microsoft.com/office/word/2012/wordml"
+_W15_COMMENT_EX = f"{{{_W15_NS}}}commentEx"
+_W15_PARA_ID = f"{{{_W15_NS}}}paraId"
+_REL_NS_PREFIX = (
+    "{http://schemas.openxmlformats.org/officeDocument/2006/relationships}"
+)
+_OFFICE_REL_ID = "{urn:schemas-microsoft-com:office:office}relid"
 
 #: tag -> revision_type for everything Document.revisions enumerates.
 #: `w:ins`/`w:del` refine to "row_insertion"/"row_deletion" when the node is
@@ -170,6 +187,9 @@ class Revision:
     is_paragraph_mark: bool
     _element: "_Element"
     _document: "Optional[Document]" = None
+    _snapshot_signature: "Tuple[_Element, ...]" = field(
+        default=(), repr=False, compare=False
+    )
 
     @property
     def is_resolvable(self) -> bool:
@@ -184,20 +204,53 @@ class Revision:
                 " version)"
             )
 
+    def _refuse_if_stale(self, verb: str) -> None:
+        if self._document is None:
+            if self._element.getparent() is None:
+                raise UnsupportedStructureError(
+                    f"cannot {verb} a stale Revision; reacquire it from"
+                    " document.revisions. Nothing was changed"
+                )
+            return
+        if (
+            self._snapshot_signature != _revision_signature(self._document)
+            or not _is_in_story(self._element, self._document)
+        ):
+            raise UnsupportedStructureError(
+                f"cannot {verb} a stale Revision; reacquire it from"
+                " document.revisions. Nothing was changed"
+            )
+
     def accept(self) -> None:
         """Apply this change to the document. Tracked moves resolve as a
         PAIR: accepting either site accepts both."""
         self._refuse_unresolvable("accept")
+        self._refuse_if_stale("accept")
         if self._document is not None:
             _refuse_if_protected(self._document, "resolve a revision")
+            _preflight_resolution(
+                self._document,
+                [self],
+                accept=True,
+                author=None,
+                require_clean=False,
+            )
         _resolve_one(self._element, accept=True, document=self._document)
 
     def reject(self) -> None:
         """Undo this change, restoring the pre-change content. Tracked moves
         resolve as a PAIR: rejecting either site rejects both."""
         self._refuse_unresolvable("reject")
+        self._refuse_if_stale("reject")
         if self._document is not None:
             _refuse_if_protected(self._document, "resolve a revision")
+            _preflight_resolution(
+                self._document,
+                [self],
+                accept=False,
+                author=None,
+                require_clean=False,
+            )
         _resolve_one(self._element, accept=False, document=self._document)
 
     def to_dict(self) -> dict:
@@ -216,12 +269,13 @@ class Revisions(Sequence[Revision]):
     """All tracked changes in a document, across every story part.
 
     A fresh snapshot is enumerated on each `Document.revisions` access;
-    resolving revisions invalidates previously-held |Revision| objects.
+    mutation through another snapshot invalidates this snapshot and its
+    previously-held |Revision| objects. Stale resolution attempts refuse.
     """
 
     def __init__(self, document: "Document") -> None:
         self._document = document
-        self._items = tuple(_enumerate_revisions(document))
+        self._items, self._snapshot_signature = _revision_snapshot(document)
 
     def __len__(self) -> int:
         return len(self._items)
@@ -236,8 +290,8 @@ class Revisions(Sequence[Revision]):
         """Apply every selected revision (optionally only `author`'s).
 
         Validates the WHOLE selected set first: if it contains revision types
-        this package cannot resolve (moves, formatting changes), the call
-        refuses atomically — it never half-resolves and reports success while
+        this package cannot resolve, the call refuses atomically — it never
+        half-resolves and reports success while
         Word still shows pending changes. Returns the resolved count; check
         `remaining_unsupported()` before inferring "the document is clean".
         """
@@ -259,6 +313,11 @@ class Revisions(Sequence[Revision]):
         return dict(sorted(census.items()))
 
     def _resolve_all(self, *, accept: bool, author: Optional[str]) -> int:
+        if self._snapshot_signature != _revision_signature(self._document):
+            raise UnsupportedStructureError(
+                "cannot resolve a stale Revisions snapshot; reacquire"
+                " document.revisions. Nothing was changed"
+            )
         _refuse_if_protected(self._document, "resolve revisions")
         selected = [
             revision
@@ -275,12 +334,13 @@ class Revisions(Sequence[Revision]):
                 " by author, resolve individual insertions/deletions, or"
                 " resolve the rest in Word"
             )
-        _validate_moves(selected, self._document)
-        if author is None:
-            # an UNFILTERED resolution certifies "clean afterwards" — refuse
-            # upfront anything that would falsify that
-            _refuse_unaccounted_markup(self._document)
-        resolved = 0
+        _preflight_resolution(
+            self._document,
+            selected,
+            accept=accept,
+            author=author,
+            require_clean=author is None,
+        )
         # moves first (their range brackets must still be intact — a row
         # removal in the same batch could take a move site with it), then
         # other content, then paragraph marks (mark resolution can remove
@@ -290,13 +350,23 @@ class Revisions(Sequence[Revision]):
                 return 0
             return 2 if item.is_paragraph_mark else 1
 
-        for revision in sorted(selected, key=_order):
+        ordered = sorted(selected, key=_order)
+        handled: set[int] = set()
+        for revision in ordered:
+            element_id = id(revision._element)  # noqa: SLF001
+            if element_id in handled:
+                continue
+            if not _is_in_story(revision._element, self._document):  # noqa: SLF001
+                # An earlier move/row/enclosing-wrapper operation resolved
+                # this selected node as part of its compound unit.
+                handled.add(element_id)
+                continue
             _resolve_one(  # noqa: SLF001
                 revision._element, accept=accept, document=self._document
             )
-            resolved += 1
-        self._items = tuple(_enumerate_revisions(self._document))
-        return resolved
+            handled.add(element_id)
+        self._items, self._snapshot_signature = _revision_snapshot(self._document)
+        return len(selected)
 
     def to_dict(self) -> dict:
         return {
@@ -492,11 +562,9 @@ def _resolve_move_unit(
     for wrapper in keep_site.wrappers:
         if wrapper.getparent() is not None:
             _unwrap(wrapper)
-    orphaned_comments: "List[int]" = []
     for wrapper in drop_site.wrappers:
         if wrapper.getparent() is not None:
-            orphaned_comments.extend(_comment_ids_inside(wrapper))
-            wrapper.getparent().remove(wrapper)
+            _discard_element(wrapper, document)
     for site in (unit.from_site, unit.to_site):
         for marker in (site.start, site.end):
             if marker is not None and marker.getparent() is not None:
@@ -505,12 +573,17 @@ def _resolve_move_unit(
         for stamp in site.mark_stamps:
             if stamp.getparent() is not None:
                 _resolve_paragraph_mark(stamp, accept=accept)
-    _cleanup_comment_anchors(document, orphaned_comments)
 
 
-def _validate_moves(selected: "List[Revision]", document: "Document") -> None:
+def _validate_moves(
+    selected: "List[Revision]",
+    document: "Document",
+    *,
+    author: "Optional[str]",
+) -> None:
     """Refuse BEFORE mutating when any selected move is orphaned, duplicated
-    or cross-story (refusal atomicity for the batch)."""
+    or cross-story, or an author filter would resolve another author's side
+    of the same compound move (refusal atomicity for the batch)."""
     move_nodes = [
         revision._element  # noqa: SLF001
         for revision in selected
@@ -519,10 +592,15 @@ def _validate_moves(selected: "List[Revision]", document: "Document") -> None:
     if not move_nodes:
         return
     units, orphans = _move_units(document)
-    unit_elements = {id(e) for unit in units for e in unit.elements}
+    units_by_element = {
+        id(element): unit for unit in units for element in unit.elements
+    }
     orphan_reasons = {id(element): reason for element, reason in orphans}
+    touched_units: dict[int, _MoveUnit] = {}
     for node in move_nodes:
-        if id(node) in unit_elements:
+        unit = units_by_element.get(id(node))
+        if unit is not None:
+            touched_units[id(unit)] = unit
             continue
         reason = orphan_reasons.get(
             id(node), "its range markers were not found"
@@ -530,6 +608,164 @@ def _validate_moves(selected: "List[Revision]", document: "Document") -> None:
         raise UnsupportedStructureError(
             f"selected revisions include an unresolvable tracked move:"
             f" {reason}; nothing was changed. Resolve it in Word instead"
+        )
+    if author is None:
+        return
+    for unit in touched_units.values():
+        revision_elements = (
+            unit.from_site.wrappers
+            + unit.from_site.mark_stamps
+            + unit.to_site.wrappers
+            + unit.to_site.mark_stamps
+        )
+        unit_authors = {element.get(_AUTHOR) or "" for element in revision_elements}
+        unit_authors.update(
+            value
+            for element in (
+                unit.from_site.start,
+                unit.from_site.end,
+                unit.to_site.start,
+                unit.to_site.end,
+            )
+            if element is not None
+            if (value := element.get(_AUTHOR)) is not None
+        )
+        if unit_authors != {author}:
+            raise UnsupportedStructureError(
+                f"cannot resolve move {unit.name!r} with author={author!r}:"
+                f" its compound move unit's authors differ"
+                f" ({sorted(unit_authors)!r}); nothing was changed"
+            )
+
+
+def _preflight_resolution(
+    document: "Document",
+    selected: "List[Revision]",
+    *,
+    accept: bool,
+    author: "Optional[str]",
+    require_clean: bool,
+) -> None:
+    """Validate every dependency a resolution can touch before mutation."""
+    _validate_comment_marker_ids(document)
+    _validate_moves(selected, document, author=author)
+    if require_clean:
+        # An unfiltered resolution certifies "clean afterwards". Refuse
+        # upfront anything that would falsify that claim.
+        _refuse_unaccounted_markup(document)
+    _validate_paragraph_mark_joins(selected, document, accept=accept)
+    discard_roots = _resolution_discard_roots(selected, document, accept=accept)
+    _validate_filtered_destructive_closure(
+        discard_roots, selected, document, author=author
+    )
+    _validate_cleanup_dependencies(document, discard_roots)
+
+
+def _resolution_discard_roots(
+    selected: "List[Revision]",
+    document: "Document",
+    *,
+    accept: bool,
+) -> "List[_Element]":
+    """Subtrees that `_resolve_one()` can detach for this selected set."""
+    units, _orphans = _move_units(document)
+    units_by_element = {
+        id(element): unit for unit in units for element in unit.elements
+    }
+    roots: "List[_Element]" = []
+    seen: "set[int]" = set()
+
+    def add(root: "Optional[_Element]") -> None:
+        if root is not None and id(root) not in seen:
+            roots.append(root)
+            seen.add(id(root))
+
+    for revision in selected:
+        node = revision._element  # noqa: SLF001
+        if revision.is_paragraph_mark and _paragraph_mark_applies(
+            node, accept=accept
+        ):
+            paragraph = _paragraph_of_mark(node)
+            if paragraph is not None and _paragraph_has_content(paragraph):
+                if _next_paragraph_sibling(paragraph) is not None:
+                    add(paragraph.find(_PPR))
+            elif (
+                paragraph is not None
+                and not _is_last_block_in_container(paragraph)
+            ):
+                add(paragraph)
+
+        if revision.revision_type in ("move_from", "move_to"):
+            unit = units_by_element.get(id(node))
+            if unit is None:
+                continue  # `_validate_moves()` already raised for this case.
+            drop_site = unit.from_site if accept else unit.to_site
+            for wrapper in drop_site.wrappers:
+                add(wrapper)
+            continue
+
+        if revision.revision_type in ("row_insertion", "row_deletion"):
+            keeps_row = (
+                node.tag == _INS and accept
+            ) or (node.tag == _DEL and not accept)
+            if keeps_row:
+                continue
+            tr_pr = node.getparent()
+            row = tr_pr.getparent() if tr_pr is not None else None
+            table = row.getparent() if row is not None else None
+            if row is None or row.tag != _TR or table is None or table.tag != _TBL:
+                raise UnsupportedStructureError(
+                    "malformed tracked-row revision cannot be resolved;"
+                    " nothing was changed"
+                )
+            row_count = sum(1 for child in table if child.tag == _TR)
+            add(table if row_count == 1 else row)
+            continue
+
+        removes_content = (node.tag == _INS and not accept) or (
+            node.tag == _DEL and accept
+        )
+        if removes_content and not revision.is_paragraph_mark:
+            add(node)
+
+    return roots
+
+
+def _validate_filtered_destructive_closure(
+    discard_roots: "List[_Element]",
+    selected: "List[Revision]",
+    document: "Document",
+    *,
+    author: "Optional[str]",
+) -> None:
+    """Refuse a filter that would erase unselected revision markup."""
+    if author is None:
+        return
+    selected_ids = {id(revision._element) for revision in selected}  # noqa: SLF001
+    accounted_ids = set(selected_ids)
+    selected_move_ids = {
+        id(revision._element)  # noqa: SLF001
+        for revision in selected
+        if revision.revision_type in ("move_from", "move_to")
+    }
+    if selected_move_ids:
+        units, _orphans = _move_units(document)
+        for unit in units:
+            if any(id(element) in selected_move_ids for element in unit.elements):
+                accounted_ids.update(id(element) for element in unit.elements)
+
+    conflicts: "set[str]" = set()
+    for root in discard_roots:
+        for node in root.iter():
+            if node.tag not in _MARKUP_SCAN_TAGS or id(node) in accounted_ids:
+                continue
+            node_author = node.get(_AUTHOR) or ""
+            conflicts.add(node_author or "<missing author>")
+    if conflicts:
+        raise UnsupportedStructureError(
+            f"cannot resolve revisions with author={author!r}: a selected"
+            " destructive revision would also consume unselected revision"
+            f" markup (authors {sorted(conflicts)!r}); nothing was changed"
         )
 
 
@@ -600,6 +836,25 @@ def _enumerate_revisions(document: "Document") -> Iterator[Revision]:
                 )
 
 
+def _revision_signature(document: "Document") -> "Tuple[_Element, ...]":
+    """Identity signature for the document's currently enumerable revisions."""
+    return tuple(revision._element for revision in _enumerate_revisions(document))
+
+
+def _revision_snapshot(
+    document: "Document",
+) -> "Tuple[Tuple[Revision, ...], Tuple[_Element, ...]]":
+    revisions = tuple(_enumerate_revisions(document))
+    signature = tuple(revision._element for revision in revisions)
+    return (
+        tuple(
+            replace(revision, _snapshot_signature=signature)
+            for revision in revisions
+        ),
+        signature,
+    )
+
+
 #: every tag that constitutes revision markup, for the post-resolution rescan
 #: (enumerated types plus the range brackets that resolution must sweep up)
 _MARKUP_SCAN_TAGS = tuple(_REVISION_TYPES) + tuple(
@@ -664,6 +919,22 @@ def _refuse_unaccounted_markup(document: "Document") -> None:
             f" ({'; '.join(reasons)}); nothing was changed. Resolve it in"
             " Word instead"
         )
+    marker_only = sorted(
+        unit.name
+        for unit in units
+        if not (
+            unit.from_site.wrappers
+            or unit.from_site.mark_stamps
+            or unit.to_site.wrappers
+            or unit.to_site.mark_stamps
+        )
+    )
+    if marker_only:
+        raise UnsupportedStructureError(
+            "the document carries complete marker-only move units with no"
+            f" resolvable move content ({marker_only!r}); nothing was"
+            " changed. Resolve it in Word instead"
+        )
     accounted = {id(r._element) for r in _enumerate_revisions(document)}  # noqa: SLF001
     for unit in units:
         accounted.update(id(element) for element in unit.elements)
@@ -689,12 +960,360 @@ def _is_in_story(node: "_Element", document: "Document") -> bool:
     return id(top) in root_ids
 
 
-def _comment_ids_inside(node: "_Element"):
-    return [
-        int(ref.get(qn("w:id")))
-        for ref in node.iter(qn("w:commentReference"))
-        if ref.get(qn("w:id"))
-    ]
+def _comment_id(node: "_Element") -> int:
+    raw = node.get(_ID)
+    try:
+        if raw is None:
+            raise ValueError
+        return int(raw)
+    except (TypeError, ValueError):
+        name = node.tag.rsplit("}", 1)[-1]
+        raise UnsupportedStructureError(
+            f"malformed {name} comment marker w:id={raw!r}; nothing was"
+            " changed"
+        ) from None
+
+
+def _related_xml_root(
+    document: "Document", reltype: str, label: str
+) -> "Optional[_Element]":
+    """Return one related live-XML root or refuse an ambiguous/opaque part."""
+    try:
+        part = document.part.part_related_by(reltype)
+    except KeyError:
+        return None
+    except ValueError:
+        raise UnsupportedStructureError(
+            f"multiple {label} relationships make revision cleanup"
+            " ambiguous; nothing was changed"
+        ) from None
+    root = getattr(part, "_element", None)
+    if root is None:
+        raise UnsupportedStructureError(
+            f"{label} part is not loaded as live XML; nothing was changed"
+        )
+    return root
+
+
+def _validate_comment_marker_ids(document: "Document") -> None:
+    """Validate comment identifiers and cleanup parts before mutation."""
+    for _story, root in _story_elements(document):
+        for marker in root.iter(
+            _COMMENT_RANGE_START, _COMMENT_RANGE_END, _COMMENT_REFERENCE
+        ):
+            _comment_id(marker)
+        for comment in root.iter(_COMMENT):
+            _comment_id(comment)
+
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    comments_root = _related_xml_root(document, RT.COMMENTS, "comments")
+    if comments_root is not None:
+        for comment in comments_root.iter(_COMMENT):
+            _comment_id(comment)
+
+    # Cleanup also edits commentsExtended. Ensure it is live XML before a
+    # destructive operation can discover that too late for atomic refusal.
+    from docx.commentops import COMMENTS_EXTENDED_RELATIONSHIP_TYPE
+
+    _related_xml_root(
+        document,
+        COMMENTS_EXTENDED_RELATIONSHIP_TYPE,
+        "commentsExtended",
+    )
+
+
+def _comment_ids_inside(node: "_Element") -> "List[int]":
+    return [_comment_id(ref) for ref in node.iter(_COMMENT_REFERENCE)]
+
+
+def _comment_range_ids_inside(node: "_Element") -> "set[int]":
+    return {
+        _comment_id(marker)
+        for marker in node.iter(_COMMENT_RANGE_START, _COMMENT_RANGE_END)
+    }
+
+
+def _part_containing(node: "_Element", document: "Document"):
+    top = node
+    while top.getparent() is not None:
+        top = top.getparent()
+    package = document.part.package
+    assert package is not None
+    for part in package.iter_parts():
+        if getattr(part, "_element", None) is top:
+            return part
+    return None
+
+
+def _is_relationship_attribute(name: str) -> bool:
+    return name.startswith(_REL_NS_PREFIX) or name == _OFFICE_REL_ID
+
+
+def _relationship_ids_inside(node: "_Element", part) -> "set[str]":
+    available = set(part.rels)
+    return {
+        value
+        for descendant in node.iter()
+        for name, value in descendant.attrib.items()
+        if _is_relationship_attribute(name) and value in available
+    }
+
+
+def _drop_unreferenced_relationships(part, candidates: "set[str]") -> None:
+    if not candidates:
+        return
+    root = getattr(part, "_element", None)
+    if root is None:
+        return
+    referenced = {
+        value
+        for descendant in root.iter()
+        for name, value in descendant.attrib.items()
+        if _is_relationship_attribute(name) and value in candidates
+    }
+    for r_id in sorted(candidates - referenced):
+        if r_id in part.rels:
+            part.drop_rel(r_id)
+
+
+def _note_id(node: "_Element") -> int:
+    raw = node.get(_ID)
+    try:
+        if raw is None:
+            raise ValueError
+        return int(raw)
+    except (TypeError, ValueError):
+        name = node.tag.rsplit("}", 1)[-1]
+        raise UnsupportedStructureError(
+            f"malformed {name} w:id={raw!r}; nothing was changed"
+        ) from None
+
+
+def _note_ids_inside(node: "_Element", reference_tag: str) -> "set[int]":
+    return {_note_id(reference) for reference in node.iter(reference_tag)}
+
+
+def _note_reference_remains(
+    document: "Document", reference_tag: str, note_id: int
+) -> bool:
+    return any(
+        _note_id(reference) == note_id
+        for _story, root in _story_elements(document)
+        for reference in root.iter(reference_tag)
+    )
+
+
+def _validate_note_cleanup_graph(document: "Document") -> None:
+    """Validate both note relationship graphs and all decimal identifiers."""
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    note_kinds = (
+        (_FOOTNOTE_REFERENCE, _FOOTNOTE, RT.FOOTNOTES, "footnotes"),
+        (_ENDNOTE_REFERENCE, _ENDNOTE, RT.ENDNOTES, "endnotes"),
+    )
+    roots = [root for _story, root in _story_elements(document)]
+    comments_root = _related_xml_root(document, RT.COMMENTS, "comments")
+    if comments_root is not None and all(
+        comments_root is not existing for existing in roots
+    ):
+        roots.append(comments_root)
+    for _reference_tag, body_tag, reltype, label in note_kinds:
+        root = _related_xml_root(document, reltype, label)
+        if root is None:
+            continue
+        if all(root is not existing for existing in roots):
+            roots.append(root)
+        for note in root.iter(body_tag):
+            _note_id(note)
+    for root in roots:
+        for marker in root.iter(
+            _COMMENT_RANGE_START, _COMMENT_RANGE_END, _COMMENT_REFERENCE
+        ):
+            _comment_id(marker)
+        for comment in root.iter(_COMMENT):
+            _comment_id(comment)
+        for reference_tag, _body_tag, _reltype, _label in note_kinds:
+            for reference in root.iter(reference_tag):
+                _note_id(reference)
+
+
+def _validate_cleanup_dependencies(
+    document: "Document", discard_roots: "List[_Element]"
+) -> None:
+    """Preflight every side-part/resource cleanup a discard can trigger."""
+    has_note_references = False
+    comment_ids: "set[int]" = set()
+    comment_range_ids: "set[int]" = set()
+    for root in discard_roots:
+        comment_ids.update(_comment_ids_inside(root))
+        comment_range_ids.update(_comment_range_ids_inside(root))
+        for reference_tag in (_FOOTNOTE_REFERENCE, _ENDNOTE_REFERENCE):
+            if _note_ids_inside(root, reference_tag):
+                has_note_references = True
+        part = _part_containing(root, document)
+        has_relationships = any(
+            _is_relationship_attribute(name)
+            for descendant in root.iter()
+            for name in descendant.attrib
+        )
+        if has_relationships and part is None:
+            raise UnsupportedStructureError(
+                "cannot identify the package part containing relationship-"
+                "bearing revision content; nothing was changed"
+            )
+    partial_comment_ids = sorted(comment_range_ids - comment_ids)
+    if partial_comment_ids:
+        raise UnsupportedStructureError(
+            "revision cleanup would remove comment range markers while"
+            f" leaving their reference marks live (comment ids"
+            f" {partial_comment_ids}); nothing was changed"
+        )
+    if comment_ids:
+        from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+        comments_root = _related_xml_root(document, RT.COMMENTS, "comments")
+        _validate_comment_cleanup_graph(
+            document,
+            comment_ids,
+            discard_roots,
+            comments_root,
+        )
+        if comments_root is not None and any(
+            True
+            for reference_tag in (_FOOTNOTE_REFERENCE, _ENDNOTE_REFERENCE)
+            for _reference in comments_root.iter(reference_tag)
+        ):
+            has_note_references = True
+    if has_note_references:
+        _validate_note_cleanup_graph(document)
+
+
+def _validate_comment_cleanup_graph(
+    document: "Document",
+    comment_ids: "set[int]",
+    discard_roots: "List[_Element]",
+    comments_root: "Optional[_Element]",
+) -> None:
+    """Require one unambiguous reference and body for each removed comment."""
+    def is_discarded(node: "_Element") -> bool:
+        while node is not None:
+            if any(node is root for root in discard_roots):
+                return True
+            node = node.getparent()
+        return False
+
+    story_roots = [root for _story, root in _story_elements(document)]
+    for comment_id in sorted(comment_ids):
+        references = [
+            reference
+            for root in story_roots
+            for reference in root.iter(_COMMENT_REFERENCE)
+            if _comment_id(reference) == comment_id
+        ]
+        if len(references) != 1 or not is_discarded(references[0]):
+            raise UnsupportedStructureError(
+                f"comment {comment_id} has {len(references)} reference marks;"
+                " revision cleanup requires exactly one reference inside the"
+                " discarded content. Nothing was changed"
+            )
+
+        bodies = (
+            []
+            if comments_root is None
+            else [
+                comment
+                for comment in comments_root.iter(_COMMENT)
+                if _comment_id(comment) == comment_id
+            ]
+        )
+        if len(bodies) != 1:
+            raise UnsupportedStructureError(
+                f"comment {comment_id} has {len(bodies)} comment bodies;"
+                " revision cleanup requires exactly one. Nothing was changed"
+            )
+
+        starts = [
+            marker
+            for root in story_roots
+            for marker in root.iter(_COMMENT_RANGE_START)
+            if _comment_id(marker) == comment_id
+        ]
+        ends = [
+            marker
+            for root in story_roots
+            for marker in root.iter(_COMMENT_RANGE_END)
+            if _comment_id(marker) == comment_id
+        ]
+        if len(starts) != len(ends) or len(starts) > 1:
+            raise UnsupportedStructureError(
+                f"comment {comment_id} has an ambiguous range-marker graph;"
+                " nothing was changed"
+            )
+
+
+def _cleanup_note_bodies(
+    document: "Document",
+    footnote_ids: "set[int]",
+    endnote_ids: "set[int]",
+) -> None:
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    note_kinds = (
+        (_FOOTNOTE_REFERENCE, _FOOTNOTE, RT.FOOTNOTES, footnote_ids),
+        (_ENDNOTE_REFERENCE, _ENDNOTE, RT.ENDNOTES, endnote_ids),
+    )
+    for reference_tag, body_tag, reltype, note_ids in note_kinds:
+        removable = {
+            note_id
+            for note_id in note_ids
+            if not _note_reference_remains(document, reference_tag, note_id)
+        }
+        if not removable:
+            continue
+        try:
+            notes_part = document.part.part_related_by(reltype)
+        except KeyError:
+            continue
+        notes_root = getattr(notes_part, "_element", None)
+        if notes_root is None:
+            raise UnsupportedStructureError(
+                "note part is not loaded as live XML; cleanup cannot"
+                " continue without leaving orphaned note bodies"
+            )
+        for note in list(notes_root):
+            if (
+                note.tag == body_tag
+                and note.get(_NOTE_TYPE) is None
+                and _note_id(note) in removable
+            ):
+                _discard_element(note, document)
+
+
+def _cleanup_comments_extended(
+    document: "Document", paragraph_ids: "set[str]"
+) -> None:
+    if not paragraph_ids:
+        return
+    from docx.commentops import COMMENTS_EXTENDED_RELATIONSHIP_TYPE
+
+    try:
+        extended = document.part.part_related_by(
+            COMMENTS_EXTENDED_RELATIONSHIP_TYPE
+        )
+    except KeyError:
+        return
+    root = getattr(extended, "_element", None)
+    if root is None:  # prevalidated for public resolution paths
+        raise UnsupportedStructureError(
+            "commentsExtended is not loaded as live XML"
+        )
+    for entry in list(root):
+        if (
+            entry.tag == _W15_COMMENT_EX
+            and entry.get(_W15_PARA_ID) in paragraph_ids
+        ):
+            root.remove(entry)
 
 
 def _cleanup_comment_anchors(document: "Optional[Document]", comment_ids) -> None:
@@ -705,11 +1324,8 @@ def _cleanup_comment_anchors(document: "Optional[Document]", comment_ids) -> Non
         return
     wanted = set(comment_ids)
     for _story, root in _story_elements(document):
-        for marker in list(
-            root.iter(qn("w:commentRangeStart"), qn("w:commentRangeEnd"))
-        ):
-            raw = marker.get(qn("w:id"))
-            if raw and int(raw) in wanted:
+        for marker in list(root.iter(_COMMENT_RANGE_START, _COMMENT_RANGE_END)):
+            if _comment_id(marker) in wanted:
                 marker.getparent().remove(marker)
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
@@ -718,19 +1334,58 @@ def _cleanup_comment_anchors(document: "Optional[Document]", comment_ids) -> Non
     except KeyError:
         return
     comments_root = comments_part._element  # noqa: SLF001
+    paragraph_ids: "set[str]" = set()
     for comment in list(comments_root):
-        raw = comment.get(qn("w:id"))
-        if raw and int(raw) in wanted:
-            comments_root.remove(comment)
+        if _comment_id(comment) not in wanted:
+            continue
+        paragraphs = comment.findall(_P)
+        if paragraphs:
+            para_id = paragraphs[-1].get(_W14_PARA_ID)
+            if para_id is not None:
+                paragraph_ids.add(para_id)
+        _discard_element(comment, document)
+    _cleanup_comments_extended(document, paragraph_ids)
+
+
+def _discard_element(
+    node: "_Element", document: "Optional[Document]"
+) -> None:
+    """Detach a subtree and prune resources that only that subtree used."""
+    parent = node.getparent()
+    if parent is None:
+        raise UnsupportedStructureError(
+            "cannot discard a detached revision subtree; nothing was changed"
+        )
+    comment_ids = _comment_ids_inside(node)
+    footnote_ids = _note_ids_inside(node, _FOOTNOTE_REFERENCE)
+    endnote_ids = _note_ids_inside(node, _ENDNOTE_REFERENCE)
+    part = _part_containing(node, document) if document is not None else None
+    relationship_ids = (
+        _relationship_ids_inside(node, part) if part is not None else set()
+    )
+
+    parent.remove(node)
+
+    if part is not None:
+        _drop_unreferenced_relationships(part, relationship_ids)
+    if document is not None:
+        _cleanup_note_bodies(document, footnote_ids, endnote_ids)
+        _cleanup_comment_anchors(document, comment_ids)
 
 
 def _resolve_one(
     node: "_Element", *, accept: bool, document: "Optional[Document]" = None
 ) -> None:
     if node.getparent() is None:
-        return  # already resolved via an enclosing operation
+        raise UnsupportedStructureError(
+            "cannot resolve a stale Revision; reacquire it from"
+            " document.revisions. Nothing was changed"
+        )
     if document is not None and not _is_in_story(node, document):
-        return  # its subtree was detached by an enclosing resolution
+        raise UnsupportedStructureError(
+            "cannot resolve a stale Revision; reacquire it from"
+            " document.revisions. Nothing was changed"
+        )
     revision_type = _revision_type_of(node)
     if revision_type in ("move_from", "move_to"):
         _resolve_move(node, accept=accept, document=document)
@@ -747,12 +1402,13 @@ def _resolve_one(
     removes_content = (node.tag == _INS and not accept) or (
         node.tag == _DEL and accept
     )
-    orphaned = _comment_ids_inside(node) if removes_content else []
+    if removes_content:
+        _discard_element(node, document)
+        return
     if node.tag == _INS:
         _resolve_insertion(node, accept=accept)
     else:
         _resolve_deletion(node, accept=accept)
-    _cleanup_comment_anchors(document, orphaned)
 
 
 def _unwrap(node: "_Element") -> None:
@@ -841,7 +1497,6 @@ def _resolve_row_revision(
         return
     table = row.getparent()
     if sum(1 for child in table if child.tag == _TR) == 1:
-        orphaned = _comment_ids_inside(table)
         parent = table.getparent()
         siblings = [
             child for child in parent if child.tag in (_P, _TBL) and child is not table
@@ -850,12 +1505,9 @@ def _resolve_row_revision(
             from docx.oxml.parser import OxmlElement
 
             table.addprevious(OxmlElement("w:p"))
-        parent.remove(table)
-        _cleanup_comment_anchors(document, orphaned)
+        _discard_element(table, document)
         return
-    orphaned = _comment_ids_inside(row)
-    table.remove(row)
-    _cleanup_comment_anchors(document, orphaned)
+    _discard_element(row, document)
 
 
 def _paragraph_of_mark(node: "_Element") -> "Optional[_Element]":
@@ -877,18 +1529,95 @@ def _is_last_block_in_container(paragraph: "_Element") -> bool:
     return not blocks
 
 
+_TRANSPARENT_BLOCK_MARKERS = frozenset(
+    qn(tag)
+    for tag in (
+        "w:bookmarkStart",
+        "w:bookmarkEnd",
+        "w:commentRangeStart",
+        "w:commentRangeEnd",
+        "w:permStart",
+        "w:permEnd",
+        "w:proofErr",
+        "w:moveFromRangeStart",
+        "w:moveFromRangeEnd",
+        "w:moveToRangeStart",
+        "w:moveToRangeEnd",
+        "w:customXmlInsRangeStart",
+        "w:customXmlInsRangeEnd",
+        "w:customXmlDelRangeStart",
+        "w:customXmlDelRangeEnd",
+        "w:customXmlMoveFromRangeStart",
+        "w:customXmlMoveFromRangeEnd",
+        "w:customXmlMoveToRangeStart",
+        "w:customXmlMoveToRangeEnd",
+    )
+)
+
+
 def _next_paragraph_sibling(paragraph: "_Element") -> "Optional[_Element]":
     node = paragraph.getnext()
     while node is not None:
         if node.tag == _P:
             return node
-        if node.tag in (qn("w:tbl"), qn("w:sdt")):
+        if node.tag in (_TBL, qn("w:sdt"), _SECT_PR):
             # merging across a table or INTO a block-level content control
             # is not a paragraph join — hopping content past it would
             # silently reorder document text
             return None
-        node = node.getnext()
+        if node.tag in _TRANSPARENT_BLOCK_MARKERS:
+            node = node.getnext()
+            continue
+        name = node.tag.rsplit("}", 1)[-1]
+        raise UnsupportedStructureError(
+            f"cannot resolve a paragraph-mark revision across the {name!r}"
+            " block; its content boundary is not a safe paragraph join."
+            " Nothing was changed"
+        )
     return None
+
+
+def _paragraph_mark_applies(node: "_Element", *, accept: bool) -> bool:
+    is_deletion = node.tag in (_DEL, _MOVE_FROM)
+    return (accept and is_deletion) or (not accept and not is_deletion)
+
+
+def _preflight_paragraph_mark(node: "_Element", *, accept: bool) -> None:
+    paragraph = _paragraph_of_mark(node)
+    if (
+        paragraph is not None
+        and _paragraph_mark_applies(node, accept=accept)
+        and _paragraph_has_content(paragraph)
+    ):
+        _next_paragraph_sibling(paragraph)
+
+
+def _validate_paragraph_mark_joins(
+    selected: "List[Revision]", document: "Document", *, accept: bool
+) -> None:
+    """Preflight every paragraph join, including compound move stamps."""
+    marks = [
+        revision._element  # noqa: SLF001
+        for revision in selected
+        if revision.is_paragraph_mark
+    ]
+    move_nodes = {
+        id(revision._element)  # noqa: SLF001
+        for revision in selected
+        if revision.revision_type in ("move_from", "move_to")
+    }
+    if move_nodes:
+        units, _orphans = _move_units(document)
+        for unit in units:
+            if any(id(element) in move_nodes for element in unit.elements):
+                marks.extend(unit.from_site.mark_stamps)
+                marks.extend(unit.to_site.mark_stamps)
+    seen: "set[int]" = set()
+    for mark in marks:
+        if id(mark) in seen:
+            continue
+        seen.add(id(mark))
+        _preflight_paragraph_mark(mark, accept=accept)
 
 
 def _resolve_paragraph_mark(node: "_Element", *, accept: bool) -> None:
@@ -905,10 +1634,16 @@ def _resolve_paragraph_mark(node: "_Element", *, accept: bool) -> None:
       a mark-INSERTED split merges the same way.
     """
     paragraph = _paragraph_of_mark(node)
-    # w:moveFrom stamps are del-like (the mark moved AWAY from here),
-    # w:moveTo stamps ins-like — same break-change algebra
-    is_deletion = node.tag in (_DEL, _MOVE_FROM)
-    applying_break_change = (accept and is_deletion) or (not accept and not is_deletion)
+    applying_break_change = _paragraph_mark_applies(node, accept=accept)
+    following = None
+    if (
+        paragraph is not None
+        and applying_break_change
+        and _paragraph_has_content(paragraph)
+    ):
+        # Resolve the join target before touching the revision stamp. This is
+        # the last-line atomicity guard for direct/internal callers.
+        following = _next_paragraph_sibling(paragraph)
 
     r_pr = node.getparent()
     r_pr.remove(node)
@@ -917,7 +1652,6 @@ def _resolve_paragraph_mark(node: "_Element", *, accept: bool) -> None:
     if paragraph is None or not applying_break_change:
         return
     if _paragraph_has_content(paragraph):
-        following = _next_paragraph_sibling(paragraph)
         if following is None:
             return  # nothing to join with; the content stays as a paragraph
         insert_at = 1 if following.find(_PPR) is not None else 0

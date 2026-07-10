@@ -326,7 +326,6 @@ class DescribeCompareRegressions:
         # region 1 crosses the tab (refuses); region 2 after it succeeds
         # first in reverse order — the fallback must start from pristine
         result, a, b = _compare_pair(build("c d"), build("c D"), tmp_path)
-        xml = result.document.element.xml
         body = result.document.element.body
         for deletion in body.iter(qn("w:del")):
             assert deletion.find(f".//{qn('w:del')}") is None
@@ -336,7 +335,7 @@ class DescribeCompareRegressions:
         result.document.revisions.accept_all()
         assert _visible(result.document) == _visible(docx.Document(b))
 
-    def it_reports_field_flattening_as_a_finding(self, tmp_path: Path):
+    def it_refuses_field_result_changes_instead_of_flattening(self, tmp_path: Path):
         def build(result_text):
             def _build(document):
                 paragraph = document.add_paragraph()
@@ -364,12 +363,10 @@ class DescribeCompareRegressions:
 
             return _build
 
-        result, _a, b = _compare_pair(
-            build("June 1, 2026"), build("July 9, 2026"), tmp_path
-        )
-        assert any(f.kind == "field_flattened" for f in result.findings)
-        result.document.revisions.accept_all()
-        assert _visible(result.document) == _visible(docx.Document(b))
+        with pytest.raises(UnsupportedStructureError, match="cannot safely redline"):
+            _compare_pair(
+                build("June 1, 2026"), build("July 9, 2026"), tmp_path
+            )
 
     def it_stamps_one_edit_with_one_timestamp(self, tmp_path: Path):
         naive = dt.datetime(2026, 1, 2, 3, 4, 5)  # NAIVE on purpose
@@ -429,7 +426,7 @@ class DescribeCompositionRegressions:
 
     def it_remaps_numbering_referenced_only_by_an_imported_style(self, tmp_path):
         from docx.composition import insert_blocks_from
-        from docx.numbering import ensure_decimal_definition, list_numbering
+        from docx.numbering import ensure_decimal_definition
 
         source = docx.Document()
         source_num = ensure_decimal_definition(source)

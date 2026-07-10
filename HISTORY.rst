@@ -3,6 +3,16 @@
 Release History
 ---------------
 
+0.1.1 (unreleased)
+++++++++++++++++++
+
+- Refuse unsupported comparisons instead of producing lossy redlines.
+- Validate revision, editing, composition, and package operations before mutation.
+- Reject ambiguous or unsafe ZIP packages with bounded reads.
+- Write deterministic ZIP metadata so identical saves are byte-identical.
+- Verify distribution identity and strengthen test and release gates.
+
+
 1.2.0 (2025-06-16)
 ++++++++++++++++++
 

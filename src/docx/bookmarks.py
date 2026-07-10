@@ -11,8 +11,10 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, List, Optional
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
+from docx._ownership import require_span_owner
+from docx._textatoms import DEL_TEXT, INSTR_TEXT, is_direct_run_child, project_run_child
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
@@ -29,7 +31,6 @@ _BOOKMARK_START = qn("w:bookmarkStart")
 _BOOKMARK_END = qn("w:bookmarkEnd")
 _ID = qn("w:id")
 _NAME = qn("w:name")
-_T = qn("w:t")
 _INSTR_TEXT = qn("w:instrText")
 _FLD_SIMPLE = qn("w:fldSimple")
 _INSTR = qn("w:instr")
@@ -104,12 +105,19 @@ def _bookmark_text(root: "_Element", start: "_Element", raw_id: Optional[str]) -
             and node.get(_ID) == raw_id
         ):
             break
-        if collecting and node.tag == _T:
+        if (
+            collecting
+            and is_direct_run_child(node)
+            and node.tag not in (DEL_TEXT, INSTR_TEXT)
+        ):
+            projection = project_run_child(node)
+            if projection.barrier or not projection.text:
+                continue
             paragraph = _paragraph_of(node)
             if last_paragraph is not None and paragraph is not last_paragraph:
                 pieces.append("\n")  # boundary, matching Span.text semantics
             last_paragraph = paragraph
-            pieces.append(node.text or "")
+            pieces.append(projection.text)
     return "".join(pieces)
 
 
@@ -129,6 +137,7 @@ def create_bookmark(document: "Document", span: "Span", name: str) -> BookmarkIn
     Boundary runs are split so the markers wrap precisely the span's
     characters — the same isolation the comment-range machinery uses.
     """
+    require_span_owner(document, span)
     _refuse_if_protected(document, "create a bookmark")
     if not _NAME_RE.match(name or ""):
         raise ValueError(
@@ -153,13 +162,15 @@ def create_bookmark(document: "Document", span: "Span", name: str) -> BookmarkIn
                 "the span includes content outside ordinary runs; bookmark"
                 " a plain text range"
             )
-    span._isolate_edge_runs()  # noqa: SLF001
+    # Allocation parses every existing marker id, so it must happen before
+    # edge isolation splits any source runs.
     bookmark_id = _next_bookmark_id(document)
     start_marker = OxmlElement("w:bookmarkStart")
     start_marker.set(_ID, str(bookmark_id))
     start_marker.set(_NAME, name)
     end_marker = OxmlElement("w:bookmarkEnd")
     end_marker.set(_ID, str(bookmark_id))
+    span._isolate_edge_runs()  # noqa: SLF001
     first_run = span._atoms[0].run  # noqa: SLF001
     last_run = span._atoms[-1].run  # noqa: SLF001
     first_run.addprevious(start_marker)
@@ -180,20 +191,42 @@ def delete_bookmark(document: "Document", name: str) -> None:
             f"bookmark {name!r} is referenced by {referencing} field"
             " instruction(s); update or remove those fields first"
         )
-    removed = 0
+    pairs = []
     for _story, root in _story_elements(document):
-        for start in list(root.iter(_BOOKMARK_START)):
-            if start.get(_NAME) != name:
-                continue
-            raw_id = start.get(_ID)
-            for end in list(root.iter(_BOOKMARK_END)):
-                if end.get(_ID) == raw_id:
-                    end.getparent().remove(end)
-                    break
-            start.getparent().remove(start)
-            removed += 1  # duplicate names all go — "deleted" must mean gone
-    if not removed:
+        starts_by_id = {}
+        ends_by_id = {}
+        for tag, destination in (
+            (_BOOKMARK_START, starts_by_id),
+            (_BOOKMARK_END, ends_by_id),
+        ):
+            for marker in root.iter(tag):
+                raw_id = marker.get(_ID)
+                try:
+                    marker_id = int(raw_id) if raw_id is not None else -1
+                except ValueError:
+                    marker_id = -1
+                if marker_id < 0 or marker_id in destination:
+                    raise UnsupportedStructureError(
+                        "bookmark markers have missing, non-numeric, or duplicate"
+                        f" w:id {raw_id!r}; nothing was changed"
+                    )
+                destination[marker_id] = marker
+        if set(starts_by_id) != set(ends_by_id):
+            raise UnsupportedStructureError(
+                "bookmark start/end markers are not one-to-one; nothing was changed"
+            )
+        pairs.extend(
+            (start, ends_by_id[marker_id])
+            for marker_id, start in starts_by_id.items()
+            if start.get(_NAME) == name
+        )
+    if not pairs:
         raise TargetNotFoundError(f"no bookmark named {name!r} exists")
+
+    # -- validated; mutate --
+    for start, end in pairs:
+        end.getparent().remove(end)
+        start.getparent().remove(start)
 
 
 _FLD_CHAR = qn("w:fldChar")
@@ -205,21 +238,31 @@ def _iter_field_instructions(root: "_Element"):
     Word freely SPLITS one instruction across several runs, so any scan
     matching single nodes silently misses references.
     """
-    stack: "List[List[_Element]]" = []
+    stack: "List[Tuple[List[_Element], bool]]" = []
     for node in root.iter():
         if node.tag == _FLD_CHAR:
             fld_type = node.get(_FLD_CHAR_TYPE)
             if fld_type == "begin":
-                stack.append([])
+                stack.append(([], True))
+            elif fld_type == "separate" and stack:
+                nodes, _collecting = stack[-1]
+                stack[-1] = (nodes, False)
             elif fld_type == "end" and stack:
-                nodes = stack.pop()
+                nodes, _collecting = stack.pop()
                 yield "".join(n.text or "" for n in nodes), nodes
         elif node.tag == _INSTR_TEXT and stack:
-            stack[-1].append(node)
+            for nodes, collecting in reversed(stack):
+                if collecting:
+                    nodes.append(node)
+                    break
 
 
 def _reference_pattern(name: str):
-    return re.compile(rf"\b(?:PAGEREF|NOTEREF|REF)\s+{re.escape(name)}(?=\s|$)")
+    escaped = re.escape(name)
+    return re.compile(
+        rf'\b(?:PAGEREF|NOTEREF|REF)\s+(?:"{escaped}"|{escaped})(?=\s|$)',
+        re.IGNORECASE,
+    )
 
 
 def _field_references(document: "Document", name: str) -> int:
@@ -234,6 +277,7 @@ def _field_references(document: "Document", name: str) -> int:
             if instr and pattern.search(instr):
                 count += 1
         for link in root.iter(qn("w:hyperlink")):
-            if link.get(qn("w:anchor")) == name:
+            anchor = link.get(qn("w:anchor"))
+            if anchor is not None and anchor.casefold() == name.casefold():
                 count += 1  # internal links target bookmarks too
     return count

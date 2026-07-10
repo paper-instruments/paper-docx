@@ -239,7 +239,7 @@ class DescribeCrossParagraphCommentAnchors:
             [p1.runs[0], p2.runs[0]], text="both", author="Carol QA"
         )
         assert anchored_text(document, comment) == (
-            "First body paragraph with perfectly ordinary text."
+            "First body paragraph with perfectly ordinary text.\n"
             "Second body paragraph, equally unremarkable."
         )
 

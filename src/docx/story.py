@@ -14,9 +14,10 @@ Traversal rules:
 * Paragraphs inside table cells are not emitted as separate blocks — their
   text belongs to the table block. Paragraphs inside content controls and
   text boxes ARE emitted, flagged.
-* `mc:AlternateContent` contributes only its first `mc:Choice`; fallbacks
-  (which duplicate content, e.g. VML copies of text boxes) are skipped, so
-  one visible text box yields its text exactly once.
+* `mc:AlternateContent` contributes its first supported `mc:Choice`, or its
+  `mc:Fallback` when none of the choices' required namespaces are supported.
+  Exactly one branch is traversed, so duplicated compatibility content is
+  never counted twice.
 * Empty paragraphs are emitted — block indices must be stable, and an empty
   paragraph is a real edit target.
 """
@@ -27,6 +28,7 @@ import hashlib
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Tuple
 
+from docx import _textatoms
 from docx._normalize import normalize_text
 from docx.oxml.ns import qn
 
@@ -37,6 +39,9 @@ if TYPE_CHECKING:
 
 VIEWS = ("current", "original", "all")
 
+_T = _textatoms.T
+_DEL_TEXT = _textatoms.DEL_TEXT
+_FLD_CHAR = _textatoms.FLD_CHAR
 _P = qn("w:p")
 _TBL = qn("w:tbl")
 _SDT = qn("w:sdt")
@@ -45,14 +50,8 @@ _INS = qn("w:ins")
 _DEL = qn("w:del")
 _MOVE_FROM = qn("w:moveFrom")
 _MOVE_TO = qn("w:moveTo")
-_T = qn("w:t")
-_DEL_TEXT = qn("w:delText")
-_TAB = qn("w:tab")
-_BR = qn("w:br")
-_CR = qn("w:cr")
 _TXBX = qn("w:txbxContent")
 _FLD_SIMPLE = qn("w:fldSimple")
-_FLD_CHAR = qn("w:fldChar")
 _FLD_CHAR_TYPE = qn("w:fldCharType")
 
 #: tracked property-change vocabulary — enumerable, countable, not resolvable
@@ -75,6 +74,29 @@ _FOOTNOTE_TYPE = qn("w:type")
 _MC_NS = "http://schemas.openxmlformats.org/markup-compatibility/2006"
 _MC_ALTERNATE = f"{{{_MC_NS}}}AlternateContent"
 _MC_CHOICE = f"{{{_MC_NS}}}Choice"
+_MC_FALLBACK = f"{{{_MC_NS}}}Fallback"
+
+# Namespace capabilities this traversal actually understands. ``Requires``
+# names prefixes, but support is a property of their namespace URIs; merely
+# declaring an unknown prefix does not make its choice processable.
+_SUPPORTED_MC_NAMESPACES = frozenset(
+    (
+        "http://schemas.openxmlformats.org/wordprocessingml/2006/main",
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships",
+        "http://schemas.openxmlformats.org/drawingml/2006/main",
+        "http://schemas.openxmlformats.org/drawingml/2006/picture",
+        "http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingDrawing",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingShape",
+        "http://schemas.microsoft.com/office/word/2010/wordprocessingGroup",
+        "http://schemas.microsoft.com/office/word/2010/wordml",
+        "http://schemas.microsoft.com/office/word/2012/wordml",
+        "urn:schemas-microsoft-com:office:office",
+        "urn:schemas-microsoft-com:office:word",
+        "urn:schemas-microsoft-com:vml",
+    )
+)
+
 
 def _story_sort_key(name: str) -> Tuple[int, str]:
     """Traversal order: body, headers, footers, footnotes, endnotes, comments."""
@@ -205,15 +227,35 @@ def story_parts(document: "Document") -> Tuple[str, ...]:
 
 
 def _first_choice_children(element: "_Element") -> "List[_Element]":
-    """`element`'s children with mc:AlternateContent collapsed to its first
-    mc:Choice (fallback content is a duplicate and must not be traversed)."""
+    """Children with each ``mc:AlternateContent`` collapsed to one branch.
+
+    Choices are considered in document order and selected only when every
+    prefix in their required namespace list is one this traversal supports.
+    If no choice qualifies, the fallback branch is used. Missing fallback
+    content honestly contributes nothing.
+    """
+
+    def choice_is_supported(choice: "_Element") -> bool:
+        requires = (choice.get("Requires") or "").split()
+        return bool(requires) and all(
+            choice.nsmap.get(prefix) in _SUPPORTED_MC_NAMESPACES
+            for prefix in requires
+        )
+
     result: "List[_Element]" = []
     for child in element:
         if child.tag == _MC_ALTERNATE:
+            selected = None
+            fallback = None
             for alt_child in child:
-                if alt_child.tag == _MC_CHOICE:
-                    result.extend(_first_choice_children(alt_child))
+                if alt_child.tag == _MC_CHOICE and choice_is_supported(alt_child):
+                    selected = alt_child
                     break
+                if alt_child.tag == _MC_FALLBACK and fallback is None:
+                    fallback = alt_child
+            selected = selected if selected is not None else fallback
+            if selected is not None:
+                result.extend(_first_choice_children(selected))
         else:
             result.append(child)
     return result
@@ -272,12 +314,21 @@ class _TextVisitor:
                 return
             self._emit(element.text or "", in_ins, True, in_sdt, in_txbx)
             return
-        if tag in (_TAB, _BR, _CR):
+        if tag == _textatoms.INSTR_TEXT:
+            # Field instructions are searchable so edits can detect and
+            # refuse them, but they are not visible document text.
+            return
+        if _textatoms.is_direct_run_child(element):
+            projection = _textatoms.project_run_child(element)
+            if projection.barrier:
+                return
+            if not projection.text:
+                return
             if self.view == "current" and in_del:
                 return
             if self.view == "original" and in_ins:
                 return
-            self._emit("\t" if tag == _TAB else "\n", in_ins, in_del, in_sdt, in_txbx)
+            self._emit(projection.text, in_ins, in_del, in_sdt, in_txbx)
             return
         for child in _first_choice_children(element):
             self.visit(child, in_ins=in_ins, in_del=in_del, in_sdt=in_sdt,
@@ -493,7 +544,7 @@ def _count_blind_regions(root: "_Element") -> Dict[str, int]:
     text hold content this package does not surface; a non-zero count says
     "there is more here than the outline shows".
     """
-    counts = {key: 0 for key in BLIND_REGION_KEYS}
+    counts = dict.fromkeys(BLIND_REGION_KEYS, 0)
     tag_keys = {
         _INS: "tracked_insertions",
         _DEL: "tracked_deletions",
@@ -564,7 +615,7 @@ def outline(document: "Document", *, view: str = "current") -> Outline:
     on every call (inspection determinism).
     """
     blocks = tuple(iter_blocks(document, view=view))
-    totals = {key: 0 for key in BLIND_REGION_KEYS}
+    totals = dict.fromkeys(BLIND_REGION_KEYS, 0)
     for _, root in _story_elements(document):
         for key, value in _count_blind_regions(root).items():
             totals[key] += value

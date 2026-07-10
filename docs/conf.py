@@ -20,7 +20,7 @@ import sys
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 sys.path.insert(0, os.path.abspath(".."))
 
-from docx import __version__  # noqa
+from docx import __paper_version__  # noqa
 
 
 # -- General configuration ---------------------------------------------------
@@ -61,9 +61,9 @@ copyright = "2013, Steve Canny (python-docx); 2026, Paper Instruments, Inc. (pap
 # built documents.
 #
 # The short X.Y version.
-version = __version__
+version = __paper_version__
 # The full version, including alpha/beta/rc tags.
-release = __version__
+release = __paper_version__
 
 # A string of reStructuredText that will be included at the end of every source
 # file that is read. This is the right place to add substitutions that should
@@ -211,6 +211,8 @@ rst_epilog = """
 .. ---------------------------------------------------------------------------
 
 .. |PaperRefusal| replace:: :exc:`.PaperRefusal`
+
+.. |PackageLimitError| replace:: :exc:`.PackageLimitError`
 
 .. |AmbiguousTargetError| replace:: :exc:`.AmbiguousTargetError`
 
@@ -400,7 +402,7 @@ html_sidebars = {"**": ["localtoc.html", "relations.html", "sidebarlinks.html", 
 # html_file_suffix = None
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = "python-docxdoc"
+htmlhelp_basename = "paper-docxdoc"
 
 
 # -- Options for LaTeX output -----------------------------------------------
@@ -421,7 +423,13 @@ latex_elements = {
 #  author,
 #  documentclass [howto/manual]).
 latex_documents = [
-    ("index", "python-docx.tex", "python-docx Documentation", "Steve Canny", "manual"),
+    (
+        "index",
+        "paper-docx.tex",
+        "paper-docx Documentation",
+        "Steve Canny; Paper Instruments, Inc.",
+        "manual",
+    ),
 ]
 
 # The name of an image file (relative to this directory) to place at the top of
@@ -449,7 +457,15 @@ latex_documents = [
 
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
-man_pages = [("index", "python-docx", "python-docx Documentation", ["Steve Canny"], 1)]
+man_pages = [
+    (
+        "index",
+        "paper-docx",
+        "paper-docx Documentation",
+        ["Steve Canny", "Paper Instruments, Inc."],
+        1,
+    )
+]
 
 # If true, show URL addresses after external links.
 # man_show_urls = False
@@ -463,11 +479,11 @@ man_pages = [("index", "python-docx", "python-docx Documentation", ["Steve Canny
 texinfo_documents = [
     (
         "index",
-        "python-docx",
-        "python-docx Documentation",
-        "Steve Canny",
-        "python-docx",
-        "One line description of project.",
+        "paper-docx",
+        "paper-docx Documentation",
+        "Steve Canny; Paper Instruments, Inc.",
+        "paper-docx",
+        "Create, inspect, edit, review, and compose Microsoft Word documents.",
         "Miscellaneous",
     ),
 ]

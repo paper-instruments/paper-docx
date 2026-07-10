@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=61.0.0"]
+requires = ["setuptools==80.9.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "paper-docx"
-version = "0.1.0"
+dynamic = ["version"]
 authors = [
     {name = "Steve Canny", email = "stcanny@gmail.com"},
     {name = "Paper Instruments, Inc."},
@@ -14,15 +14,14 @@ classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Office/Business :: Office Suites",
     "Topic :: Software Development :: Libraries",
 ]
@@ -32,7 +31,7 @@ dependencies = [
 ]
 description = "Create, read, and update Microsoft Word .docx files."
 keywords = ["docx", "office", "openxml", "word"]
-license = { text = "MIT" }
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.9"
 
@@ -58,6 +57,12 @@ Documentation = "https://github.com/The-LLM-Data-Company/paper-docx"
 Homepage = "https://github.com/The-LLM-Data-Company/paper-docx"
 Issues = "https://github.com/The-LLM-Data-Company/paper-docx/issues"
 Repository = "https://github.com/The-LLM-Data-Company/paper-docx"
+
+[project.scripts]
+paper-docx-doctor = "paper_docx_doctor:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "docx._version.__paper_version__"}
 
 [tool.pyright]
 include = ["src/docx", "tests"]

@@ -110,7 +110,9 @@ Compose across documents
 semantically change keep their original bytes, so a file-level diff shows your
 edit and nothing else. ``compare`` generates a native tracked-change redline
 transforming one document into another. Accepting it yields the revised
-document; rejecting it yields the original.
+document; rejecting it yields the original. Before returning, ``compare``
+proves both outcomes on private copies. Style, relationship, or package-part
+changes it cannot express as tracked revisions produce a typed refusal.
 
 ::
 

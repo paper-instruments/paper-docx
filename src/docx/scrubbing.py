@@ -23,6 +23,8 @@ from docx.revision import _remaining_markup
 from docx.story import _story_elements
 
 if TYPE_CHECKING:
+    from lxml.etree import _Element
+
     from docx.document import Document
 
 #: relationship-type suffixes of the comment part family (base comments part
@@ -67,6 +69,13 @@ _CORE_STRING_FIELDS = (
     "subject",
     "title",
     "version",
+)
+
+_CORE_PRIVATE_TAGS = (
+    ("dcterms:created", "created"),
+    ("dcterms:modified", "modified"),
+    ("cp:lastPrinted", "last_printed"),
+    ("cp:revision", "revision"),
 )
 
 
@@ -157,14 +166,21 @@ def scrub(
             " document; finalize(revisions=...) first, or pass"
             " metadata=False. Nothing was changed"
         )
+    if metadata:
+        _validate_metadata_parts(document)
+    hidden_runs = (
+        _hidden_runs(document, include_comments=not comments) if hidden_text else []
+    )
     report = ScrubReport()
     status = protection_status(document)
-    if status.edit is not None:
+    if status.edit is not None or status.formatting:
         report.document_protection = {
             "edit": status.edit,
             "enforced": status.enforced,
             "note": "reported, never removed (docx.protection)",
         }
+        if status.formatting:
+            report.document_protection["formatting"] = True
     if comments:
         _scrub_comment_parts(document, report)
         _scrub_comment_anchors(document, report)
@@ -175,7 +191,7 @@ def scrub(
     if rsids:
         _scrub_rsids(document, report)
     if hidden_text:
-        _scrub_hidden_text(document, report)
+        _scrub_hidden_text(hidden_runs, report)
     return report
 
 
@@ -232,6 +248,12 @@ def _scrub_metadata(document: "Document", report: ScrubReport) -> None:
             if getattr(core, name):
                 setattr(core, name, "")
                 report.metadata_fields_cleared.append(f"core:{name}")
+        core_element = core._element  # noqa: SLF001 - remove optional metadata nodes
+        for tag, name in _CORE_PRIVATE_TAGS:
+            node = core_element.find(qn(tag))
+            if node is not None:
+                core_element.remove(node)
+                report.metadata_fields_cleared.append(f"core:{name}")
     for r_id, rel in list(package.rels.items()):
         if rel.is_external:
             continue
@@ -248,10 +270,7 @@ def _clear_app_properties(app_part, report: ScrubReport) -> None:
     """Blank Company/Manager in docProps/app.xml (kept as a generic part)."""
     from lxml import etree
 
-    try:
-        root = etree.fromstring(app_part.blob)
-    except etree.XMLSyntaxError:
-        return
+    root = _parse_app_properties(app_part)
     changed = False
     for local in ("Company", "Manager"):
         for element in root.iter(f"{{*}}{local}"):
@@ -263,6 +282,34 @@ def _clear_app_properties(app_part, report: ScrubReport) -> None:
         app_part._blob = etree.tostring(  # noqa: SLF001 - generic Part storage
             root, xml_declaration=True, encoding="UTF-8", standalone=True
         )
+
+
+def _validate_metadata_parts(document: "Document") -> None:
+    """Parse every app-properties part before scrub mutates any package part."""
+    package = document.part.package
+    for rel in package.rels.values():
+        if not rel.is_external and rel.reltype.endswith("/extended-properties"):
+            _parse_app_properties(rel.target_part)
+
+
+def _parse_app_properties(app_part):
+    from lxml import etree
+
+    parser = etree.XMLParser(resolve_entities=False, no_network=True)
+    try:
+        root = etree.fromstring(app_part.blob, parser)
+    except etree.XMLSyntaxError as exc:
+        raise UnsupportedStructureError(
+            "cannot scrub metadata: docProps/app.xml is malformed;"
+            " nothing was changed"
+        ) from exc
+    docinfo = root.getroottree().docinfo
+    if docinfo.internalDTD is not None or docinfo.doctype:
+        raise UnsupportedStructureError(
+            "cannot scrub metadata: docProps/app.xml contains a DTD;"
+            " nothing was changed"
+        )
+    return root
 
 
 def _settings_element(document: "Document"):
@@ -302,22 +349,32 @@ def _scrub_rsids(document: "Document", report: ScrubReport) -> None:
                     report.rsid_attributes_removed += 1
 
 
-def _scrub_hidden_text(document: "Document", report: ScrubReport) -> None:
-    """Remove runs carrying `w:vanish` (explicit opt-in — this DELETES
-    content Word merely hides)."""
-    vanish = qn("w:vanish")
-    val = qn("w:val")
-    for _story, root in _story_elements(document):
-        for run in list(root.iter(qn("w:r"))):
-            r_pr = run.find(qn("w:rPr"))
-            if r_pr is None:
-                continue
-            node = r_pr.find(vanish)
-            if node is None:
-                continue
-            if (node.get(val) or "true").lower() in ("0", "false", "off"):
-                continue
-            parent = run.getparent()
-            if parent is not None:
-                parent.remove(run)
-                report.hidden_runs_removed += 1
+def _hidden_runs(
+    document: "Document", *, include_comments: bool
+) -> "List[_Element]":
+    """Resolve every hidden-text target before scrub mutates any package part."""
+    from docx.formatting import _enclosing_paragraph, _resolve_run
+
+    hidden = []
+    for story, root in _story_elements(document):
+        if not include_comments and story == "word/comments.xml":
+            continue
+        for run in root.iter(qn("w:r")):
+            resolved = _resolve_run(document, run, _enclosing_paragraph(run))
+            if resolved["vanish"].value is True:
+                hidden.append(run)
+    return hidden
+
+
+def _scrub_hidden_text(hidden_runs: "List[_Element]", report: ScrubReport) -> None:
+    """Remove effectively vanished runs (explicit opt-in; this deletes text).
+
+    ``w:vanish`` is inheritable and a direct ``w:vanish w:val="false"``
+    overrides a hidden style. Resolve the full style chain rather than merely
+    looking for a direct element on the run.
+    """
+    for run in hidden_runs:
+        parent = run.getparent()
+        if parent is not None:
+            parent.remove(run)
+            report.hidden_runs_removed += 1
