@@ -123,10 +123,10 @@ and model priors.
 
 ## Installation
 
-This repository is private for now and publication to PyPI is gated. Install from Git:
+Install from PyPI:
 
 ```bash
-pip install "paper-docx @ git+https://github.com/The-LLM-Data-Company/paper-docx.git@main"
+pip install paper-docx
 ```
 
 Confirm the install:
