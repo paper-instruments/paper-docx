@@ -4,9 +4,9 @@ Standard python-docx traversal (`Document.paragraphs`, `.tables`,
 `iter_inner_content()`) is blind to text inside tracked insertions and
 deletions, content controls, text boxes, and to entire story parts
 (footnotes, endnotes). This module is the *new, explicitly named* perception
-layer (CONVENTIONS §1.1): existing traversal semantics are untouched.
+layer: existing traversal semantics are untouched.
 
-Traversal rules (pinned by API-PROPOSAL.md §4):
+Traversal rules:
 
 * Every story part is walked: body, headers, footers, footnotes, endnotes,
   comments. Separator/continuation-separator footnotes and endnotes are
@@ -93,7 +93,7 @@ def _story_sort_key(name: str) -> Tuple[int, str]:
 
 @dataclass(frozen=True)
 class Anchor:
-    """Stable block address: story part + index + content hash (§2, pinned).
+    """Stable block address: story part + index + content hash.
 
     The hash (first 8 hex chars of SHA-256 over the block's normalized text)
     is what detects staleness — a raw index alone is forbidden as a public
@@ -170,7 +170,7 @@ class Outline:
         return {
             "schema": "paper_outline",
             "version": 2,  # v2: moves/format_changes/fields + confession keys,
-            #     per-block has_field (v0.1 honesty recall)
+            #     per-block has_field
             "story_parts": list(self.story_parts),
             "blind_region_counts": dict(sorted(self.blind_region_counts.items())),
             "blocks": [block.to_dict() for block in self.blocks],
@@ -225,7 +225,7 @@ class _TextVisitor:
     Tracked MOVES participate in the views: `w:moveFrom` content is
     deletion-like (excluded from "current", present in "original") and
     `w:moveTo` content is insertion-like — so moved text appears exactly once
-    per view instead of doubling (v0.1 honesty recall, H1). Resolution of
+    per view instead of doubling. Resolution of
     moves is a separate, refused concern.
     """
 
@@ -488,7 +488,7 @@ def _count_blind_regions(root: "_Element") -> Dict[str, int]:
     """Occurrences of each region the traversal flags — or CANNOT read — in
     traversal space (mc:Fallback duplicates excluded).
 
-    The last four keys are the honesty confession (v0.1 H9): math, embedded
+    The last four keys are the honesty confession: math, embedded
     objects (OLE/charts/SmartArt), altChunk imports and hidden (`w:vanish`)
     text hold content this package does not surface; a non-zero count says
     "there is more here than the outline shows".
@@ -561,7 +561,7 @@ def outline(document: "Document", *, view: str = "current") -> Outline:
     """Inspection snapshot: story parts, all blocks, blind-region counts.
 
     Deterministic: the same document yields byte-identical `to_dict()` output
-    on every call (CONVENTIONS §4, inspection determinism).
+    on every call (inspection determinism).
     """
     blocks = tuple(iter_blocks(document, view=view))
     totals = {key: 0 for key in BLIND_REGION_KEYS}

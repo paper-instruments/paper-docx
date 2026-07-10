@@ -1,8 +1,8 @@
-"""Tests for docx.search: find_text/Span (Phase 4), run-preserving replace
-(Phase 5), and tracked replace over the revision vocabulary (Phase 6).
+"""Tests for docx.search: find_text/Span, run-preserving replace, and
+tracked replace over the revision vocabulary.
 
-Span mapping is tested BY USE (perform a replace, assert the outcome), per
-the plan — never by inspecting private offsets.
+Span mapping is tested BY USE (perform a replace, assert the outcome) —
+never by inspecting private offsets.
 """
 
 from __future__ import annotations
@@ -181,7 +181,7 @@ class DescribePlainReplace:
     ):
         """A span covering a formatting transition collapses ITS OWN interior
         formatting into the start run when replaced — that information is
-        destroyed by any replacement (amended in API-PROPOSAL.md §6). The
+        destroyed by any replacement. The
         inverse still restores the visible text exactly and never disturbs
         formatting outside the span."""
         document = _doc(FRAGMENTED)
@@ -236,7 +236,7 @@ class DescribeReplaceRefusals:
             span.replace("anything")
 
     def it_refuses_atomically(self):
-        """A refused replace leaves no trace, in memory or on disk (§1.3)."""
+        """A refused replace leaves no trace, in memory or on disk."""
         document = _doc(CONTROLS)
         span = find_one(document, "follows: controlled")
         assert_refusal_atomic(

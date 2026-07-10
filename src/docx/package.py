@@ -110,7 +110,7 @@ class ImageParts:
         return image_partname(len(self) + 1)
 
 
-# -- paper-docx additions (v0): the package kernel pinned by CONVENTIONS §7.
+# -- paper-docx additions: the package kernel.
 # -- Implementation lives in `docx/_paperpkg.py` so this upstream module's diff
 # -- stays minimal; the pinned public import path is `docx.package.*`.
 from docx._paperpkg import (  # noqa: E402

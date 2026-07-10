@@ -4,11 +4,11 @@
 Effective-format resolver
 =========================
 
-Read-only: what formatting does this text *actually* carry, resolved
-through document defaults, the paragraph-style chain, the character
-style and direct formatting — with correct toggle-property semantics.
-Every value in the returned |EffectiveFormat| names the layer it came
-from, and what the resolver cannot determine is declared, never guessed.
+*paper-docx addition.* Resolve what formatting text *actually* carries through
+document defaults, the paragraph-style chain, the character style, and direct
+formatting, with correct toggle-property semantics. The operation is read-only.
+Every value in the returned |EffectiveFormat| names its source layer; anything
+the resolver cannot determine is reported as unresolved.
 
 .. currentmodule:: docx.formatting
 

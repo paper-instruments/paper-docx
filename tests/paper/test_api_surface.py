@@ -1,9 +1,9 @@
-"""Mechanical enforcement of API-PROPOSAL.md (PR-0, CONVENTIONS §8).
+"""Mechanical enforcement of the approved public API surface.
 
-Each entry pins the exact public signature approved in the proposal. Modules
-that have not shipped yet skip cleanly; the moment a phase lands, its surface
-is enforced. Changing a signature means amending API-PROPOSAL.md and this
-table in the same commit — never silently.
+Each entry pins the exact public signature approved for a module. Modules
+that have not shipped yet skip cleanly; once a module lands, its surface is
+enforced. Changing a signature means updating this table deliberately —
+never silently.
 
 Only parameter names, kinds and defaults are compared (annotations are
 deliberately ignored; they are documentation, not surface).
@@ -40,21 +40,21 @@ def _canonical(signature: inspect.Signature) -> str:
 
 
 def _resolve(module_name: str, attr_path: str):
-    """The object at `module_name.attr_path`, with phase-aware skipping.
+    """The object at `module_name.attr_path`, skipping unshipped modules.
 
     A module missing entirely, or present but exposing NONE of its approved
     names (e.g. upstream `docx.package` before the kernel lands), means the
-    phase hasn't shipped -> skip. A module exposing SOME approved names but
+    module hasn't shipped -> skip. A module exposing SOME approved names but
     not the requested one is a broken surface -> fail.
     """
     module = pytest.importorskip(
-        module_name, reason=f"{module_name} not yet implemented (see API-PROPOSAL.md)"
+        module_name, reason=f"{module_name} not yet implemented"
     )
     approved_names = {
         attr.split(".")[0] for mod, attr, _ in APPROVED_SIGNATURES if mod == module_name
     }
     if not any(hasattr(module, name) for name in approved_names):
-        pytest.skip(f"{module_name} surface not yet implemented (see API-PROPOSAL.md)")
+        pytest.skip(f"{module_name} surface not yet implemented")
     target = module
     for piece in attr_path.split("."):
         if not hasattr(target, piece):
@@ -66,15 +66,15 @@ def _resolve(module_name: str, attr_path: str):
 #: (module, attr-path, approved canonical signature) — self is included for
 #: methods accessed on the class.
 APPROVED_SIGNATURES = [
-    # -- Phase 2: kernel -----------------------------------------------------
+    # -- kernel --------------------------------------------------------------
     ("docx.package", "xml_equivalent", "(a, b)"),
     ("docx.package", "diff_package", "(path_a, path_b)"),
     ("docx.package", "patch_save", "(original_path, document, out_path)"),
-    # -- Phase 3: story traversal --------------------------------------------
+    # -- story traversal -----------------------------------------------------
     ("docx.story", "story_parts", "(document)"),
     ("docx.story", "iter_blocks", "(document, *, view='current')"),
     ("docx.story", "outline", "(document, *, view='current')"),
-    # -- Phase 4: search -----------------------------------------------------
+    # -- search --------------------------------------------------------------
     ("docx.search", "normalize_text", "(value)"),
     (
         "docx.search",
@@ -86,13 +86,13 @@ APPROVED_SIGNATURES = [
         "find_one",
         "(document, needle, *, nth=None, near=None, story=None, view='current')",
     ),
-    # -- Phases 5-6: replace -------------------------------------------------
+    # -- replace -------------------------------------------------------------
     (
         "docx.search",
         "Span.replace",
         "(self, new_text, *, tracked=False, author=None, date=None)",
     ),
-    # -- Phase 7: block operations -------------------------------------------
+    # -- block operations ----------------------------------------------------
     (
         "docx.blocks",
         "insert_section_after",
@@ -110,10 +110,10 @@ APPROVED_SIGNATURES = [
         "(document, start_anchor, replacement_paragraphs, *, end_anchor=None,"
         " count=1, body_style=None, author, date=None)",
     ),
-    # -- Phase 8: revisions ---------------------------------------------------
+    # -- revisions -----------------------------------------------------------
     ("docx.revision", "Revisions.accept_all", "(self, *, author=None)"),
     ("docx.revision", "Revisions.reject_all", "(self, *, author=None)"),
-    # -- Phase 9: tables + numbering ------------------------------------------
+    # -- tables + numbering --------------------------------------------------
     ("docx.tableops", "find_table", "(document, *, near_text)"),
     (
         "docx.tableops",
@@ -129,7 +129,7 @@ APPROVED_SIGNATURES = [
     ("docx.numbering", "list_numbering", "(document)"),
     ("docx.numbering", "apply_numbering", "(paragraph, *, num_id, level=0)"),
     ("docx.numbering", "apply_list_style", "(paragraph, style_name)"),
-    # -- v0.1 additions (PLAN-v0.1.md; amendments recorded in API-PROPOSAL.md)
+    # -- later additions -----------------------------------------------------
     ("docx.package", "diagnose", "(path)"),
     ("docx.package", "text_diff", "(path_a, path_b, *, view='current')"),
     ("docx.package", "pending_changes", "(path)"),
@@ -172,7 +172,7 @@ APPROVED_SIGNATURES = [
     ("docx.commentops", "parent_of", "(document, comment)"),
     ("docx.controls", "iter_controls", "(document)"),
     ("docx.revision", "Revisions.remaining_unsupported", "(self)"),
-    # -- v0.11 additions (PLAN-v0.11; amendments in API-PROPOSAL.md §10) -----
+    # -- composition, bookmarks, fields, formatting --------------------------
     ("docx.document", "Document.finalize", "(self, *, revisions='accept')"),
     (
         "docx.document",
@@ -229,12 +229,12 @@ class DescribeApprovedApiSurface:
         actual = _canonical(inspect.signature(target))
         assert actual == approved, (
             f"{module_name}.{attr_path}: signature {actual} deviates from approved"
-            f" {approved}; amend API-PROPOSAL.md and this table in the same commit"
+            f" {approved}; update this table in the same commit"
         )
 
     def it_pins_the_refusal_hierarchy(self):
         errors = pytest.importorskip(
-            "docx.errors", reason="docx.errors not yet implemented (see API-PROPOSAL.md)"
+            "docx.errors", reason="docx.errors not yet implemented"
         )
         assert issubclass(errors.PaperRefusal, Exception)
         for name in (
@@ -243,16 +243,16 @@ class DescribeApprovedApiSurface:
             "UnsupportedStructureError",
             "BoundaryViolationError",
             "RelationshipPolicyError",
-            "DocumentProtectedError",  # v0.11 Phase 3; human sign-off flagged
+            "DocumentProtectedError",
         ):
             subclass = getattr(errors, name)
             assert issubclass(subclass, errors.PaperRefusal), name
 
     def it_exposes_the_kernel_at_the_pinned_public_path(self):
-        """CONVENTIONS §7: the public path is docx.package.* (F1 resolution)."""
+        """The public path is docx.package.*."""
         package = pytest.importorskip("docx.package")
         if not hasattr(package, "patch_save"):
-            pytest.skip("kernel not yet implemented (see API-PROPOSAL.md)")
+            pytest.skip("kernel not yet implemented")
         for name in ("xml_equivalent", "diff_package", "patch_save", "PackageDiff"):
             assert hasattr(package, name), f"docx.package.{name} missing"
         # the upstream surface must be intact, not shadowed
@@ -262,7 +262,7 @@ class DescribeApprovedApiSurface:
         import docx.document
 
         if not hasattr(docx.document.Document, "revisions"):
-            pytest.skip("Document.revisions not yet implemented (see API-PROPOSAL.md)")
+            pytest.skip("Document.revisions not yet implemented")
         assert isinstance(
             inspect.getattr_static(docx.document.Document, "revisions"), property
         )

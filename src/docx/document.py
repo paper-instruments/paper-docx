@@ -199,7 +199,7 @@ class Document(ElementProxy):
     def revisions(self):
         """|Revisions| object enumerating tracked changes across all story parts.
 
-        paper-docx addition (v0): a fresh snapshot on each access; supports
+        paper-docx addition: a fresh snapshot on each access; supports
         accept/reject of all revisions or filtered by author. See
         `docx.revision`.
         """
@@ -211,7 +211,7 @@ class Document(ElementProxy):
         """Totally resolve every tracked revision, or refuse (typed) naming
         what blocked it — never a file that looks final while markup remains.
 
-        paper-docx addition (v0.11); see `docx.scrubbing.finalize`.
+        paper-docx addition; see `docx.scrubbing.finalize`.
         """
         from docx.scrubbing import finalize
 
@@ -230,7 +230,7 @@ class Document(ElementProxy):
         switch, optional RSIDs/hidden text); returns an itemized ScrubReport.
         Document protection is reported, never removed.
 
-        paper-docx addition (v0.11); see `docx.scrubbing.scrub`.
+        paper-docx addition; see `docx.scrubbing.scrub`.
         """
         from docx.scrubbing import scrub
 

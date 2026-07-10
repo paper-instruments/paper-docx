@@ -1,4 +1,4 @@
-"""Bookmarks and field authoring (PLAN-v0.11 Phase 6).
+"""Bookmarks and field authoring.
 
 Fields are formulas; this package authors them and never computes their
 values — every insertion carries placeholder text and arms
@@ -184,7 +184,7 @@ class DescribeFieldAuthoring:
 
 
 class DescribeFieldSelfConsistency:
-    """The v0.1 in_field guard must recognize OUR fields (plan Phase 6)."""
+    """The in_field guard must recognize the fields this package authors."""
 
     def it_refuses_edits_inside_our_own_toc(self):
         document = _doc()

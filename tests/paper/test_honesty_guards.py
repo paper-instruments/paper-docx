@@ -1,4 +1,4 @@
-"""Tests for the v0.1 Phase 0c write guards (H5-H8) and triage (H10)."""
+"""Tests for the write guards and package triage."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _doc(relpath: str = MINIMAL):
 
 
 class DescribeControlCharacterRefusal:
-    """H6: raw \\n/\\t in written text would be verified-but-false structure."""
+    """Raw \\n/\\t in written text would be verified-but-false structure."""
 
     @pytest.mark.parametrize("bad", ["Line one\nLine two", "col\tcol", "a\rb"])
     def it_refuses_control_characters_in_replacement_text(self, bad: str):
@@ -56,7 +56,7 @@ class DescribeControlCharacterRefusal:
 
 
 class DescribeFakeBulletRefusal:
-    """H7: a list style whose numbering does not resolve must refuse."""
+    """A list style whose numbering does not resolve must refuse."""
 
     def it_applies_a_list_style_whose_numbering_resolves(self):
         from docx.numbering import apply_list_style
@@ -99,7 +99,7 @@ class DescribeFakeBulletRefusal:
 
 
 class DescribeUntrackedEditInsideInsertions:
-    """H8a: untracked edits must not rewrite text attributed to an author."""
+    """Untracked edits must not rewrite text attributed to an author."""
 
     def it_refuses_untracked_replace_inside_a_pending_insertion(self, tmp_path: Path):
         path = tmp_path / "doc.docx"
@@ -118,7 +118,7 @@ class DescribeUntrackedEditInsideInsertions:
 
 
 class DescribeBookmarkHollowing:
-    """H8b: replaces must not silently empty cross-reference targets."""
+    """Replaces must not silently empty cross-reference targets."""
 
     def it_refuses_a_replace_that_hollows_a_named_bookmark(self):
         document = _doc(BOOKMARKS)
@@ -143,7 +143,7 @@ class DescribeBookmarkHollowing:
 
 
 class DescribePackageDiagnosis:
-    """H10: typed triage instead of raw KeyError/ValueError dead ends."""
+    """Typed triage instead of raw KeyError/ValueError dead ends."""
 
     def it_diagnoses_a_healthy_docx(self):
         report = diagnose(fixture_path(MINIMAL))

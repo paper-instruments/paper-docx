@@ -1,7 +1,7 @@
 """Numbering enumeration, application, and minimal authoring (paper-docx).
 
 Applies EXISTING numbering definitions and list styles to paragraphs and
-reports what a document defines and uses. As of v0.1 (V2), it also ships
+reports what a document defines and uses. It also ships
 exactly two canonical definitions — one bullet, one decimal —
 creatable on demand (`ensure_bullet_definition` / `ensure_decimal_definition`,
 idempotent), plus level-0 restarts (`restart_numbering`). Anything more
@@ -186,7 +186,7 @@ def apply_numbering(paragraph: "Paragraph", *, num_id: int, level: int = 0) -> N
         defined = [d.num_id for d in report_definitions]
         raise TargetNotFoundError(
             f"numbering definition numId={num_id} does not exist"
-            f" (defined: {defined}); authoring new definitions is out of v0"
+            f" (defined: {defined}); authoring new definitions is not supported"
         )
     if level not in {lvl.level for lvl in definition.levels}:
         raise TargetNotFoundError(
@@ -223,7 +223,7 @@ def apply_list_style(paragraph: "Paragraph", style_name: str) -> None:
     When the style binds a numbering definition, that definition must
     actually resolve in word/numbering.xml; otherwise this call refuses
     rather than producing the classic FAKE bullet (a list-styled paragraph
-    that renders with no marker — v0.1 honesty recall, H7). Styles with no
+    that renders with no marker). Styles with no
     numbering binding apply as plain styles.
     """
     document = _document_of_paragraph(paragraph)
@@ -247,7 +247,7 @@ def apply_list_style(paragraph: "Paragraph", style_name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# v0.1 V2 — minimal, guarded numbering AUTHORING
+# minimal, guarded numbering AUTHORING
 # ---------------------------------------------------------------------------
 
 #: canonical three-level definitions, shaped like Word's own defaults. The
@@ -366,8 +366,8 @@ def _ensure_definition(document: "Document", kind: str) -> int:
 
 def ensure_bullet_definition(document: "Document") -> int:
     """The numId of a real bullet-list definition, creating one when the
-    document has none (v0.1 V2 — closes the 'cannot make a real bullet'
-    gap). Idempotent: repeated calls return the same definition."""
+    document has none. Idempotent: repeated calls return the same
+    definition."""
     _refuse_if_protected(document, "author a numbering definition")
     return _ensure_definition(document, "bullet")
 

@@ -1,5 +1,5 @@
-"""Regression tests for the confirmed findings of the final adversarial
-review — one test (at least) per fixed defect, named for the failure mode."""
+"""Regression tests for previously fixed defects — one test (at least) per
+defect, named for the failure mode."""
 
 from __future__ import annotations
 
@@ -28,7 +28,7 @@ def _doc(relpath: str = MINIMAL):
     return docx.Document(str(fixture_path(relpath)))
 
 
-class DescribeKernelComparisonHardening:
+class DescribeKernelComparison:
     def it_distinguishes_processing_instruction_targets(self):
         a = b'<a><?foo x="1"?></a>'
         b = b'<a><?bar x="1"?></a>'
@@ -277,9 +277,9 @@ class DescribeRevisionAnchors:
 class DescribeTableGuardsAndFormatting:
     def it_refuses_cells_whose_only_complexity_is_a_nested_table(self):
         """Regression for the reference's `.//w:tbl//w:tbl` bug: singly-nested
-        tables must be detected. (v0.1 S1 narrowed the guard to the target
-        cell, so the refusal now fires on the nesting cell itself while its
-        plain neighbors stay editable.)"""
+        tables must be detected. The guard is narrowed to the target cell, so
+        the refusal fires on the nesting cell itself while its plain neighbors
+        stay editable."""
         from docx.tableops import update_cell
 
         document = _doc()

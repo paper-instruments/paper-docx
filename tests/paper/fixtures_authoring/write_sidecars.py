@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write the ground-truth JSON sidecar for every fixture (CONVENTIONS §4 schema).
+"""Write the ground-truth JSON sidecar for every fixture.
 
 Run manually from the repo root:
 
@@ -10,8 +10,8 @@ cross-checked against a raw-XML facts extraction of every built fixture, and
 frozen by MANIFEST.sha256 alongside the fixtures themselves. Editing a value
 here (and re-running) is a deliberate, reviewed act.
 
-Sidecar schema is pinned by CONVENTIONS §4 — exactly these six keys:
-fixture, provenance, features, ground_truth, verified_by, date.
+The sidecar schema is exactly these six keys: fixture, provenance, features,
+ground_truth, verified_by, date.
 """
 
 from __future__ import annotations
@@ -329,7 +329,7 @@ TOC_FIELD_GROUND_TRUTH = {
     "all_entry_paragraphs_are_field_content": True,
 }
 
-# -- v0.11 redline-pipeline fixtures (PLAN-v0.11 Phase 0) --------------------
+# -- redline-pipeline fixtures ----------------------------------------------
 
 ROW_REVISION_FEATURES = ["tracked-row-insert", "tracked-row-delete", "row-revision-marks"]
 RICH_FORMAT_FEATURES = FORMAT_CHANGE_FEATURES + [
@@ -625,7 +625,7 @@ SIDECARS: Dict[str, Dict[str, Any]] = {
         ["document-protection", "restrict-editing", "tracked-changes-protection"],
         protection_ground_truth("trackedChanges"),
     ),
-    # -- redline bucket (document-pair ground truth, PLAN-v0.11 Phase 0) -----
+    # -- redline bucket (document-pair ground truth) -------------------------
     "generated/redline/multiround.docx": sidecar(
         "multiround.docx",
         GENERATED_PROVENANCE,

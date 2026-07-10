@@ -1,6 +1,7 @@
-"""Tests for the v0.1 Phase 1 everyday-shapes wave (S2-S6).
+"""Tests for the everyday document shapes: noise-tolerant block ops,
+break-tolerant replace, hyperlink-interior edits, and batch replace.
 
-(S1 cell-wise table guards are covered in test_tableops_numbering.py.)
+(Cell-wise table guards are covered in test_tableops_numbering.py.)
 """
 
 from __future__ import annotations
@@ -31,7 +32,7 @@ def _doc(relpath: str = MINIMAL):
 
 
 class DescribeNoiseTolerantBlockOps:
-    """S2: proofErr/_GoBack/comment anchors are Word's ubiquitous noise —
+    """proofErr/_GoBack/comment anchors are Word's ubiquitous noise —
     tracked block ops treat them as transparent instead of refusing."""
 
     def it_tracked_deletes_a_paragraph_with_proofing_noise(self):
@@ -77,7 +78,7 @@ class DescribeNoiseTolerantBlockOps:
 
 
 class DescribeBreakTolerantReplace:
-    """S5: matching across a tab is fine; only a CHANGE crossing it refuses."""
+    """Matching across a tab is fine; only a CHANGE crossing it refuses."""
 
     def _tabbed_doc(self):
         document = _doc()
@@ -129,7 +130,7 @@ class DescribeBreakTolerantReplace:
 
 
 class DescribeHyperlinkInteriorEdits:
-    """S6: text inside one hyperlink is redlinable; crossing its boundary is not."""
+    """Text inside one hyperlink is redlinable; crossing its boundary is not."""
 
     def _linked_doc(self):
         document = _doc()
@@ -176,7 +177,7 @@ class DescribeHyperlinkInteriorEdits:
 
 
 class DescribeReplaceAll:
-    """S3: single scan, reverse-document-order application, loud refusals."""
+    """Single scan, reverse-document-order application, loud refusals."""
 
     def it_replaces_matches_sharing_one_run(self):
         document = _doc()

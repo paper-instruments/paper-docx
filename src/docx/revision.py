@@ -186,7 +186,7 @@ class Revision:
 
     def accept(self) -> None:
         """Apply this change to the document. Tracked moves resolve as a
-        PAIR: accepting either site accepts both (v0.11 Phase 2)."""
+        PAIR: accepting either site accepts both."""
         self._refuse_unresolvable("accept")
         if self._document is not None:
             _refuse_if_protected(self._document, "resolve a revision")
@@ -278,7 +278,7 @@ class Revisions(Sequence[Revision]):
         _validate_moves(selected, self._document)
         if author is None:
             # an UNFILTERED resolution certifies "clean afterwards" — refuse
-            # upfront anything that would falsify that (v0.11 review sweep)
+            # upfront anything that would falsify that
             _refuse_unaccounted_markup(self._document)
         resolved = 0
         # moves first (their range brackets must still be intact — a row
@@ -301,9 +301,9 @@ class Revisions(Sequence[Revision]):
     def to_dict(self) -> dict:
         return {
             "schema": "paper_revisions",
-            # v2: move/format_change types + census (v0.1 H1-H3)
+            # v2: move/format_change types + census
             # v3: row_insertion/row_deletion + named exotic types; format
-            #     changes and row revisions resolvable (v0.11 Phase 1)
+            #     changes and row revisions resolvable
             "version": 3,
             "revisions": [revision.to_dict() for revision in self._items],
             "remaining_unsupported": self.remaining_unsupported(),
@@ -311,7 +311,7 @@ class Revisions(Sequence[Revision]):
 
 
 # ---------------------------------------------------------------------------
-# move units (Phase 2): w:moveFrom/w:moveTo paired by range-marker w:name
+# move units: w:moveFrom/w:moveTo paired by range-marker w:name
 # ---------------------------------------------------------------------------
 
 _MOVE_FROM_RANGE_START = qn("w:moveFromRangeStart")
@@ -580,8 +580,8 @@ def _enumerate_revisions(document: "Document") -> Iterator[Revision]:
         # BODY-level w:sectPr (the final section) lives outside every block;
         # a tracked section-property change there must still be enumerated —
         # invisible-to-census markup would let accept_all report a clean
-        # document while w:sectPrChange remains (v0.11 review sweep). The
-        # synthetic index -1 anchor marks "story level, not a block".
+        # document while w:sectPrChange remains. The synthetic index -1
+        # anchor marks "story level, not a block".
         for sect_pr in root.iter(_SECT_PR):
             parent = sect_pr.getparent()
             if parent is not None and parent.tag == _PPR:
@@ -647,7 +647,7 @@ def _refuse_unaccounted_markup(document: "Document") -> None:
     """Refuse an unfiltered resolution that could not end clean: fallback
     markup, orphaned move markup, or markup enumeration cannot reach would
     all survive a 'successful' accept_all — reporting resolved-and-clean
-    while markup remains is false state (v0.11 review sweep)."""
+    while markup remains is false state."""
     fallback = _fallback_markup(document)
     if fallback:
         raise UnsupportedStructureError(
@@ -885,7 +885,7 @@ def _next_paragraph_sibling(paragraph: "_Element") -> "Optional[_Element]":
         if node.tag in (qn("w:tbl"), qn("w:sdt")):
             # merging across a table or INTO a block-level content control
             # is not a paragraph join — hopping content past it would
-            # silently reorder document text (v0.11 review sweep)
+            # silently reorder document text
             return None
         node = node.getnext()
     return None

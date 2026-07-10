@@ -1,4 +1,4 @@
-"""Tests for docx.tableops and docx.numbering (Phase 9)."""
+"""Tests for docx.tableops and docx.numbering."""
 
 from __future__ import annotations
 
@@ -107,7 +107,7 @@ class DescribeUpdateCell:
         )
 
     def and_it_updates_plain_cells_of_the_same_table(self, tmp_path: Path):
-        """Cell-wise guards (v0.1 S1): the merge no longer poisons the table."""
+        """Cell-wise guards: the merge no longer poisons the table."""
         document = _doc(COMPLEX_TABLE)
         update_cell(document.tables[0], 1, 0, "updated plain cell")
         reopened = save_and_reopen(document, tmp_path / "out.docx")
@@ -172,7 +172,7 @@ class DescribeRowOperations:
 
     def it_refuses_horizontally_merged_template_rows(self):
         """A gridSpan template row repeats its merged tc through .cells, so
-        positional values would silently misassign (v0.1 review fix)."""
+        positional values would silently misassign."""
         document = _doc(COMPLEX_TABLE)
         with pytest.raises(UnsupportedStructureError, match="gridSpan"):
             insert_row_after(document.tables[0], 0, ["a", "b", "c"])
@@ -204,7 +204,7 @@ class DescribeListNumbering:
         ]
 
     def it_reads_the_libreoffice_remapped_definition(self):
-        """LO round-trip remapped numId 42 -> 7 (frozen in the sidecar)."""
+        """LibreOffice round-trip remapped numId 42 -> 7 (frozen in the sidecar)."""
         report = list_numbering(_doc(NUMBERING_LO))
         assert [(p.num_id, p.text) for p in report.numbered_paragraphs] == [
             (7, "First numbered item"),

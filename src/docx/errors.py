@@ -63,5 +63,5 @@ class DocumentProtectedError(PaperRefusal):
     false state. Protection is ADVISORY, not security — after reviewing why
     the document is locked, call
     `docx.protection.acknowledge_protection(document)` to proceed. paper-docx
-    never strips the protection setting itself. (v0.11 Phase 3.)
+    never strips the protection setting itself.
     """

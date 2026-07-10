@@ -4,13 +4,13 @@
 Find and replace
 ================
 
-Normalized, run-fragmentation-tolerant matching. ``find_text`` and
-``find_one`` locate visible text the way a person quotes it (smart
-quotes, dashes, exotic spaces and case are normalized) and return a
-|Span| mapping it back to the exact runs. |Span| ``.replace`` edits
-surgically — untouched runs keep their formatting byte-for-byte — or,
-with ``tracked=True``, emits a minimal genuine ``w:ins``/``w:del``
-redline; |Span| ``.comment`` anchors a comment to exactly the span.
+*paper-docx addition.* Match normalized text across run fragmentation.
+``find_text`` and ``find_one`` locate visible text the way a person quotes it,
+normalizing smart quotes, dashes, exotic spaces, and case. They return a |Span|
+that maps the match back to its exact runs. |Span| ``.replace`` changes only
+the matched text; untouched runs keep their formatting byte-for-byte. With
+``tracked=True``, it emits a minimal genuine ``w:ins``/``w:del`` redline.
+|Span| ``.comment`` anchors a comment to exactly the span.
 
 .. currentmodule:: docx.search
 

@@ -4,11 +4,11 @@
 Cross-document composition
 ==========================
 
-Copy formatted content between documents without corruption: style
-reconciliation (adopt the house look or import renamed definitions),
-numbering remap, media and hyperlink recreation, and bookmark rename
-with cross-reference remap. The returned |CompositionReport| declares
-every part the operation touched.
+*paper-docx addition.* Copy formatted content between documents while
+reconciling styles (use destination styles or import renamed definitions),
+remapping numbering, recreating media and hyperlinks, and renaming bookmarks
+with cross-reference remapping. The returned |CompositionReport| declares every
+part the operation touched.
 
 .. currentmodule:: docx.composition
 

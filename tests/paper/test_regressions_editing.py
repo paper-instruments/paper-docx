@@ -1,5 +1,5 @@
-"""Regression tests for the confirmed findings of the v0.1 adversarial
-review sweep — one test (at least) per fixed defect."""
+"""Regression tests for confirmed defects — at least one test per fixed
+defect."""
 
 from __future__ import annotations
 
@@ -183,7 +183,7 @@ class DescribeCommentCleanupOnResolution:
         )
 
 
-class DescribeControlHardening:
+class DescribeControlEdgeCases:
     def it_reads_value_only_list_items(self):
         from docx.controls import get_control
 
@@ -244,7 +244,7 @@ class DescribeCrossParagraphCommentAnchors:
         )
 
 
-class DescribeMiscHardening:
+class DescribeMiscEdgeCases:
     def it_validates_control_characters_in_table_values(self):
         from docx.tableops import insert_row_after, update_cell
 

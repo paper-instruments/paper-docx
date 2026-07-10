@@ -1,6 +1,6 @@
 """Narrow, guarded table operations (paper-docx).
 
-Guards are CELL-WISE (v0.1 S1): an operation refuses when the cells or rows
+Guards are CELL-WISE: an operation refuses when the cells or rows
 it actually touches participate in a merge or hold a nested table — a merged
 header row (the default shape of real tables) no longer blocks edits to plain
 data cells. The failure mode this module exists to prevent is unchanged: a
@@ -60,7 +60,7 @@ def _cell_has_nested_table(tc) -> bool:
 
 
 def _refuse_complex_cell(tc, *, row: int, column: int) -> None:
-    """Cell-wise guard (v0.1 S1): only the TARGET cell's complexity refuses.
+    """Cell-wise guard: only the TARGET cell's complexity refuses.
 
     A merged header row no longer poisons edits to the plain data cells
     below it — merged-header tables are the default shape of real tables."""
@@ -101,7 +101,7 @@ def _row_continues_merge_from_above(tr) -> bool:
 
 
 def _refuse_row_op(table: "Table", *, affected_rows, splits_before=None) -> None:
-    """Row-op guard (v0.1 S1): refuse only when the AFFECTED rows intersect a
+    """Row-op guard: refuse only when the AFFECTED rows intersect a
     vertical merge or hold a nested table, or when insertion would split a
     merge; horizontal merges elsewhere in the table are none of our business."""
     for index in affected_rows:
@@ -129,7 +129,7 @@ def _document_of(table: "Table") -> "Document":
     document = getattr(part, "document", None)
     if document is None:
         raise UnsupportedStructureError(
-            "tables outside the main document story are not supported in v0"
+            "tables outside the main document story are not supported"
         )
     return document
 

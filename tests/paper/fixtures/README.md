@@ -2,8 +2,8 @@
 
 Layout: `<provenance>/<taxonomy>/<name>.docx` + same-stem `.json` sidecar.
 
-**Provenance buckets** (CONVENTIONS §4): `word/` (authored in desktop
-Microsoft Word — pending, see `FIXTURE-REQUESTS.md`), `google/` (exported from
+**Provenance buckets**: `word/` (authored in desktop
+Microsoft Word — not yet included), `google/` (exported from
 Google Docs — pending), `libreoffice/` (exported from LibreOffice),
 `other/` (other real-world producers), `generated/` (produced by
 `tests/paper/fixtures_authoring/build_fixtures.py`; never by code under test).
@@ -12,7 +12,7 @@ Google Docs — pending), `libreoffice/` (exported from LibreOffice),
 file), `gauntlet/` (everything ugly combined), `corrupt/`
 (corrupt-by-construction, negative tests only — never opened by
 `docx.Document()` or fed to LibreOffice in tests), `large/` (perf smoke),
-`redline/` (document-PAIR ground truth for the v0.11 revision pipeline:
+`redline/` (document-PAIR ground truth for the revision pipeline:
 `multiround.docx` + its hand-computed accepted state, and the
 `compare-original`/`compare-revised` pair for the compare engine).
 
@@ -24,7 +24,7 @@ file), `gauntlet/` (everything ugly combined), `corrupt/`
   means: run the authoring scripts deliberately, re-run
   `fixtures_authoring/freeze_manifest.py`, and get the diff human-reviewed in
   the same PR.
-- Sidecar schema is pinned (CONVENTIONS §4): `fixture`, `provenance`
+- Sidecar schema is pinned: `fixture`, `provenance`
   (`app`/`version`/`notes`), `features`, `ground_truth`, `verified_by`,
   `date`. Provenance is honest — a file is labeled with the application that
   actually wrote its bytes, nothing else.

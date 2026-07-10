@@ -1,9 +1,9 @@
 """Part-level package diff for changed-part budget assertions.
 
-This is the Phase 1 *test-side* stand-in for the `docx.package` kernel pinned
-in CONVENTIONS §7. The assertion interface in `contract.py` is intentionally
-narrow so the harness can ride on the kernel's `diff_package` once Phase 2
-delivers it; this module then shrinks or disappears.
+This is a *test-side* stand-in for the `docx.package` kernel. The assertion
+interface in `contract.py` is intentionally narrow so the harness can ride on
+the kernel's `diff_package` once it is available; this module then shrinks or
+disappears.
 
 Comparison semantics (mined from the reference `office_helpers/package.py`):
 
@@ -13,7 +13,7 @@ Comparison semantics (mined from the reference `office_helpers/package.py`):
   part and its W3C-canonical form is identical on both sides. Canonicalization
   uses `xml.etree.ElementTree.canonicalize(..., strip_text=False)`: text nodes
   are preserved verbatim, so a meaningful trailing space inside `w:t` makes two
-  parts UNEQUAL (CONVENTIONS §3, "whitespace is content").
+  parts UNEQUAL ("whitespace is content").
 * Two OPC bookkeeping part types are *maps*, not documents, and are compared
   as data rather than as XML text (real-world producers differ freely in
   element order, inter-element whitespace, and inert entries):

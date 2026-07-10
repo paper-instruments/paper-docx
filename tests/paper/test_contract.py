@@ -1,9 +1,9 @@
-"""Self-tests for the contract-harness utilities (CONVENTIONS §4).
+"""Self-tests for the contract-harness utilities.
 
-The five contract assertions ship in Phase 1, before any organ exists, so
-these tests exercise them through upstream APIs (and synthetic operations for
-the refusal-atomicity helper). Organ phases then reuse the same utilities
-against their own APIs.
+The five contract assertions ship before any organ exists, so these tests
+exercise them through upstream APIs (and synthetic operations for the
+refusal-atomicity helper). The organs then reuse the same utilities against
+their own APIs.
 """
 
 from __future__ import annotations
@@ -56,8 +56,8 @@ class DescribeChangedPartBudget:
         self, relpath: str, tmp_path: Path
     ):
         """Open -> save changes nothing semantically, for our files AND
-        LibreOffice-authored files. (Byte identity is Phase 2's patch_save
-        invariant; upstream save() reserializes freely.)"""
+        LibreOffice-authored files. (Byte identity is patch_save's invariant;
+        upstream save() reserializes freely.)"""
         source = fixture_path(relpath)
         resaved = tmp_path / "resaved.docx"
         docx.Document(str(source)).save(str(resaved))
@@ -112,7 +112,7 @@ class DescribeChangedPartBudget:
     def it_reports_byte_churn_separately_from_semantic_change(self, tmp_path: Path):
         """A foreign-authored package (LibreOffice bytes) resaved by upstream
         reserializes bytewise without changing meaning — the churn patch_save
-        (Phase 2) exists to eliminate. Self-generated fixtures don't show this
+        exists to eliminate. Self-generated fixtures don't show this
         (lxml is byte-stable over its own serialization), so a LibreOffice
         fixture is the source here."""
         source = fixture_path("libreoffice/feature-isolated/tracked-ins-del.docx")
@@ -128,7 +128,7 @@ class DescribeChangedPartBudget:
 
 
 class DescribeRefusalAtomicity:
-    """CONVENTIONS §1.3: refuse-then-nothing-changed, in memory and on disk."""
+    """Refuse-then-nothing-changed, in memory and on disk."""
 
     def it_passes_when_the_operation_refuses_and_mutates_nothing(self, tmp_path: Path):
         path = tmp_path / "doc.docx"

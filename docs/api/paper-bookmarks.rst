@@ -4,9 +4,9 @@
 Bookmarks
 =========
 
-Enumerate bookmarks, create one wrapping exactly a |Span|, or delete one
-by name. Ids are globally unique; deletion keeps the text and refuses
-while a cross-reference still points at the name.
+*paper-docx addition.* Enumerate bookmarks, create one that wraps exactly a
+|Span|, or delete one by name. Ids are globally unique. Deletion keeps the text
+and refuses while a cross-reference still points at the name.
 
 .. currentmodule:: docx.bookmarks
 

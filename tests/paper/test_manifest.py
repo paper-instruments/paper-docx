@@ -27,7 +27,7 @@ def _relpaths(paths) -> list:
 
 
 class DescribeFixtureManifest:
-    """CONVENTIONS §4: every fixture's SHA-256 is frozen; drift fails the suite."""
+    """Every fixture's SHA-256 is frozen; drift fails the suite."""
 
     def it_exists(self):
         assert MANIFEST_PATH.is_file(), "tests/paper/fixtures/MANIFEST.sha256 is missing"
@@ -104,7 +104,7 @@ def _sidecars() -> Dict[str, Dict[str, Any]]:
 
 
 class DescribeSidecars:
-    """The sidecar schema is pinned (CONVENTIONS §4) — exactly these keys."""
+    """The sidecar schema is pinned — exactly these keys."""
 
     @pytest.fixture
     def sidecars(self) -> Dict[str, Dict[str, Any]]:

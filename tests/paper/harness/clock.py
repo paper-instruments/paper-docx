@@ -1,9 +1,8 @@
-"""Frozen clock for anything that stamps dates (CONVENTIONS §4).
+"""Frozen clock for anything that stamps dates.
 
-Every future paper API that writes a date (`w:date` on revisions, comment
+Every paper API that writes a date (`w:date` on revisions, comment
 timestamps, ...) takes an injectable clock or an explicit `date=`; tests pass
-a `FrozenClock` so output is deterministic. Phase 1 provides the utility and
-its conftest fixture; the organ phases wire it into their signatures.
+a `FrozenClock` so output is deterministic.
 """
 
 from __future__ import annotations

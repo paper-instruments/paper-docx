@@ -1,8 +1,8 @@
-"""The effective-format resolver (PLAN-v0.11 Phase 7).
+"""The effective-format resolver.
 
 Read-only, provenance-bearing: every value names the layer it came from,
-toggles XOR through style layers (the nested-bold gotcha), and what v0.11
-cannot resolve is declared, never guessed.
+toggles XOR through style layers (the nested-bold gotcha), and what cannot be
+resolved is declared, never guessed.
 """
 
 from __future__ import annotations

@@ -1,4 +1,4 @@
-"""Bookmark enumeration, creation, and deletion (v0.11 Phase 6).
+"""Bookmark enumeration, creation, and deletion.
 
 Bookmarks are the anchor infrastructure cross-references ride on. Creation
 wraps an exact |Span| (the comment-range machinery generalized); ids are
@@ -203,7 +203,7 @@ _FLD_CHAR_TYPE = qn("w:fldCharType")
 def _iter_field_instructions(root: "_Element"):
     """(concatenated-instruction, [w:instrText nodes]) per complex field —
     Word freely SPLITS one instruction across several runs, so any scan
-    matching single nodes silently misses references (v0.11 review sweep).
+    matching single nodes silently misses references.
     """
     stack: "List[List[_Element]]" = []
     for node in root.iter():

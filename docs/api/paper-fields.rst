@@ -4,11 +4,11 @@
 Field authoring
 ===============
 
-Author fields — page number and count, date, cross-references to a
-bookmark, and a table of contents. Every inserted field carries
-placeholder result text and arms the update-fields-on-open flag: this
-package authors *formulas*, and never computes their values (pagination
-is a renderer's job).
+*paper-docx addition.* Author page number and count fields, dates,
+cross-references to a bookmark, and tables of contents. Every inserted field
+carries placeholder result text and sets the update-fields-on-open flag. This
+package authors the field formulas. Word computes their displayed values when
+it opens and paginates the document.
 
 .. currentmodule:: docx.fields
 

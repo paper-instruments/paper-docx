@@ -1,4 +1,4 @@
-"""Finalize, scrub, and protection-aware mutations (PLAN-v0.11 Phase 3)."""
+"""Finalize, scrub, and protection-aware mutations."""
 
 from __future__ import annotations
 

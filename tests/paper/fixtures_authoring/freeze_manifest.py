@@ -3,10 +3,10 @@
 
     uv run --no-sync python tests/paper/fixtures_authoring/freeze_manifest.py
 
-This is the ONE sanctioned way to update fixture hashes (CONVENTIONS §4:
-golden files update only via an explicit command). The manifest test fails on
-any drift, so running this is always followed by human review of the diff in
-the same PR that changes the fixtures.
+This is the ONE sanctioned way to update fixture hashes: golden files update
+only via an explicit command. The manifest test fails on any drift, so
+running this is always followed by human review of the diff in the same PR
+that changes the fixtures.
 """
 
 from __future__ import annotations

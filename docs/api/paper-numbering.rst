@@ -4,10 +4,10 @@
 Numbering
 =========
 
-Report the list definitions a document already carries, apply an
-existing definition to a paragraph, or author a real bullet/decimal
-definition on demand. ``apply_list_style`` refuses rather than produce a
-fake bullet (a list-styled paragraph that renders no marker).
+*paper-docx addition.* Report the list definitions a document already carries,
+apply an existing definition to a paragraph, or author a real bullet or decimal
+definition on demand. ``apply_list_style`` refuses rather than produce a fake
+bullet: a list-styled paragraph that renders no marker.
 
 .. currentmodule:: docx.numbering
 

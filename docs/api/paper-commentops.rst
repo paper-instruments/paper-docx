@@ -4,8 +4,8 @@
 Comment operations
 ==================
 
-Operations over the comment threads Word writes (the w15 extended
-vocabulary): read a comment's anchored text, walk reply threads, reply
+*paper-docx addition.* Work with the comment threads Word writes in the w15
+extended vocabulary. Read a comment's anchored text, walk reply threads, reply
 to a comment, and mark a thread resolved or reopened.
 
 .. currentmodule:: docx.commentops

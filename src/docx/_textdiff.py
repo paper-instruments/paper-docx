@@ -1,4 +1,4 @@
-"""Human-readable semantic text diff (paper-docx v0.1, V5).
+"""Human-readable semantic text diff (paper-docx).
 
 Promoted from the reference `diff_docx.py`: `diff_package` says WHICH parts
 changed; this says WHAT changed, as a unified diff over story-labeled block

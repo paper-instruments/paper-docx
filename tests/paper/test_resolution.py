@@ -1,7 +1,7 @@
-"""Revision-resolution completion (PLAN-v0.11 Phases 0-2).
+"""Revision-resolution completion.
 
-Phase 0 pins that v0.1's detection fires on every revision shape the v0.11
-pipeline builds on (the ground we stand on); Phases 1-2 pin the resolution
+First we pin that detection fires on every revision shape the resolution
+pipeline builds on (the ground we stand on); then we pin the resolution
 semantics themselves against the hand-computed accepted ground truth.
 """
 
@@ -31,7 +31,7 @@ def _doc(relpath: str):
 
 
 class DescribePhase0Detection:
-    """v0.1 detection fires on every shape v0.11 resolves (Phase 0 gate)."""
+    """Detection fires on every shape the resolver later resolves."""
 
     def it_enumerates_every_revision_in_the_multiround_redline(self):
         revisions = _doc(MULTIROUND).revisions
@@ -82,7 +82,7 @@ def _body_texts(document) -> list:
 
 
 class DescribeFormatChangeResolution:
-    """Phase 1: w:rPrChange/w:pPrChange accept and reject."""
+    """w:rPrChange/w:pPrChange accept and reject."""
 
     def it_accepts_a_run_format_change_keeping_current_properties(
         self, tmp_path: Path
@@ -173,7 +173,7 @@ class DescribeFormatChangeResolution:
 
 
 class DescribeRowRevisionResolution:
-    """Phase 1: w:trPr row markers — the ghost-row defect closed."""
+    """w:trPr row markers — the ghost-row defect closed."""
 
     def _grid(self, document) -> list:
         return [
@@ -249,7 +249,7 @@ class DescribeRowRevisionResolution:
 
 
 class DescribeParagraphMarkResolution:
-    """Phase 1: the pilcrow itself, both directions explicitly."""
+    """The pilcrow itself, both directions explicitly."""
 
     def it_accepts_a_deleted_mark_merging_with_the_next_paragraph(
         self, tmp_path: Path
@@ -331,7 +331,7 @@ MOVED_TEXT_V01 = "The indemnity clause relocated by tracked move."
 
 
 class DescribeMoveResolution:
-    """Phase 2: moves resolve as paired units, never one site alone."""
+    """Moves resolve as paired units, never one site alone."""
 
     def it_accepts_the_multiround_redline_to_match_the_ground_truth(
         self, tmp_path: Path
@@ -468,7 +468,7 @@ class DescribeMoveResolution:
 
 
 class DescribeGauntletResolution:
-    """Release-level: the everything-document resolves completely, both ways."""
+    """The everything-document resolves completely, both ways."""
 
     @pytest.mark.parametrize("accept", [True, False], ids=["accept", "reject"])
     def it_resolves_the_entire_gauntlet_to_zero_markup(
@@ -485,7 +485,7 @@ class DescribeGauntletResolution:
 
 
 class DescribeExoticTypesStayRefused:
-    """Phase 1: everything not resolved is enumerated and refused BY NAME."""
+    """Everything not resolved is enumerated and refused BY NAME."""
 
     @pytest.mark.parametrize(
         ("markup", "expected_type"),
