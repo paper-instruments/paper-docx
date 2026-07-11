@@ -40,12 +40,14 @@ def verify_install() -> str:
             "docx package"
         )
 
-    _verify_docx_record(paper)
+    docx_root = _verify_docx_record(paper)
 
     try:
         docx = importlib.import_module("docx")
     except Exception as exc:
         raise DoctorError(f"docx cannot be imported: {exc}") from exc
+
+    _verify_docx_import_path(docx, docx_root)
 
     sentinel = getattr(docx, "__paper_version__", None)
     if sentinel is None:
@@ -77,7 +79,7 @@ def _installed_distribution(name: str) -> Optional[Distribution]:
         return None
 
 
-def _verify_docx_record(dist: Distribution) -> None:
+def _verify_docx_record(dist: Distribution) -> Path:
     record = dist.read_text("RECORD")
     if record is None:
         raise DoctorError("paper-docx RECORD is missing")
@@ -98,6 +100,30 @@ def _verify_docx_record(dist: Distribution) -> None:
         actual = _file_digest(path, algorithm)
         if not hmac.compare_digest(actual, expected):
             raise DoctorError(f"paper-docx file hash mismatch: {relative_path}")
+
+    try:
+        return Path(dist.locate_file(PurePosixPath("docx"))).resolve(strict=True)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise DoctorError("paper-docx owned docx root cannot be resolved") from exc
+
+
+def _verify_docx_import_path(docx: object, docx_root: Path) -> None:
+    module_file = getattr(docx, "__file__", None)
+    if not module_file:
+        raise DoctorError("docx.__file__ is missing")
+
+    try:
+        imported_path = Path(module_file).resolve(strict=True)
+    except (OSError, RuntimeError, TypeError, ValueError) as exc:
+        raise DoctorError("docx.__file__ cannot be resolved") from exc
+
+    try:
+        imported_path.relative_to(docx_root)
+    except ValueError:
+        raise DoctorError(
+            "docx.__file__ is outside the paper-docx owned docx root "
+            f"({imported_path} is not within {docx_root})"
+        ) from None
 
 
 def _docx_record_entries(record: str) -> Iterable[Tuple[PurePosixPath, str]]:

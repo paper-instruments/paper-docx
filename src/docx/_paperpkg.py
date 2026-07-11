@@ -219,6 +219,9 @@ def _read_zip(
     source: Union[_PathLike, IO[bytes], bytes]
 ) -> Tuple[Dict[str, bytes], List[str]]:
     """Return validated member bytes and central-directory order."""
+    if isinstance(source, (str, os.PathLike)):
+        with open(source, "rb") as stream:
+            return _read_zip(stream)
     source = io.BytesIO(source) if isinstance(source, bytes) else source
     enforce_compressed_size(source)
     preflight_zip(source)

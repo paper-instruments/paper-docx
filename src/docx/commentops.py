@@ -303,7 +303,18 @@ def _anchor_elements(document: "Document", comment_id: int):
     body = document.element.body
     start = end = reference_run = None
     for node in body.iter(_RANGE_START, _RANGE_END, _REFERENCE):
-        if node.get(_W_ID) != str(comment_id):
+        raw = node.get(_W_ID)
+        try:
+            if raw is None:
+                raise ValueError
+            marker_id = int(raw)
+        except (TypeError, ValueError):
+            name = node.tag.rsplit("}", 1)[-1]
+            raise UnsupportedStructureError(
+                f"malformed {name} comment marker w:id={raw!r}; nothing was"
+                " changed"
+            ) from None
+        if marker_id != comment_id:
             continue
         if node.tag == _RANGE_START:
             start = node
@@ -415,8 +426,15 @@ def reply(
 def comment_thread(document: "Document") -> Tuple[dict, ...]:
     """Every comment with its thread state: (id, author, text, resolved,
     parent_id, anchored_text where available)."""
+    try:
+        comments = document.comments
+    except ValueError:
+        raise UnsupportedStructureError(
+            "multiple comments relationships make comment inspection"
+            " ambiguous; nothing was changed"
+        ) from None
     entries = []
-    for comment in document.comments:
+    for comment in comments:
         try:
             anchor_text = anchored_text(document, comment)
         except TargetNotFoundError:

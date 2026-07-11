@@ -349,3 +349,17 @@ class DescribeDirectoryEntries:
                 zout.writestr(name, zin.read(name))
         with pytest.raises(PackageLimitError, match="carries data"):
             docx.Document(str(path))
+
+    def and_it_validates_local_records_in_a_directory_only_archive(
+        self, tmp_path: Path
+    ):
+        path = tmp_path / "directory-only.zip"
+        with zipfile.ZipFile(path, "w") as archive:
+            archive.writestr(zipfile.ZipInfo("word/"), b"")
+        data = bytearray(path.read_bytes())
+        local_offset = data.index(b"PK\x03\x04")
+        data[local_offset : local_offset + 4] = b"BAD!"
+        path.write_bytes(data)
+
+        with pytest.raises(PackageLimitError, match="invalid header"):
+            _guarded_read(path)

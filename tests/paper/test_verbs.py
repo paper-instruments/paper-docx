@@ -107,7 +107,7 @@ class DescribeContentControls:
         _add_sdt(
             document,
             f'<w:p {W14}><w:sdt><w:sdtPr><w:tag w:val="signed"/>'
-            "<w:date/></w:sdtPr>"
+            '<w:date><w:dateFormat w:val="yyyy-MM-dd"/></w:date></w:sdtPr>'
             "<w:sdtContent><w:r><w:t>pick a date</w:t></w:r></w:sdtContent>"
             "</w:sdt></w:p>",
         )

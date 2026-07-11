@@ -184,13 +184,14 @@ def _format_declared_date(date_pr: "_Element", stamp: dt.datetime) -> str:
         )
     format_elm = date_pr.find(_DATE_FORMAT)
     if format_elm is None:
-        pattern = "yyyy-MM-dd"
-    else:
-        pattern = format_elm.get(_W_VAL) or ""
-        if not pattern:
-            raise UnsupportedStructureError(
-                "date control declares an empty w:dateFormat; nothing was changed"
-            )
+        raise UnsupportedStructureError(
+            "date control has no w:dateFormat; nothing was changed"
+        )
+    pattern = format_elm.get(_W_VAL) or ""
+    if not pattern:
+        raise UnsupportedStructureError(
+            "date control declares an empty w:dateFormat; nothing was changed"
+        )
 
     lid_elm = date_pr.find(_LID)
     language = lid_elm.get(_W_VAL) if lid_elm is not None else None
@@ -265,7 +266,12 @@ def _format_declared_date(date_pr: "_Element", stamp: dt.datetime) -> str:
         pieces.append(replacement)
         index = end
 
-    if uses_names and language is not None:
+    if uses_names:
+        if language is None:
+            raise UnsupportedStructureError(
+                f"date format {pattern!r} uses locale-sensitive names, but the"
+                " date control has no w:lid; nothing was changed"
+            )
         normalized_language = language.lower()
         if normalized_language != "en" and not normalized_language.startswith("en-"):
             raise UnsupportedStructureError(

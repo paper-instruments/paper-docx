@@ -60,7 +60,10 @@ class DescribePaperDocxDoctor:
         monkeypatch.setattr(
             doctor.importlib,
             "import_module",
-            lambda _name: SimpleNamespace(__paper_version__="0.1.1"),
+            lambda _name: SimpleNamespace(
+                __file__=str(tmp_path / "docx" / "__init__.py"),
+                __paper_version__="0.1.1",
+            ),
         )
 
         assert doctor.verify_install() == "0.1.1"
@@ -96,6 +99,46 @@ class DescribePaperDocxDoctor:
         with pytest.raises(doctor.DoctorError, match="hash mismatch"):
             doctor.verify_install()
 
+    def it_refuses_a_matching_sentinel_outside_the_owned_docx_root(
+        self, monkeypatch, tmp_path
+    ):
+        paper = _paper_distribution(tmp_path)
+        foreign_module = tmp_path / "shadow" / "docx" / "__init__.py"
+        foreign_module.parent.mkdir(parents=True)
+        foreign_module.write_bytes(b"paper bytes")
+        _install_lookup(monkeypatch, paper=paper)
+        monkeypatch.setattr(
+            doctor.importlib,
+            "import_module",
+            lambda _name: SimpleNamespace(
+                __file__=str(foreign_module), __paper_version__="0.1.1"
+            ),
+        )
+
+        with pytest.raises(doctor.DoctorError, match="outside.*owned docx root"):
+            doctor.verify_install()
+
+    def it_resolves_the_import_path_before_checking_ownership(
+        self, monkeypatch, tmp_path
+    ):
+        paper = _paper_distribution(tmp_path)
+        foreign_module = tmp_path / "shadow" / "__init__.py"
+        foreign_module.parent.mkdir()
+        foreign_module.write_bytes(b"paper bytes")
+        linked_module = tmp_path / "docx" / "shadow.py"
+        linked_module.symlink_to(foreign_module)
+        _install_lookup(monkeypatch, paper=paper)
+        monkeypatch.setattr(
+            doctor.importlib,
+            "import_module",
+            lambda _name: SimpleNamespace(
+                __file__=str(linked_module), __paper_version__="0.1.1"
+            ),
+        )
+
+        with pytest.raises(doctor.DoctorError, match="outside.*owned docx root"):
+            doctor.verify_install()
+
     @pytest.mark.parametrize(
         ("sentinel", "message"),
         [(None, "is missing"), ("9.9.9", "does not match")],
@@ -105,7 +148,9 @@ class DescribePaperDocxDoctor:
     ):
         paper = _paper_distribution(tmp_path)
         _install_lookup(monkeypatch, paper=paper)
-        imported = SimpleNamespace()
+        imported = SimpleNamespace(
+            __file__=str(tmp_path / "docx" / "__init__.py")
+        )
         if sentinel is not None:
             imported.__paper_version__ = sentinel
         monkeypatch.setattr(

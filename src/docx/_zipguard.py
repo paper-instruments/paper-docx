@@ -536,7 +536,7 @@ class GuardedZipReader:
                 )
 
     def _read_all_members(self) -> Dict[str, bytes]:
-        if not self._infos:
+        if not self._infos and not self._directory_infos:
             return {}
         stream = self._zip_file.fp
         if stream is None:

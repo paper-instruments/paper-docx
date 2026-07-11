@@ -52,6 +52,52 @@ def _zip64_count_only_archive(member_count: int) -> bytes:
 
 
 class DescribeCentralDirectoryPreflight:
+    def it_opens_package_kernel_paths_once_before_preflight(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        path = tmp_path / "selected.zip"
+        replacement = tmp_path / "replacement.zip"
+        _write_archive(path, (("selected.bin", b"selected"),))
+        _write_archive(replacement, (("replacement.bin", b"replacement"),))
+        original_preflight = _paperpkg.preflight_zip
+
+        def preflight_then_swap(source: object) -> None:
+            original_preflight(source)
+            replacement.replace(path)
+
+        monkeypatch.setattr(_paperpkg, "preflight_zip", preflight_then_swap)
+
+        parts, _ = _paperpkg._read_zip(path)
+
+        assert parts == {"selected.bin": b"selected"}
+
+    def it_opens_document_paths_once_before_preflight(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        path = tmp_path / "selected.docx"
+        replacement = tmp_path / "replacement.docx"
+        selected = docx.Document()
+        selected.add_paragraph("selected")
+        selected.save(path)
+        other = docx.Document()
+        other.add_paragraph("replacement")
+        other.save(replacement)
+        original_preflight = phys_pkg.preflight_zip
+
+        def preflight_then_swap(source: object) -> None:
+            original_preflight(source)
+            replacement.replace(path)
+
+        monkeypatch.setattr(phys_pkg, "preflight_zip", preflight_then_swap)
+
+        reopened = docx.Document(path)
+
+        assert [paragraph.text for paragraph in reopened.paragraphs] == ["selected"]
+
     def it_refuses_zip64_member_count_before_constructing_zipfile(
         self,
         tmp_path: Path,

@@ -18,6 +18,7 @@ from docx.oxml.ns import nsdecls, qn
 from .harness.paths import fixture_path
 
 NOTES = "generated/feature-isolated/footnotes-endnotes.docx"
+ROW_REVISIONS = "generated/feature-isolated/row-revisions.docx"
 W = nsdecls("w")
 
 
@@ -247,6 +248,98 @@ class DescribeCleanupPreflight:
             document.revisions.reject_all()
 
         assert document.element.xml == before
+
+
+class DescribeIndividualDestructiveClosure:
+    def it_refuses_a_row_change_with_independently_authored_nested_markup(self):
+        document = docx.Document(str(fixture_path(ROW_REVISIONS)))
+        row_marker = next(
+            revision
+            for revision in document.revisions
+            if revision.revision_type == "row_insertion"
+        )._element  # noqa: SLF001
+        tr_pr = row_marker.getparent()
+        assert tr_pr is not None
+        row = tr_pr.getparent()
+        assert row is not None
+        nested = next(node for node in row.iter(qn("w:ins")) if node is not row_marker)
+        nested.set(qn("w:author"), "Independent Reviewer")
+        row_insertion = next(
+            revision
+            for revision in document.revisions
+            if revision.revision_type == "row_insertion"
+        )
+        before = document.element.xml
+
+        with pytest.raises(
+            UnsupportedStructureError,
+            match=r"cannot reject.*row_insertion.*Independent Reviewer",
+        ):
+            row_insertion.reject()
+
+        assert document.element.xml == before
+
+    def it_refuses_accepting_an_outer_deletion_with_a_nested_revision(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()._p
+        paragraph.append(
+            _revision(
+                "del",
+                '<w:r><w:delText>outer</w:delText></w:r>'
+                '<w:ins w:id="21" w:author="Bob">'
+                "<w:r><w:t>nested</w:t></w:r></w:ins>",
+                20,
+                author="Alice",
+            )
+        )
+        revisions = document.revisions
+        outer = next(r for r in revisions if r.revision_type == "deletion")
+        before = document.element.xml
+
+        with pytest.raises(
+            UnsupportedStructureError,
+            match=r"cannot accept.*deletion.*unselected.*insertion",
+        ):
+            outer.accept()
+
+        assert document.element.xml == before
+        assert [
+            (revision.revision_type, revision.author)
+            for revision in document.revisions
+        ] == [("deletion", "Alice"), ("insertion", "Bob")]
+        assert document.revisions.accept_all() == 2
+        assert not document.revisions
+
+    def it_refuses_rejecting_an_outer_insertion_with_a_nested_revision(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()._p
+        paragraph.append(
+            _revision(
+                "ins",
+                '<w:r><w:t>outer</w:t></w:r>'
+                '<w:del w:id="23" w:author="Bob">'
+                "<w:r><w:delText>nested</w:delText></w:r></w:del>",
+                22,
+                author="Alice",
+            )
+        )
+        revisions = document.revisions
+        outer = next(r for r in revisions if r.revision_type == "insertion")
+        before = document.element.xml
+
+        with pytest.raises(
+            UnsupportedStructureError,
+            match=r"cannot reject.*insertion.*unselected.*deletion",
+        ):
+            outer.reject()
+
+        assert document.element.xml == before
+        assert [
+            (revision.revision_type, revision.author)
+            for revision in document.revisions
+        ] == [("insertion", "Alice"), ("deletion", "Bob")]
+        assert document.revisions.reject_all() == 2
+        assert not document.revisions
 
 
 class DescribeFilteredDestructiveClosure:

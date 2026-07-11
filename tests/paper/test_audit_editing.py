@@ -339,6 +339,45 @@ class DescribeControlSetterHardening:
         (date_pr,) = document.element.body.xpath("//w:sdtPr/w:date")
         assert date_pr.get(qn("w:fullDate")) == "2026-07-09T23:30:00Z"
 
+    def it_refuses_a_date_without_a_declared_format_before_mutation(self):
+        from docx.controls import get_control, set_control_value
+
+        document = docx.Document()
+        _append_body_block(
+            document,
+            parse_xml(
+                f'<w:p {W}><w:sdt><w:sdtPr><w:tag w:val="unformatted"/>'
+                '<w:date w:fullDate="2020-01-01T00:00:00Z"/></w:sdtPr>'
+                "<w:sdtContent><w:r><w:t>old</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        control = get_control(document, tag="unformatted")
+        before = etree.tostring(control._sdt)
+        with pytest.raises(UnsupportedStructureError, match="w:dateFormat"):
+            set_control_value(document, dt.date(2026, 7, 10), tag="unformatted")
+        assert etree.tostring(control._sdt) == before
+
+    def it_refuses_named_date_tokens_without_a_declared_locale_before_mutation(self):
+        from docx.controls import get_control, set_control_value
+
+        document = docx.Document()
+        _append_body_block(
+            document,
+            parse_xml(
+                f'<w:p {W}><w:sdt><w:sdtPr><w:tag w:val="unlocalized"/>'
+                '<w:date w:fullDate="2020-01-01T00:00:00Z">'
+                '<w:dateFormat w:val="MMMM d, yyyy"/></w:date></w:sdtPr>'
+                '<w:sdtContent><w:r><w:rPr><w:lang w:val="fr-FR"/></w:rPr>'
+                "<w:t>ancien</w:t></w:r></w:sdtContent></w:sdt></w:p>"
+            ),
+        )
+        control = get_control(document, tag="unlocalized")
+        before = etree.tostring(control._sdt)
+        with pytest.raises(UnsupportedStructureError, match="w:lid"):
+            set_control_value(document, dt.date(2026, 7, 10), tag="unlocalized")
+        assert etree.tostring(control._sdt) == before
+
     @pytest.mark.parametrize(
         "declaration",
         [

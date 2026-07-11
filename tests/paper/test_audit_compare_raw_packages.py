@@ -7,6 +7,7 @@ from pathlib import Path
 from zipfile import ZIP_DEFLATED, ZipFile
 
 import pytest
+from lxml import etree
 
 import docx
 import docx._compare as compare_impl
@@ -50,6 +51,34 @@ def _add_orphan_custom_xml(path: Path) -> None:
         for info, data in rewritten:
             destination.writestr(info, data)
         destination.writestr("customXml/orphan.xml", b"<orphan/>")
+    replacement.replace(path)
+
+
+def _corrupt_document_relationship_id(path: Path, defect: str) -> None:
+    with ZipFile(path, "r") as source:
+        entries = [(info, source.read(info.filename)) for info in source.infolist()]
+
+    rewritten = []
+    for info, data in entries:
+        if info.filename == "word/_rels/document.xml.rels":
+            root = etree.fromstring(data)
+            relationships = list(root)
+            assert len(relationships) >= 2
+            if defect == "missing":
+                del relationships[0].attrib["Id"]
+            elif defect == "empty":
+                relationships[0].set("Id", "")
+            else:
+                first_id = relationships[0].get("Id")
+                assert first_id is not None
+                relationships[1].set("Id", first_id)
+            data = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
+        rewritten.append((info, data))
+
+    replacement = path.with_suffix(".replacement.docx")
+    with ZipFile(replacement, "w", compression=ZIP_DEFLATED) as destination:
+        for info, data in rewritten:
+            destination.writestr(info, data)
     replacement.replace(path)
 
 
@@ -100,6 +129,37 @@ class DescribeRawPackagePreflight:
 
         monkeypatch.setattr(docx, "Document", unexpected_document_load)
         with pytest.raises(UnsupportedStructureError, match="unreachable package part"):
+            compare(original, revised, author="Reviewer", date=FROZEN)
+
+        assert (original.read_bytes(), revised.read_bytes()) == before
+
+    @pytest.mark.parametrize(
+        ("defect", "message"),
+        [
+            pytest.param("missing", "missing Id", id="missing"),
+            pytest.param("empty", "empty Id", id="empty"),
+            pytest.param("duplicate", "duplicate relationship Id", id="duplicate"),
+        ],
+    )
+    def it_refuses_invalid_relationship_ids_before_loading_and_preserves_inputs(
+        self,
+        defect: str,
+        message: str,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        def build(document):
+            document.add_paragraph("Same visible document")
+
+        original, revised = _save_pair(tmp_path, build, build)
+        _corrupt_document_relationship_id(revised, defect)
+        before = (original.read_bytes(), revised.read_bytes())
+
+        def unexpected_document_load(*args, **kwargs):
+            raise AssertionError("raw package preflight must run before Document()")
+
+        monkeypatch.setattr(docx, "Document", unexpected_document_load)
+        with pytest.raises(UnsupportedStructureError, match=message):
             compare(original, revised, author="Reviewer", date=FROZEN)
 
         assert (original.read_bytes(), revised.read_bytes()) == before

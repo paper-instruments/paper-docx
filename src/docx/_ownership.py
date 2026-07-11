@@ -10,7 +10,11 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, cast
 
-from docx.errors import BoundaryViolationError, TargetNotFoundError
+from docx.errors import (
+    BoundaryViolationError,
+    TargetNotFoundError,
+    UnsupportedStructureError,
+)
 
 if TYPE_CHECKING:
     from docx.comments import Comment
@@ -53,6 +57,11 @@ def require_comment_owner(
         expected_part = document.part.part_related_by(RT.COMMENTS)
     except KeyError:
         expected_part = None
+    except ValueError:
+        raise UnsupportedStructureError(
+            "multiple comments relationships make comment ownership"
+            " ambiguous; nothing was changed"
+        ) from None
 
     if comment_part is not expected_part or expected_part is None:
         raise BoundaryViolationError(

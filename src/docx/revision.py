@@ -235,6 +235,7 @@ class Revision:
                 accept=True,
                 author=None,
                 require_clean=False,
+                individual=True,
             )
             with rollback_on_error(self._document):
                 _resolve_one(self._element, accept=True, document=self._document)
@@ -254,6 +255,7 @@ class Revision:
                 accept=False,
                 author=None,
                 require_clean=False,
+                individual=True,
             )
             with rollback_on_error(self._document):
                 _resolve_one(self._element, accept=False, document=self._document)
@@ -353,6 +355,7 @@ class Revisions(Sequence[Revision]):
             accept=accept,
             author=author,
             require_clean=author is None,
+            individual=False,
         )
         if not _transactional:
             return self._apply_all(selected, accept=accept)
@@ -664,6 +667,7 @@ def _preflight_resolution(
     accept: bool,
     author: "Optional[str]",
     require_clean: bool,
+    individual: bool,
 ) -> None:
     """Validate every dependency a resolution can touch before mutation."""
     _validate_comment_marker_ids(document)
@@ -674,8 +678,13 @@ def _preflight_resolution(
         _refuse_unaccounted_markup(document)
     _validate_paragraph_mark_joins(selected, document, accept=accept)
     discard_roots = _resolution_discard_roots(selected, document, accept=accept)
-    _validate_filtered_destructive_closure(
-        discard_roots, selected, document, author=author
+    _validate_destructive_closure(
+        discard_roots,
+        selected,
+        document,
+        accept=accept,
+        author=author,
+        individual=individual,
     )
     _validate_cleanup_dependencies(document, discard_roots)
 
@@ -750,18 +759,40 @@ def _resolution_discard_roots(
     return roots
 
 
-def _validate_filtered_destructive_closure(
+def _validate_destructive_closure(
     discard_roots: "List[_Element]",
     selected: "List[Revision]",
     document: "Document",
     *,
+    accept: bool,
     author: "Optional[str]",
+    individual: bool,
 ) -> None:
-    """Refuse a filter that would erase unselected revision markup."""
-    if author is None:
+    """Refuse selected destructive changes that erase unselected markup."""
+    if author is None and not individual:
         return
     selected_ids = {id(revision._element) for revision in selected}  # noqa: SLF001
     accounted_ids = set(selected_ids)
+    for revision in selected:
+        if revision.revision_type not in ("row_insertion", "row_deletion"):
+            continue
+        marker = revision._element  # noqa: SLF001
+        marker_author = marker.get(_AUTHOR)
+        marker_date = marker.get(_DATE)
+        if not marker_author or not marker_date:
+            continue
+        tr_pr = marker.getparent()
+        row = tr_pr.getparent() if tr_pr is not None else None
+        if row is None or row.tag != _TR:
+            continue  # `_resolution_discard_roots()` reports the malformed row.
+        for node in row.iter(marker.tag):
+            if (
+                node.get(_AUTHOR) == marker_author
+                and node.get(_DATE) == marker_date
+            ):
+                # Word records one row change as a row marker plus matching
+                # content and paragraph-mark revisions in each cell.
+                accounted_ids.add(id(node))
     selected_move_ids = {
         id(revision._element)  # noqa: SLF001
         for revision in selected
@@ -773,18 +804,35 @@ def _validate_filtered_destructive_closure(
             if any(id(element) in selected_move_ids for element in unit.elements):
                 accounted_ids.update(id(element) for element in unit.elements)
 
-    conflicts: "set[str]" = set()
+    conflict_authors: "set[str]" = set()
+    conflict_types: "set[str]" = set()
     for root in discard_roots:
         for node in root.iter():
             if node.tag not in _MARKUP_SCAN_TAGS or id(node) in accounted_ids:
                 continue
             node_author = node.get(_AUTHOR) or ""
-            conflicts.add(node_author or "<missing author>")
-    if conflicts:
+            conflict_authors.add(node_author or "<missing author>")
+            conflict_types.add(
+                _revision_type_of(node)
+                if node.tag in _REVISION_TYPES
+                else node.tag.rsplit("}", 1)[-1]
+            )
+    if not conflict_types:
+        return
+    if individual:
+        verb = "accept" if accept else "reject"
+        revision_type = selected[0].revision_type
+        raise UnsupportedStructureError(
+            f"cannot {verb} a {revision_type!r} revision individually: its"
+            " destructive resolution would also consume nested unselected"
+            f" revision markup (types {sorted(conflict_types)!r}, authors"
+            f" {sorted(conflict_authors)!r}); nothing was changed"
+        )
+    if author is not None:
         raise UnsupportedStructureError(
             f"cannot resolve revisions with author={author!r}: a selected"
             " destructive revision would also consume unselected revision"
-            f" markup (authors {sorted(conflicts)!r}); nothing was changed"
+            f" markup (authors {sorted(conflict_authors)!r}); nothing was changed"
         )
 
 

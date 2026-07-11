@@ -76,13 +76,25 @@ class _ZipPkgReader(PhysPkgReader):
 
     def __init__(self, pkg_file):
         super(_ZipPkgReader, self).__init__()
-        enforce_compressed_size(pkg_file)
-        preflight_zip(pkg_file)
-        self._zipf = ZipFile(pkg_file, "r")
+        if isinstance(pkg_file, (str, os.PathLike)):
+            with open(pkg_file, "rb") as stream:
+                self._load(stream)
+                # GuardedZipReader caches every member during construction.
+                self._zipf.close()
+            return
+        self._load(pkg_file)
+
+    def _load(self, source):
+        """Preflight and cache one already-open package source."""
         try:
+            enforce_compressed_size(source)
+            preflight_zip(source)
+            self._zipf = ZipFile(source, "r")
             self._guarded_reader = GuardedZipReader(self._zipf)
         except Exception:
-            self._zipf.close()
+            zip_file = getattr(self, "_zipf", None)
+            if zip_file is not None:
+                zip_file.close()
             raise
 
     def blob_for(self, pack_uri):
