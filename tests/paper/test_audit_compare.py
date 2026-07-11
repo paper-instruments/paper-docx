@@ -164,3 +164,75 @@ def it_saves_compare_output_with_deterministic_zip_metadata(tmp_path: Path):
         assert {info.date_time for info in package.infolist()} == {
             (1980, 1, 1, 0, 0, 0)
         }
+
+
+class DescribeCompareAlignmentTrim:
+    """The sequence budget measures the CHANGE, not the document length."""
+
+    def it_self_compares_a_long_document_with_zero_revisions(self, tmp_path: Path):
+        def build(document):
+            for index in range(1_050):
+                document.add_paragraph(f"Clause {index}: unique wording {index}.")
+
+        a, _b = _save_pair(tmp_path, build, build)
+        result = compare(a, a, author="Reviewer")
+        assert len(result.document.revisions) == 0
+
+    def and_it_redlines_one_edit_in_a_long_document(self, tmp_path: Path):
+        def original(document):
+            for index in range(1_050):
+                document.add_paragraph(f"Clause {index} body text.")
+
+        def revised(document):
+            for index in range(1_050):
+                text = f"Clause {index} body text."
+                if index == 525:
+                    text = "Clause 525 amended body text."
+                document.add_paragraph(text)
+
+        a, b = _save_pair(tmp_path, original, revised)
+        result = compare(a, b, author="Reviewer")
+        assert len(result.document.revisions) > 0
+        result.document.revisions.accept_all()
+        assert (
+            result.document.paragraphs[525].text == "Clause 525 amended body text."
+        )
+
+
+class DescribeProofErrTransparency:
+    """w:proofErr is the proofing tool's cache, not content."""
+
+    def _flagged_paragraph(self, document, text: str) -> None:
+        paragraph = document.add_paragraph(text)
+        run = paragraph.runs[0]._r
+        start = OxmlElement("w:proofErr")
+        start.set(qn("w:type"), "spellStart")
+        end = OxmlElement("w:proofErr")
+        end.set(qn("w:type"), "spellEnd")
+        run.addprevious(start)
+        run.addnext(end)
+
+    def it_redlines_a_deletion_beside_proofing_markers(self, tmp_path: Path):
+        def original(document):
+            self._flagged_paragraph(document, "Klause with a flagged typo.")
+            document.add_paragraph("A second paragraph to be deleted.")
+
+        def revised(document):
+            self._flagged_paragraph(document, "Klause with a flagged typo.")
+
+        a, b = _save_pair(tmp_path, original, revised)
+        result = compare(a, b, author="Reviewer")
+        result.document.revisions.accept_all()
+        texts = [p.text for p in result.document.paragraphs]
+        assert "A second paragraph to be deleted." not in texts
+
+    def and_a_proofing_only_difference_is_no_difference(self, tmp_path: Path):
+        def original(document):
+            self._flagged_paragraph(document, "Klause with a flagged typo.")
+
+        def revised(document):
+            document.add_paragraph("Klause with a flagged typo.")
+
+        a, b = _save_pair(tmp_path, original, revised)
+        result = compare(a, b, author="Reviewer")
+        assert len(result.document.revisions) == 0

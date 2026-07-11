@@ -805,6 +805,12 @@ class Span:
         """
         if tracked and not author:
             raise ValueError("author is required when tracked=True")
+        if tracked:
+            # the w:ins/w:del identity attributes are stamped AFTER mutation
+            # begins; malformed values must refuse before anything changes
+            _validate_xml_characters(author, argument="author")
+            if date is not None and not isinstance(date, dt.datetime):
+                raise TypeError("date must be a datetime or None")
         _validate_writable_text(new_text, argument="new_text")
         _refuse_if_protected(self._document, "replace text")
         self._validate_fresh()

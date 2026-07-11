@@ -168,6 +168,34 @@ class DescribeZipResourceBounds:
             compression=zipfile.ZIP_DEFLATED,
         )
         monkeypatch.setattr(_zipguard, "MAX_COMPRESSION_RATIO", 2)
+        monkeypatch.setattr(_zipguard, "RATIO_ENFORCEMENT_FLOOR_BYTES", 1_024)
+        with pytest.raises(PackageLimitError, match="compression ratio"):
+            _guarded_read(path)
+
+    def and_it_exempts_members_at_or_below_the_ratio_floor(self, tmp_path: Path):
+        """Repetitive WordprocessingML legitimately exceeds 100:1; below the
+        floor the absolute limits alone bound it, so save->open round-trips."""
+        path = tmp_path / "repetitive.docx"
+        repetitive = b"<w:p><w:r><w:t>same line</w:t></w:r></w:p>" * 8_192
+        _write_archive(
+            path,
+            (("word/document.xml", repetitive),),
+            compression=zipfile.ZIP_DEFLATED,
+        )
+        with zipfile.ZipFile(path) as archive:
+            info = archive.getinfo("word/document.xml")
+            assert info.file_size > info.compress_size * 100  # genuinely >100:1
+        assert _guarded_read(path)["word/document.xml"] == repetitive
+
+    def and_it_still_refuses_extreme_amplification_above_the_floor(
+        self, tmp_path: Path
+    ):
+        path = tmp_path / "amplified.docx"
+        _write_archive(
+            path,
+            (("word/media/blob.bin", b"\0" * (20 * 1024 * 1024)),),
+            compression=zipfile.ZIP_DEFLATED,
+        )
         with pytest.raises(PackageLimitError, match="compression ratio"):
             _guarded_read(path)
 
@@ -198,11 +226,8 @@ class DescribeZipResourceBounds:
 class DescribeGuardedPackageApis:
     def it_refuses_open_diff_and_patch_without_touching_the_destination(self, tmp_path: Path):
         unsafe = tmp_path / "unsafe.docx"
-        _write_archive(
-            unsafe,
-            (("word/document.xml", b"A" * 1_000_000),),
-            compression=zipfile.ZIP_DEFLATED,
-        )
+        _write_archive(unsafe, (("word/document.xml", b"<document/>"),))
+        _set_encrypted_flags(unsafe)
         source = fixture_path(MINIMAL)
         document = docx.Document(str(source))
         out = tmp_path / "out.docx"
@@ -224,17 +249,14 @@ class DescribeGuardedPackageApis:
 
     def it_diagnoses_a_limit_refusal_as_an_unsafe_archive(self, tmp_path: Path):
         unsafe = tmp_path / "unsafe.docx"
-        _write_archive(
-            unsafe,
-            (("word/document.xml", b"A" * 1_000_000),),
-            compression=zipfile.ZIP_DEFLATED,
-        )
+        _write_archive(unsafe, (("word/document.xml", b"<document/>"),))
+        _set_encrypted_flags(unsafe)
 
         report = diagnose(unsafe)
 
         assert not report.readable
         assert report.kind == "unsafe-archive"
-        assert "compression ratio" in report.problems[0]
+        assert "encrypted" in report.problems[0]
 
 
 class DescribePatchSavePermissions:
@@ -283,3 +305,47 @@ class DescribeGuardedStreamReads:
             parts, _ = GuardedZipReader(archive).read_all()
 
         assert parts["word/document.xml"] == b"<document/>" * 100
+
+
+class DescribeDirectoryEntries:
+    """Folder records (zip -r style) are inert in OPC: ignored, never parts."""
+
+    def it_reads_a_package_carrying_inert_directory_entries(self, tmp_path: Path):
+        source = fixture_path(MINIMAL)
+        path = tmp_path / "rezipped.docx"
+        with zipfile.ZipFile(source) as zin, zipfile.ZipFile(
+            path, "w", zipfile.ZIP_DEFLATED
+        ) as zout:
+            added: set[str] = set()
+            for name in zin.namelist():
+                prefix_parts = name.split("/")[:-1]
+                for depth in range(1, len(prefix_parts) + 1):
+                    folder = "/".join(prefix_parts[:depth]) + "/"
+                    if folder not in added:
+                        added.add(folder)
+                        zout.writestr(
+                            zipfile.ZipInfo(folder, date_time=(1980, 1, 1, 0, 0, 0)),
+                            b"",
+                        )
+                zout.writestr(name, zin.read(name))
+        assert added  # the rezip really did interleave folder records
+
+        document = docx.Document(str(path))
+        assert document.paragraphs is not None
+        parts = _guarded_read(path)
+        assert not any(name.endswith("/") for name in parts)
+
+    def and_it_refuses_a_directory_entry_carrying_data(self, tmp_path: Path):
+        source = fixture_path(MINIMAL)
+        path = tmp_path / "smuggled.docx"
+        with zipfile.ZipFile(source) as zin, zipfile.ZipFile(
+            path, "w", zipfile.ZIP_DEFLATED
+        ) as zout:
+            zout.writestr(
+                zipfile.ZipInfo("word/", date_time=(1980, 1, 1, 0, 0, 0)),
+                b"hidden payload",
+            )
+            for name in zin.namelist():
+                zout.writestr(name, zin.read(name))
+        with pytest.raises(PackageLimitError, match="carries data"):
+            docx.Document(str(path))

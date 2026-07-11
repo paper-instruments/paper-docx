@@ -548,6 +548,13 @@ def _canonical_story_bytes(root: "_Element") -> bytes:
 
     clone = copy.deepcopy(root)
     xml_space = "{http://www.w3.org/XML/1998/namespace}space"
+    # w:proofErr is the proofing tool's spell/grammar cache, not content: Word
+    # regenerates it freely and deletion paths legitimately drop it, so it
+    # must not defeat equality (or the reject-contract verification)
+    for node in list(clone.iter(_PROOF_ERR)):
+        parent = node.getparent()
+        if parent is not None:
+            parent.remove(node)
     for property_tag in (_PPR, _RPR):
         for node in list(clone.iter(property_tag)):
             if not node.attrib and not len(node) and not (node.text or ""):
@@ -645,16 +652,12 @@ def _compare_story(ctx: _Ctx, root_o: "_Element", root_r: "_Element") -> None:
             f"story {ctx.story} exceeds the compare block budget"
             f" ({_MAX_BLOCKS} blocks); split the documents"
         )
-    _enforce_sequence_budget(
-        len(blocks_o), len(blocks_r), subject=f"story {ctx.story}"
-    )
-    matcher = SequenceMatcher(
-        None,
+    opcodes = _aligned_opcodes(
         [f"{k}\x00{t}" for k, _e, t in blocks_o],
         [f"{k}\x00{t}" for k, _e, t in blocks_r],
-        autojunk=False,
+        subject=f"story {ctx.story}",
     )
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+    for tag, i1, i2, j1, j2 in opcodes:
         if tag == "equal":
             for offset in range(i2 - i1):
                 _report_formatting_difference(
@@ -679,6 +682,54 @@ def _enforce_sequence_budget(left: int, right: int, *, subject: str) -> None:
             f" ({left} x {right} > {_MAX_SEQUENCE_CELLS} cells);"
             " split the documents"
         )
+
+
+def _aligned_opcodes(
+    keys_o: "List[str]", keys_r: "List[str]", *, subject: str
+) -> "List[Tuple[str, int, int, int, int]]":
+    """SequenceMatcher opcodes with the common prefix/suffix pre-matched.
+
+    Identical leading and trailing runs are aligned directly and only the
+    differing middle is budgeted and fed to the quadratic matcher, so the
+    budget measures the change, not the document length — a one-edit diff of
+    a long document costs one cell, and an identical pair costs zero.
+    """
+    prefix = 0
+    limit = min(len(keys_o), len(keys_r))
+    while prefix < limit and keys_o[prefix] == keys_r[prefix]:
+        prefix += 1
+    suffix = 0
+    while (
+        suffix < limit - prefix
+        and keys_o[len(keys_o) - 1 - suffix] == keys_r[len(keys_r) - 1 - suffix]
+    ):
+        suffix += 1
+    middle_o = len(keys_o) - prefix - suffix
+    middle_r = len(keys_r) - prefix - suffix
+    _enforce_sequence_budget(middle_o, middle_r, subject=subject)
+    opcodes: "List[Tuple[str, int, int, int, int]]" = []
+    if prefix:
+        opcodes.append(("equal", 0, prefix, 0, prefix))
+    if middle_o or middle_r:
+        matcher = SequenceMatcher(
+            None,
+            keys_o[prefix : len(keys_o) - suffix],
+            keys_r[prefix : len(keys_r) - suffix],
+            autojunk=False,
+        )
+        for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+            opcodes.append((tag, i1 + prefix, i2 + prefix, j1 + prefix, j2 + prefix))
+    if suffix:
+        opcodes.append(
+            (
+                "equal",
+                len(keys_o) - suffix,
+                len(keys_o),
+                len(keys_r) - suffix,
+                len(keys_r),
+            )
+        )
+    return opcodes
 
 
 def _pair_region(old_run, new_run) -> "List[Tuple[str, Optional[int], Optional[int]]]":
@@ -1082,14 +1133,12 @@ def _row_text(row: "_Element") -> str:
 def _compare_table(ctx: _Ctx, table_o: "_Element", table_r: "_Element") -> None:
     rows_o = table_o.findall(_TR)
     rows_r = table_r.findall(_TR)
-    _enforce_sequence_budget(
-        len(rows_o), len(rows_r), subject=f"table in {ctx.story}"
+    opcodes = _aligned_opcodes(
+        [_row_text(r) for r in rows_o],
+        [_row_text(r) for r in rows_r],
+        subject=f"table in {ctx.story}",
     )
-    matcher = SequenceMatcher(
-        None, [_row_text(r) for r in rows_o], [_row_text(r) for r in rows_r],
-        autojunk=False,
-    )
-    for tag, i1, i2, j1, j2 in matcher.get_opcodes():
+    for tag, i1, i2, j1, j2 in opcodes:
         if tag == "equal":
             continue
         if tag == "delete":

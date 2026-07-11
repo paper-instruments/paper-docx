@@ -35,7 +35,12 @@ from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
 from docx.oxml.revision import CT_RunTrackChange
 from docx.protection import _refuse_if_protected
-from docx.search import Span, _validate_writable_text, find_one
+from docx.search import (
+    Span,
+    _validate_writable_text,
+    _validate_xml_characters,
+    find_one,
+)
 from docx.story import Anchor, Block, _iter_block_elements, _story_elements
 
 if TYPE_CHECKING:
@@ -440,6 +445,20 @@ def _insert_after(anchor: "_Element", nodes: "Sequence[_Element]") -> None:
 # ---------------------------------------------------------------------------
 
 
+
+def _validate_tracked_identity(author: "Optional[str]", date: object) -> None:
+    """Refuse malformed revision identity BEFORE any mutation.
+
+    The w:author/w:date attributes are stamped near the end of each tracked
+    operation (and list blocks may add numbering definitions first), so a
+    value the XML layer would reject must fail while nothing has changed.
+    """
+    if author is not None:
+        _validate_xml_characters(author, argument="author")
+    if date is not None and not isinstance(date, dt.datetime):
+        raise TypeError("date must be a datetime or None")
+
+
 def insert_section_after(
     document: "Document",
     anchor: AnchorLike,
@@ -460,6 +479,8 @@ def insert_section_after(
     """
     if tracked and not author:
         raise ValueError("author is required when tracked=True")
+    if tracked:
+        _validate_tracked_identity(author, date)
     _validate_writable_text(heading, argument="heading")
     for index, text in enumerate(paragraphs):
         _validate_writable_text(text, argument=f"paragraphs[{index}]")
@@ -509,6 +530,7 @@ def tracked_delete_paragraphs(
     """
     if not author:
         raise ValueError("author is required")
+    _validate_tracked_identity(author, date)
     story, selected = _select_paragraph_range(document, start_anchor, end_anchor, count)
     for paragraph in selected:
         _validate_deletable_paragraph(paragraph)
@@ -545,6 +567,7 @@ def tracked_replace_paragraphs(
     """Tracked-delete a paragraph range and tracked-insert replacements after it."""
     if not author:
         raise ValueError("author is required")
+    _validate_tracked_identity(author, date)
     for index, text in enumerate(replacement_paragraphs):
         _validate_writable_text(text, argument=f"replacement_paragraphs[{index}]")
     body_style_id = _validated_style_id(document, body_style, argument="body_style")
@@ -741,6 +764,8 @@ def insert_blocks_after(
     """
     if tracked and not author:
         raise ValueError("author is required when tracked=True")
+    if tracked:
+        _validate_tracked_identity(author, date)
     _validate_rich_blocks(document, blocks, tracked=tracked)
     story, anchor_p = _resolve_anchor_paragraph(document, anchor)
     _refuse_cell_anchor(anchor_p)

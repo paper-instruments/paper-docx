@@ -113,3 +113,26 @@ class DescribeXmlCharacterValidation:
             resolve(document, comment)
 
         assert _package_bytes(document) == before
+
+
+class DescribeTrackedIdentityPreflight:
+    """w:author/w:date are stamped after mutation begins, so malformed
+    identity must refuse while nothing has changed."""
+
+    def it_refuses_a_malformed_tracked_author_before_mutating(self):
+        document = docx.Document()
+        document.add_paragraph("replace target here")
+        span = find_one(document, "target")
+        before = _package_bytes(document)
+        with pytest.raises(ValueError, match="author"):
+            span.replace("changed", tracked=True, author="bad\x00author")
+        assert _package_bytes(document) == before
+
+    def and_it_refuses_a_string_date_before_mutating(self):
+        document = docx.Document()
+        document.add_paragraph("replace target here")
+        span = find_one(document, "target")
+        before = _package_bytes(document)
+        with pytest.raises(TypeError, match="datetime"):
+            span.replace("changed", tracked=True, author="A", date="2026-01-01")
+        assert _package_bytes(document) == before

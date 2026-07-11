@@ -186,3 +186,51 @@ class DescribeTrackedRowTemplateRefusal:
         assert [node.get(qn("w:id")) for node in table._tbl.iter(qn(marker_tag))] == [
             "77"
         ]
+
+
+class DescribeTrackedBlockIdentityPreflight:
+    """List blocks add numbering definitions while building nodes, so a
+    malformed identity must refuse before that side-part mutation."""
+
+    def it_leaves_numbering_untouched_when_tracked_author_is_malformed(self):
+        import io
+
+        from docx.blocks import ListBlock, insert_blocks_after
+
+        document = Document()
+        document.add_paragraph("anchor paragraph")
+        before = io.BytesIO()
+        document.save(before)
+
+        with pytest.raises(ValueError, match="author"):
+            insert_blocks_after(
+                document,
+                "anchor paragraph",
+                blocks=[ListBlock(items=["item one"], kind="bullet")],
+                tracked=True,
+                author="bad\x00author",
+            )
+
+        after = io.BytesIO()
+        document.save(after)
+        assert after.getvalue() == before.getvalue()
+
+    def and_a_string_date_refuses_before_any_mutation(self):
+        import io
+
+        from docx.blocks import tracked_delete_paragraphs
+
+        document = Document()
+        document.add_paragraph("anchor paragraph")
+        document.add_paragraph("paragraph to delete")
+        before = io.BytesIO()
+        document.save(before)
+
+        with pytest.raises(TypeError, match="datetime"):
+            tracked_delete_paragraphs(
+                document, "paragraph to delete", author="A", date="2026-01-01"
+            )
+
+        after = io.BytesIO()
+        document.save(after)
+        assert after.getvalue() == before.getvalue()

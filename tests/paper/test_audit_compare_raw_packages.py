@@ -125,11 +125,13 @@ class DescribeSequenceMatcherBudget:
     def it_refuses_table_matching_before_quadratic_work(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
-        def build(middle):
+        def build(prefix):
             def _build(document):
                 table = document.add_table(rows=3, cols=1)
                 for index, row in enumerate(table.rows):
-                    row.cells[0].text = middle if index == 1 else f"Stable {index}"
+                    # every row differs so no common prefix/suffix trims away:
+                    # the trimmed middle must still hit the budget pre-matcher
+                    row.cells[0].text = f"{prefix} row {index}"
 
             return _build
 

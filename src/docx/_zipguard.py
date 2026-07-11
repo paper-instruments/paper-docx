@@ -8,7 +8,13 @@ from consuming unbounded CPU, memory, or disk-backed input:
 * 4,096 members;
 * 64 MiB for one XML member and 256 MiB for one binary member;
 * 512 MiB expanded across the package; and
-* a 100:1 expanded-to-compressed ratio for each non-empty member.
+* a 100:1 expanded-to-compressed ratio for each member larger than 16 MiB
+  expanded (repetitive WordprocessingML legitimately exceeds 100:1; below the
+  floor the absolute member and package limits alone bound resource use).
+
+Directory entries (folder records some archivers add) are structurally
+validated — they may occupy space but must carry no payload — and are then
+ignored, exactly as OPC readers treat them; they are not package parts.
 
 Only the two compression methods permitted by the OPC ZIP mapping (stored and
 deflated) are accepted. Every member is inflated from its raw compressed bytes
@@ -47,6 +53,12 @@ MAX_BINARY_MEMBER_BYTES = 256 * _MIB
 MAX_TOTAL_EXPANDED_BYTES = 512 * _MIB
 #: Maximum expanded-to-compressed ratio for each non-empty member.
 MAX_COMPRESSION_RATIO = 100
+#: Expanded size at or below which the ratio limit does not apply. Deflate
+#: reaches ~1000:1 on repetitive input and ordinary Word documents (uniform
+#: tables, blank-line padding) legitimately exceed 100:1; small members are
+#: already bounded by the absolute limits above, so the ratio only guards the
+#: amplification range where expansion itself is the resource risk.
+RATIO_ENFORCEMENT_FLOOR_BYTES = 16 * _MIB
 
 _READ_CHUNK_BYTES = 64 * 1024
 _LOCAL_HEADER = struct.Struct("<4s5H3L2H")
@@ -414,7 +426,16 @@ class GuardedZipReader:
     def __init__(self, zip_file: ZipFile):
         self._zip_file = zip_file
         enforce_compressed_size(zip_file.fp)
-        self._infos = tuple(zip_file.infolist())
+        members: "List[ZipInfo]" = []
+        directories: "List[ZipInfo]" = []
+        for info in zip_file.infolist():
+            if info.orig_filename.endswith("/"):
+                _validate_directory_entry(info)
+                directories.append(info)
+            else:
+                members.append(info)
+        self._infos = tuple(members)
+        self._directory_infos = tuple(directories)
         self._member_limits = {
             info.filename: _member_limit(info.filename) for info in self._infos
         }
@@ -443,6 +464,15 @@ class GuardedZipReader:
         seen_names: set[str] = set()
         seen_equivalent_names: set[str] = set()
         seen_offsets: set[int] = set()
+        for info in self._directory_infos:
+            # directory entries occupy archive space: they participate in the
+            # overlap accounting even though they are not members
+            if info.header_offset < 0 or info.header_offset in seen_offsets:
+                raise PackageLimitError(
+                    f"ZIP directory entry {info.orig_filename!r} has an invalid"
+                    " or shared local-header offset"
+                )
+            seen_offsets.add(info.header_offset)
         expanded_total = 0
         for info in self._infos:
             name = info.orig_filename
@@ -519,7 +549,9 @@ class GuardedZipReader:
         if archive_size is not None and start_dir > archive_size:
             raise PackageLimitError("ZIP central directory lies beyond the package")
 
-        sorted_infos = sorted(self._infos, key=lambda info: info.header_offset)
+        sorted_infos = sorted(
+            self._infos + self._directory_infos, key=lambda info: info.header_offset
+        )
         boundaries = {
             info.header_offset: (
                 sorted_infos[index + 1].header_offset
@@ -537,6 +569,12 @@ class GuardedZipReader:
         parts: Dict[str, bytes] = {}
         actual_total = 0
         try:
+            for info in self._directory_infos:
+                # structural validation only: the local record must be intact
+                # and must carry no payload (its declared sizes are zero, so a
+                # nonzero data region refuses as undeclared trailing data)
+                self._validate_local_header(info, boundaries[info.header_offset])
+
             content_types_info = next(
                 (info for info in self._infos if info.filename == _CONTENT_TYPES_NAME),
                 None,
@@ -878,12 +916,29 @@ def _member_limit(name: str) -> int:
 def _enforce_ratio(name: str, expanded: int, compressed: int, *, actual: bool = False) -> None:
     if expanded == 0:
         return
+    if compressed > 0 and expanded <= RATIO_ENFORCEMENT_FLOOR_BYTES:
+        return
     if compressed <= 0 or expanded > compressed * MAX_COMPRESSION_RATIO:
         qualifier = "actual " if actual else ""
         raise PackageLimitError(
             f"ZIP member {name!r} {qualifier}compression ratio exceeds "
             f"the {MAX_COMPRESSION_RATIO}:1 limit"
         )
+
+
+def _validate_directory_entry(info: "ZipInfo") -> None:
+    """A folder record may occupy archive space but must be inert."""
+    name = info.orig_filename
+    if name != info.filename:
+        raise PackageLimitError(
+            f"ZIP directory entry {name!r} contains a noncanonical NUL suffix"
+        )
+    if info.flag_bits & (_FLAG_ENCRYPTED | _FLAG_STRONG_ENCRYPTION | _FLAG_PATCHED_DATA):
+        raise PackageLimitError(
+            f"ZIP directory entry {name!r} uses unsupported encoding flags"
+        )
+    if info.file_size or info.compress_size:
+        raise PackageLimitError(f"ZIP directory entry {name!r} carries data")
 
 
 def _validate_member_name(name: str) -> None:
