@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Optional
 
+from docx._transaction import rollback_on_error
 from docx.errors import UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.protection import _refuse_if_protected, protection_status
@@ -125,17 +126,20 @@ def finalize(document: "Document", *, revisions: str = "accept") -> int:
         )
     _refuse_if_protected(document, "finalize the document")
     snapshot = document.revisions
-    resolved = (
-        snapshot.accept_all() if revisions == "accept" else snapshot.reject_all()
-    )
-    leftover = _remaining_markup(document)
-    if leftover:
-        raise UnsupportedStructureError(
-            "finalize resolved the enumerated revisions but revision markup"
-            f" remains: {leftover}; the document is NOT final. Resolve the"
-            " remainder in Word"
+    with rollback_on_error(document):
+        resolved = snapshot._resolve_all(  # noqa: SLF001 - shared transaction
+            accept=revisions == "accept",
+            author=None,
+            _transactional=False,
         )
-    return resolved
+        leftover = _remaining_markup(document)
+        if leftover:
+            raise UnsupportedStructureError(
+                "finalize resolved the enumerated revisions but revision markup"
+                f" remains: {leftover}; the document is NOT final. Resolve the"
+                " remainder in Word"
+            )
+        return resolved
 
 
 def scrub(
@@ -181,18 +185,19 @@ def scrub(
         }
         if status.formatting:
             report.document_protection["formatting"] = True
-    if comments:
-        _scrub_comment_parts(document, report)
-        _scrub_comment_anchors(document, report)
-    if metadata:
-        _scrub_metadata(document, report)
-    if track_changes_setting:
-        _scrub_track_changes_setting(document, report)
-    if rsids:
-        _scrub_rsids(document, report)
-    if hidden_text:
-        _scrub_hidden_text(hidden_runs, report)
-    return report
+    with rollback_on_error(document):
+        if comments:
+            _scrub_comment_parts(document, report)
+            _scrub_comment_anchors(document, report)
+        if metadata:
+            _scrub_metadata(document, report)
+        if track_changes_setting:
+            _scrub_track_changes_setting(document, report)
+        if rsids:
+            _scrub_rsids(document, report)
+        if hidden_text:
+            _scrub_hidden_text(hidden_runs, report)
+        return report
 
 
 def _scrub_comment_parts(document: "Document", report: ScrubReport) -> None:

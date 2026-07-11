@@ -20,6 +20,7 @@ from typing import TYPE_CHECKING, Iterator, List, Optional, Sequence, Tuple
 
 from docx import _clock, _textatoms
 from docx._normalize import normalize_text  # noqa: F401 - public re-export
+from docx._transaction import rollback_on_error
 from docx.errors import (
     AmbiguousTargetError,
     BoundaryViolationError,
@@ -417,17 +418,24 @@ class Span:
         from docx.commentops import _preflight_comment_add
 
         _preflight_comment_add(self._document)
-        self._isolate_edge_runs()
-        runs = []
-        for atom in self._atoms:
-            if not any(existing is atom.run for existing in runs):
-                runs.append(atom.run)
-        comments = self._document.comments
-        comment = comments.add_comment(text=text, author=author, initials=initials or "")
-        comment._comment_elm.date = date if date is not None else _clock.now()  # noqa: SLF001
-        runs[0].insert_comment_range_start_above(comment.comment_id)
-        runs[-1].insert_comment_range_end_and_reference_below(comment.comment_id)
-        return comment
+        with rollback_on_error(self._document, self):
+            self._isolate_edge_runs()
+            runs = []
+            for atom in self._atoms:
+                if not any(existing is atom.run for existing in runs):
+                    runs.append(atom.run)
+            comments = self._document.comments
+            comment = comments.add_comment(
+                text=text, author=author, initials=initials or ""
+            )
+            comment._comment_elm.date = (  # noqa: SLF001
+                date if date is not None else _clock.now()
+            )
+            runs[0].insert_comment_range_start_above(comment.comment_id)
+            runs[-1].insert_comment_range_end_and_reference_below(
+                comment.comment_id
+            )
+            return comment
 
     def _isolate_edge_runs(self) -> None:
         """Split boundary runs so this span's runs hold EXACTLY its text.

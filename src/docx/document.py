@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from typing import IO, TYPE_CHECKING, Iterator, List, Sequence
 
+from docx._transaction import rollback_on_error
 from docx.blkcntnr import BlockItemContainer
 from docx.enum.section import WD_SECTION
 from docx.enum.text import WD_BREAK
+from docx.errors import UnsupportedStructureError
 from docx.section import Section, Sections
 from docx.shared import ElementProxy, Emu, Inches, Length
 from docx.text.run import Run
@@ -78,14 +80,21 @@ class Document(ElementProxy):
         runs = [runs] if isinstance(runs, Run) else runs
         first_run = runs[0]
         last_run = runs[-1]
+        if first_run.part is not self.part or last_run.part is not self.part:
+            raise UnsupportedStructureError(
+                "comment range runs do not belong to this document; nothing was changed"
+            )
 
-        # -- Note that comments can only appear in the document part --
-        comment = self.comments.add_comment(text=text, author=author, initials=initials)
+        with rollback_on_error(self):
+            # -- Note that comments can only appear in the document part --
+            comment = self.comments.add_comment(
+                text=text, author=author, initials=initials
+            )
 
-        # -- let the first run orchestrate placement of the comment range start and end --
-        first_run.mark_comment_range(last_run, comment.comment_id)
+            # -- let the first run orchestrate placement of the comment range start and end --
+            first_run.mark_comment_range(last_run, comment.comment_id)
 
-        return comment
+            return comment
 
     def add_heading(self, text: str = "", level: int = 1):
         """Return a heading paragraph newly added to the end of the document.

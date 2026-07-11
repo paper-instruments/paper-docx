@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, List, Optional, Tuple
 from docx import _clock
 from docx._ownership import require_comment_owner
 from docx._textatoms import DEL_TEXT, INSTR_TEXT, is_direct_run_child, project_run_child
+from docx._transaction import rollback_on_error
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.oxml.ns import nsdecls, qn
 from docx.oxml.parser import parse_xml
@@ -271,10 +272,11 @@ def resolve(document: "Document", comment: "Comment", *, resolved: bool = True) 
     # Validate a pre-existing extension part before adding a paraId to the
     # comment. An opaque extension must refuse without touching comments.xml.
     _preflight_comments_extended_write(document)
-    para_id = _ensure_para_id(document, _last_paragraph(comment_elm))
-    root = _comments_extended_root(document, create=True)
-    entry = _entry_for(root, para_id, create=True)
-    entry.set(_DONE, "1" if resolved else "0")
+    with rollback_on_error(document):
+        para_id = _ensure_para_id(document, _last_paragraph(comment_elm))
+        root = _comments_extended_root(document, create=True)
+        entry = _entry_for(root, para_id, create=True)
+        entry.set(_DONE, "1" if resolved else "0")
 
 
 def parent_of(document: "Document", comment: "Comment") -> Optional[int]:
@@ -379,32 +381,35 @@ def reply(
         )
     _preflight_comment_add(document)
     _preflight_comments_extended_write(document)
-    parent_para_id = _ensure_para_id(document, _last_paragraph(parent_elm))
+    with rollback_on_error(document):
+        parent_para_id = _ensure_para_id(document, _last_paragraph(parent_elm))
 
-    new_comment = document.comments.add_comment(
-        text=text, author=author, initials=initials or ""
-    )
-    new_elm = _comment_element(document, new_comment)
-    new_elm.date = date if date is not None else _clock.now()
-    new_para_id = _ensure_para_id(document, _last_paragraph(new_elm))
-
-    new_id = new_comment.comment_id
-    start.addnext(
-        parse_xml(f'<w:commentRangeStart {_W_DECL} w:id="{new_id}"/>')
-    )
-    end.addprevious(parse_xml(f'<w:commentRangeEnd {_W_DECL} w:id="{new_id}"/>'))
-    reference_run.addnext(
-        parse_xml(
-            f"<w:r {_W_DECL}><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr>"
-            f'<w:commentReference w:id="{new_id}"/></w:r>'
+        new_comment = document.comments.add_comment(
+            text=text, author=author, initials=initials or ""
         )
-    )
+        new_elm = _comment_element(document, new_comment)
+        new_elm.date = date if date is not None else _clock.now()
+        new_para_id = _ensure_para_id(document, _last_paragraph(new_elm))
 
-    root = _comments_extended_root(document, create=True)
-    _entry_for(root, parent_para_id, create=True)
-    reply_entry = _entry_for(root, new_para_id, create=True)
-    reply_entry.set(_PARA_ID_PARENT, parent_para_id)
-    return new_comment
+        new_id = new_comment.comment_id
+        start.addnext(
+            parse_xml(f'<w:commentRangeStart {_W_DECL} w:id="{new_id}"/>')
+        )
+        end.addprevious(
+            parse_xml(f'<w:commentRangeEnd {_W_DECL} w:id="{new_id}"/>')
+        )
+        reference_run.addnext(
+            parse_xml(
+                f"<w:r {_W_DECL}><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr>"
+                f'<w:commentReference w:id="{new_id}"/></w:r>'
+            )
+        )
+
+        root = _comments_extended_root(document, create=True)
+        _entry_for(root, parent_para_id, create=True)
+        reply_entry = _entry_for(root, new_para_id, create=True)
+        reply_entry.set(_PARA_ID_PARENT, parent_para_id)
+        return new_comment
 
 
 def comment_thread(document: "Document") -> Tuple[dict, ...]:

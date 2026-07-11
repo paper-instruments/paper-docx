@@ -20,6 +20,7 @@ import datetime as dt
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Iterator, List, Optional, Sequence, Tuple
 
+from docx._transaction import rollback_on_error
 from docx.errors import UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.protection import _refuse_if_protected
@@ -235,7 +236,10 @@ class Revision:
                 author=None,
                 require_clean=False,
             )
-        _resolve_one(self._element, accept=True, document=self._document)
+            with rollback_on_error(self._document):
+                _resolve_one(self._element, accept=True, document=self._document)
+            return
+        _resolve_one(self._element, accept=True, document=None)
 
     def reject(self) -> None:
         """Undo this change, restoring the pre-change content. Tracked moves
@@ -251,7 +255,10 @@ class Revision:
                 author=None,
                 require_clean=False,
             )
-        _resolve_one(self._element, accept=False, document=self._document)
+            with rollback_on_error(self._document):
+                _resolve_one(self._element, accept=False, document=self._document)
+            return
+        _resolve_one(self._element, accept=False, document=None)
 
     def to_dict(self) -> dict:
         return {
@@ -312,7 +319,13 @@ class Revisions(Sequence[Revision]):
                 census[revision.revision_type] = census.get(revision.revision_type, 0) + 1
         return dict(sorted(census.items()))
 
-    def _resolve_all(self, *, accept: bool, author: Optional[str]) -> int:
+    def _resolve_all(
+        self,
+        *,
+        accept: bool,
+        author: Optional[str],
+        _transactional: bool = True,
+    ) -> int:
         if self._snapshot_signature != _revision_signature(self._document):
             raise UnsupportedStructureError(
                 "cannot resolve a stale Revisions snapshot; reacquire"
@@ -341,6 +354,12 @@ class Revisions(Sequence[Revision]):
             author=author,
             require_clean=author is None,
         )
+        if not _transactional:
+            return self._apply_all(selected, accept=accept)
+        with rollback_on_error(self._document):
+            return self._apply_all(selected, accept=accept)
+
+    def _apply_all(self, selected: "List[Revision]", *, accept: bool) -> int:
         # moves first (their range brackets must still be intact — a row
         # removal in the same batch could take a move site with it), then
         # other content, then paragraph marks (mark resolution can remove

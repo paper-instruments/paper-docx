@@ -27,6 +27,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from docx._ownership import require_anchor_owner
+from docx._transaction import rollback_on_error
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
@@ -162,7 +163,8 @@ def insert_blocks_from(
     require_anchor_owner(document, anchor)
     _refuse_if_protected(document, "compose content into the document")
     range_elements = _source_range(source, start_anchor, end_anchor, count)
-    return _compose(document, source, range_elements, anchor, styles)
+    with rollback_on_error(document):
+        return _compose(document, source, range_elements, anchor, styles)
 
 
 def append_document(
@@ -189,23 +191,24 @@ def append_document(
     destination_blocks = [child for child in document.element.body if child.tag in _BODY_BLOCK_TAGS]
     if not destination_blocks:
         raise TargetNotFoundError("the destination document body has no blocks")
-    report = _compose(
-        document,
-        source,
-        range_elements,
-        destination_blocks[-1],
-        styles,
-        anchor_is_element=True,
-    )
-    if section == "new_page":
-        break_paragraph = OxmlElement("w:p")
-        run = OxmlElement("w:r")
-        page_break = OxmlElement("w:br")
-        page_break.set(qn("w:type"), "page")
-        run.append(page_break)
-        break_paragraph.append(run)
-        destination_blocks[-1].addnext(break_paragraph)
-    return report
+    with rollback_on_error(document):
+        report = _compose(
+            document,
+            source,
+            range_elements,
+            destination_blocks[-1],
+            styles,
+            anchor_is_element=True,
+        )
+        if section == "new_page":
+            break_paragraph = OxmlElement("w:p")
+            run = OxmlElement("w:r")
+            page_break = OxmlElement("w:br")
+            page_break.set(qn("w:type"), "page")
+            run.append(page_break)
+            break_paragraph.append(run)
+            destination_blocks[-1].addnext(break_paragraph)
+        return report
 
 
 def _validate_styles_mode(styles: str) -> None:

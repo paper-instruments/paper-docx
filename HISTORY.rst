@@ -8,6 +8,7 @@ Release History
 
 - Refuse unsupported comparisons instead of producing lossy redlines.
 - Validate revision, editing, composition, and package operations before mutation.
+- Roll back compound composition, review, scrub, and comment operations after late failures.
 - Reject ambiguous or unsafe ZIP packages with bounded reads.
 - Write deterministic ZIP metadata so identical saves are byte-identical.
 - Verify distribution identity and strengthen test and release gates.

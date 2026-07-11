@@ -95,6 +95,18 @@ class DescribeRelationships:
         part = rels.related_parts[rId]
         assert part is known_target_part
 
+    def it_removes_an_internal_relationship_from_both_indexes(self):
+        rels = Relationships("/word")
+        target = Mock(name="target_part")
+        related_parts = rels.related_parts
+        rels.add_relationship("reltype", target, "rId1")
+
+        del rels["rId1"]
+
+        assert "rId1" not in rels
+        assert "rId1" not in related_parts
+        assert rels.related_parts is related_parts
+
     def it_raises_on_related_part_not_found(self, rels):
         with pytest.raises(KeyError):
             rels.related_parts["rId666"]
