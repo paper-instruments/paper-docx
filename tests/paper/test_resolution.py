@@ -217,12 +217,19 @@ class DescribeRowRevisionResolution:
         assert len(reopened.tables[0].rows) == 3  # row kept, marker gone
         assert "row_insertion" not in {r.revision_type for r in reopened.revisions}
 
-    def it_rejects_a_single_row_insertion_removing_the_row(self, tmp_path: Path):
+    def it_refuses_a_single_row_insertion_that_would_consume_cell_revisions(
+        self, tmp_path: Path
+    ):
         document = _doc(ROW_REVISIONS)
         row_ins = next(
             r for r in document.revisions if r.revision_type == "row_insertion"
         )
-        row_ins.reject()
+        before = document.element.xml
+        with pytest.raises(UnsupportedStructureError, match="nested unselected"):
+            row_ins.reject()
+        assert document.element.xml == before
+
+        assert document.revisions.reject_all(author="Alice Editor") == 5
         reopened = save_and_reopen(document, tmp_path / "out.docx")
         # inserted row gone; the deleted-marked row remains (its delText
         # content is invisible to upstream cell.text — still pending)
@@ -529,4 +536,3 @@ class DescribeExoticTypesStayRefused:
         with pytest.raises(UnsupportedStructureError, match="not resolve"):
             revisions.accept_all()
         assert revisions.remaining_unsupported() == {expected_type: 1}
-

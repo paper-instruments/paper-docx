@@ -383,17 +383,18 @@ def _reachable_raw_parts(parts: dict[str, bytes]) -> set[str]:
                     f"relationship part {rels_name!r} contains a relationship"
                     " with a missing Id"
                 )
-            if not relationship_id.strip():
+            normalized_relationship_id = " ".join(relationship_id.split())
+            if not normalized_relationship_id:
                 raise UnsupportedStructureError(
                     f"relationship part {rels_name!r} contains a relationship"
                     " with an empty Id"
                 )
-            if relationship_id in relationship_ids:
+            if normalized_relationship_id in relationship_ids:
                 raise UnsupportedStructureError(
                     f"relationship part {rels_name!r} contains duplicate"
                     f" relationship Id {relationship_id!r}"
                 )
-            relationship_ids.add(relationship_id)
+            relationship_ids.add(normalized_relationship_id)
             if relationship.get("TargetMode", "Internal") == "External":
                 continue
             target_ref = relationship.get("Target")

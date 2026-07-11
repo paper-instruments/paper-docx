@@ -251,31 +251,26 @@ class DescribeCleanupPreflight:
 
 
 class DescribeIndividualDestructiveClosure:
-    def it_refuses_a_row_change_with_independently_authored_nested_markup(self):
+    @pytest.mark.parametrize(
+        ("revision_type", "verb"),
+        [("row_insertion", "reject"), ("row_deletion", "accept")],
+    )
+    def it_refuses_a_row_change_that_would_consume_nested_markup(
+        self, revision_type: str, verb: str
+    ):
         document = docx.Document(str(fixture_path(ROW_REVISIONS)))
-        row_marker = next(
+        row_revision = next(
             revision
             for revision in document.revisions
-            if revision.revision_type == "row_insertion"
-        )._element  # noqa: SLF001
-        tr_pr = row_marker.getparent()
-        assert tr_pr is not None
-        row = tr_pr.getparent()
-        assert row is not None
-        nested = next(node for node in row.iter(qn("w:ins")) if node is not row_marker)
-        nested.set(qn("w:author"), "Independent Reviewer")
-        row_insertion = next(
-            revision
-            for revision in document.revisions
-            if revision.revision_type == "row_insertion"
+            if revision.revision_type == revision_type
         )
         before = document.element.xml
 
         with pytest.raises(
             UnsupportedStructureError,
-            match=r"cannot reject.*row_insertion.*Independent Reviewer",
+            match=rf"cannot {verb}.*{revision_type}.*nested unselected",
         ):
-            row_insertion.reject()
+            getattr(row_revision, verb)()
 
         assert document.element.xml == before
 

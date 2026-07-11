@@ -773,26 +773,6 @@ def _validate_destructive_closure(
         return
     selected_ids = {id(revision._element) for revision in selected}  # noqa: SLF001
     accounted_ids = set(selected_ids)
-    for revision in selected:
-        if revision.revision_type not in ("row_insertion", "row_deletion"):
-            continue
-        marker = revision._element  # noqa: SLF001
-        marker_author = marker.get(_AUTHOR)
-        marker_date = marker.get(_DATE)
-        if not marker_author or not marker_date:
-            continue
-        tr_pr = marker.getparent()
-        row = tr_pr.getparent() if tr_pr is not None else None
-        if row is None or row.tag != _TR:
-            continue  # `_resolution_discard_roots()` reports the malformed row.
-        for node in row.iter(marker.tag):
-            if (
-                node.get(_AUTHOR) == marker_author
-                and node.get(_DATE) == marker_date
-            ):
-                # Word records one row change as a row marker plus matching
-                # content and paragraph-mark revisions in each cell.
-                accounted_ids.add(id(node))
     selected_move_ids = {
         id(revision._element)  # noqa: SLF001
         for revision in selected

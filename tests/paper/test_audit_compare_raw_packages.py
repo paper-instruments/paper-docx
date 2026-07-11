@@ -71,7 +71,9 @@ def _corrupt_document_relationship_id(path: Path, defect: str) -> None:
             else:
                 first_id = relationships[0].get("Id")
                 assert first_id is not None
-                relationships[1].set("Id", first_id)
+                relationships[1].set(
+                    "Id", f" {first_id} " if defect == "whitespace_duplicate" else first_id
+                )
             data = etree.tostring(root, encoding="UTF-8", xml_declaration=True)
         rewritten.append((info, data))
 
@@ -139,6 +141,11 @@ class DescribeRawPackagePreflight:
             pytest.param("missing", "missing Id", id="missing"),
             pytest.param("empty", "empty Id", id="empty"),
             pytest.param("duplicate", "duplicate relationship Id", id="duplicate"),
+            pytest.param(
+                "whitespace_duplicate",
+                "duplicate relationship Id",
+                id="whitespace-normalized-duplicate",
+            ),
         ],
     )
     def it_refuses_invalid_relationship_ids_before_loading_and_preserves_inputs(
