@@ -48,6 +48,35 @@ class DescribeBookmarks:
         assert named["DefinedTerm"].is_point is False
         assert named["_GoBack"].is_point is True
 
+    def it_lists_only_current_view_text_inside_a_bookmark(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()._p
+        start = OxmlElement("w:bookmarkStart")
+        start.set(qn("w:id"), "1")
+        start.set(qn("w:name"), "CurrentText")
+        paragraph.append(start)
+        first = OxmlElement("w:r")
+        first.add_t("A")
+        paragraph.append(first)
+        moved_from = OxmlElement("w:moveFrom")
+        moved_from.set(qn("w:id"), "2")
+        hidden = OxmlElement("w:r")
+        hidden.add_t("B")
+        moved_from.append(hidden)
+        paragraph.append(moved_from)
+        last = OxmlElement("w:r")
+        last.add_t("C")
+        paragraph.append(last)
+        end = OxmlElement("w:bookmarkEnd")
+        end.set(qn("w:id"), "1")
+        paragraph.append(end)
+
+        bookmark = next(
+            item for item in list_bookmarks(document) if item.name == "CurrentText"
+        )
+
+        assert bookmark.text == "AC"
+
     def it_creates_a_bookmark_on_an_exact_span(self, tmp_path: Path):
         document = _doc()
         span = find_one(document, "perfectly ordinary")
@@ -61,6 +90,31 @@ class DescribeBookmarks:
             "First body paragraph with perfectly ordinary text."
             in [p.text for p in reopened.paragraphs]
         )
+
+    def it_refuses_a_current_view_span_crossing_deleted_content(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()._p
+        first = OxmlElement("w:r")
+        first.add_t("A")
+        paragraph.append(first)
+        deleted = OxmlElement("w:del")
+        deleted.set(qn("w:id"), "1")
+        deleted_run = OxmlElement("w:r")
+        deleted_text = OxmlElement("w:delText")
+        deleted_text.text = "B"
+        deleted_run.append(deleted_text)
+        deleted.append(deleted_run)
+        paragraph.append(deleted)
+        last = OxmlElement("w:r")
+        last.add_t("C")
+        paragraph.append(last)
+        span = find_one(document, "AC")
+        before = paragraph.xml
+
+        with pytest.raises(UnsupportedStructureError, match="pending revision"):
+            create_bookmark(document, span, "UnstableRange")
+
+        assert paragraph.xml == before
 
     def it_allocates_globally_unique_ids(self):
         document = _doc(BOOKMARKS)

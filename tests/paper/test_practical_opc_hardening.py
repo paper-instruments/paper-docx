@@ -163,6 +163,19 @@ def it_restores_a_seekable_stream_after_commit_error():
     assert stream.tell() == 7
 
 
+def it_refuses_an_append_mode_stream_without_changing_it(tmp_path: Path):
+    destination = tmp_path / "append.docx"
+    original = b"existing destination"
+    destination.write_bytes(original)
+
+    with destination.open("a+b") as stream:
+        stream.seek(0)
+        with pytest.raises(OSError, match="append-mode"):
+            docx.Document().save(stream)
+
+    assert destination.read_bytes() == original
+
+
 def it_validates_the_real_prefix_of_a_nonzero_position_stream(monkeypatch):
     prefix = b"real destination prefix"
     original = prefix + b"existing suffix"

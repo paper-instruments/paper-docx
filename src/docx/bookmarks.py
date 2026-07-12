@@ -44,6 +44,9 @@ _CONTENT_REVISION_WRAPPERS = frozenset(
         qn("w14:conflictDel"),
     )
 )
+_CURRENT_HIDDEN_REVISION_WRAPPERS = frozenset(
+    (qn("w:del"), qn("w:moveFrom"), qn("w14:conflictDel"))
+)
 
 #: Word's bookmark-name rules: start with a letter, then letters/digits/
 #: underscores, max 40 chars ("_"-prefixed names are Word-internal)
@@ -112,6 +115,11 @@ def _bookmark_text(root: "_Element", start: "_Element", raw_id: Optional[str]) -
         if collecting and node.tag == _BOOKMARK_END and node.get(_ID) == raw_id:
             break
         if collecting and is_direct_run_child(node) and node.tag not in (DEL_TEXT, INSTR_TEXT):
+            if any(
+                wrapper.tag in _CURRENT_HIDDEN_REVISION_WRAPPERS
+                for wrapper in _revision_scope(node)
+            ):
+                continue
             projection = project_run_child(node)
             if projection.barrier or not projection.text:
                 continue
@@ -150,6 +158,19 @@ def _same_revision_scope(left: "_Element", right: "_Element") -> bool:
     )
 
 
+def _revision_wrapper_between(left: "_Element", right: "_Element") -> bool:
+    root = left.getroottree().getroot()
+    inside = False
+    for node in root.iter():
+        if node is left:
+            inside = True
+        if inside and node.tag in _CONTENT_REVISION_WRAPPERS:
+            return True
+        if node is right:
+            return not inside
+    return True
+
+
 def create_bookmark(document: "Document", span: "Span", name: str) -> BookmarkInfo:
     """Bookmark exactly `span`'s text under `name` (unique, Word-legal).
 
@@ -183,6 +204,13 @@ def create_bookmark(document: "Document", span: "Span", name: str) -> BookmarkIn
         raise UnsupportedStructureError(
             "bookmark endpoints cross pending revision scopes; resolve the"
             " revision or bookmark text within one revision scope. Nothing was changed"
+        )
+    if _revision_wrapper_between(  # noqa: SLF001
+        span._atoms[0].run, span._atoms[-1].run
+    ):
+        raise UnsupportedStructureError(
+            "bookmark text crosses pending revision content; resolve the"
+            " revision first. Nothing was changed"
         )
     # Allocation parses every existing marker id, so it must happen before
     # edge isolation splits any source runs.

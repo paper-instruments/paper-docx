@@ -8,6 +8,7 @@ import docx
 from docx.commentops import (
     anchored_text,
     comment_thread,
+    is_resolved,
     parent_of,
     reply,
     resolve,
@@ -19,6 +20,7 @@ from docx.opc.packuri import PackURI
 from docx.opc.part import Part
 from docx.oxml.ns import qn
 from docx.search import find_one
+from docx.shared import Inches
 
 from .harness.contract import assert_refusal_atomic
 
@@ -60,6 +62,66 @@ class DescribeCommentRelationshipOwnership:
 
         assert isinstance(error, UnsupportedStructureError)
         assert "multiple comments relationships" in str(error)
+
+    def it_refuses_multiple_main_document_relationships_before_mutation(self):
+        document, comment = _commented_document()
+        package = document.part.package
+        assert package is not None
+        package.rels.add_relationship(
+            RT.OFFICE_DOCUMENT,
+            document.part,
+            "rIdDuplicateMain",
+        )
+        before = comment._comment_elm.xml  # noqa: SLF001
+
+        with pytest.raises(UnsupportedStructureError, match="multiple main-document"):
+            comment.add_paragraph("must not be added")
+
+        assert comment._comment_elm.xml == before  # noqa: SLF001
+
+
+class DescribeCommentContentMutation:
+    def it_preserves_parent_resolution_and_child_link_when_appending_text(self):
+        document, parent = _commented_document()
+        child = reply(
+            document,
+            parent,
+            "Reply",
+            author="Second Reviewer",
+        )
+        resolve(document, parent)
+
+        parent.add_paragraph("Additional context")
+
+        assert is_resolved(document, parent)
+        assert parent_of(document, child) == parent.comment_id
+
+    def it_preserves_a_reply_link_when_appending_a_table(self):
+        document, parent = _commented_document()
+        child = reply(
+            document,
+            parent,
+            "Reply",
+            author="Second Reviewer",
+        )
+
+        child.add_table(1, 1, Inches(1))
+
+        assert parent_of(document, child) == parent.comment_id
+
+
+class DescribeCommentInspection:
+    def it_does_not_create_a_comments_part_for_an_uncommented_document(self):
+        document = docx.Document()
+        package = document.part.package
+        assert package is not None
+        relationships_before = tuple(document.part.rels)
+        parts_before = tuple(part.partname for part in package.iter_parts())
+
+        assert comment_thread(document) == ()
+
+        assert tuple(document.part.rels) == relationships_before
+        assert tuple(part.partname for part in package.iter_parts()) == parts_before
 
 
 class DescribeCommentAnchorIds:

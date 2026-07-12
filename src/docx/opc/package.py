@@ -307,6 +307,12 @@ _STREAM_SPOOL_BYTES = 8 * 1024 * 1024
 
 def _atomic_stream_write(stream: IO[bytes], relationships, parts) -> None:
     """Stage output and roll back a readable, seekable destination on failure."""
+    mode = getattr(stream, "mode", None)
+    if isinstance(mode, str) and "a" in mode:
+        raise OSError(
+            "append-mode destination streams do not support positional writes;"
+            " nothing was written"
+        )
     start = _stream_position(stream)
     snapshot_record = _snapshot_stream_tail(stream, start)
     if snapshot_record is None:

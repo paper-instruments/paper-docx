@@ -191,7 +191,7 @@ def _comment_element(document: "Document", comment: "Comment") -> "_Element":
 
 
 def _last_paragraph(comment_elm: "_Element") -> "_Element":
-    paragraphs = comment_elm.findall(_P)
+    paragraphs = list(comment_elm.iter(_P))
     if not paragraphs:
         raise UnsupportedStructureError("comment has no paragraph to key on")
     return paragraphs[-1]
@@ -287,6 +287,41 @@ def _preflight_comments_extended_write(document: "Document") -> None:
             "a package part already occupies /word/commentsExtended.xml"
             " without the commentsExtended relationship; nothing was changed"
         )
+
+
+def _migrate_comment_extension(
+    document: "Document",
+    comment_elm: "_Element",
+    previous_last: "_Element",
+) -> None:
+    """Move thread and resolution state when a comment gains a new last paragraph."""
+    current_last = _last_paragraph(comment_elm)
+    if current_last is previous_last:
+        return
+    previous_raw = previous_last.get(_PARA_ID_ATTR)
+    if previous_raw is None:
+        return
+    previous_id = _validate_para_id(previous_raw, attribute="w14:paraId")
+    root = _comments_extended_root(document, create=False)
+    if root is None:
+        return
+    own_entry = _entry_for(root, previous_id, create=False)
+    child_entries = [
+        entry
+        for entry in root.findall(_COMMENT_EX)
+        if entry.get(_PARA_ID_PARENT) is not None
+        and _validate_para_id(
+            entry.get(_PARA_ID_PARENT), attribute="w15:paraIdParent"
+        )
+        == previous_id
+    ]
+    if own_entry is None and not child_entries:
+        return
+    current_id = _ensure_para_id(document, current_last)
+    if own_entry is not None:
+        own_entry.set(_PARA_ID, current_id)
+    for entry in child_entries:
+        entry.set(_PARA_ID_PARENT, current_id)
 
 
 def _entry_for(root: "_Element", para_id: str, *, create: bool) -> "Optional[_Element]":
@@ -513,12 +548,18 @@ def reply(
 def comment_thread(document: "Document") -> Tuple[dict, ...]:
     """Every comment with its thread state: (id, author, text, resolved,
     parent_id, anchored_text where available)."""
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
+
+    _preflight_comment_add(document)
     try:
-        comments = document.comments
+        comments_part = document.part.part_related_by(RT.COMMENTS)
+    except KeyError:
+        return ()
     except ValueError:
         raise UnsupportedStructureError(
             "multiple comments relationships make comment inspection ambiguous; nothing was changed"
         ) from None
+    comments = comments_part.comments
     entries = []
     for comment in comments:
         try:

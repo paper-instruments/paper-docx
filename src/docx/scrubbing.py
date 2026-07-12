@@ -184,7 +184,7 @@ def scrub(
         )
     if metadata:
         _validate_metadata_parts(document)
-    hidden_runs = _hidden_runs(document, include_comments=not comments) if hidden_text else []
+    hidden_runs = _hidden_runs(document, include_comments=comments) if hidden_text else []
     if hidden_text:
         _validate_hidden_run_deletions(document, hidden_runs)
     report = ScrubReport()
@@ -392,15 +392,22 @@ def _scrub_rsids(document: "Document", report: ScrubReport) -> None:
 def _hidden_runs(document: "Document", *, include_comments: bool) -> "List[_Element]":
     """Resolve every hidden-text target before scrub mutates any package part."""
     from docx.formatting import _enclosing_paragraph, _resolve_run
-    from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
-    try:
-        comments_root = document.part.part_related_by(RT.COMMENTS)._element
-    except KeyError:
-        comments_root = None
+    package = document.part.package
+    owners = (package,) + tuple(package.iter_parts())
+    comment_roots = tuple(
+        root
+        for owner in owners
+        for rel in owner.rels.values()
+        if not rel.is_external and rel.reltype in _COMMENT_RELATIONSHIP_TYPES
+        if (root := getattr(rel.target_part, "_element", None)) is not None
+    )
     hidden = []
     for story, root in _story_elements(document):
-        if not include_comments and root is comments_root:
+        if not include_comments and any(
+            root is comment_root or root == comment_root
+            for comment_root in comment_roots
+        ):
             continue
         for run in root.iter(qn("w:r")):
             resolved = _resolve_run(document, run, _enclosing_paragraph(run))

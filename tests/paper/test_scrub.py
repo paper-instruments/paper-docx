@@ -166,6 +166,31 @@ class DescribeScrub:
         reopened = save_and_reopen(document, tmp_path / "out.docx")
         assert len(reopened.comments) > 0
 
+    def it_keeps_hidden_text_in_a_strict_comments_part_when_asked(self):
+        document = docx.Document()
+        comment = document.comments.add_comment(
+            "private review note", author="Reviewer"
+        )
+        hidden_run = comment.paragraphs[0].runs[0]
+        hidden_run.font.hidden = True
+        relationship = next(
+            rel for rel in document.part.rels.values() if rel.reltype == RT.COMMENTS
+        )
+        relationship._reltype = (  # noqa: SLF001 - strict-package fixture
+            "http://purl.oclc.org/ooxml/officeDocument/relationships/comments"
+        )
+
+        report = document.scrub(
+            comments=False,
+            metadata=False,
+            track_changes_setting=False,
+            hidden_text=True,
+        )
+
+        assert report.hidden_runs_removed == 0
+        assert hidden_run._r.getparent() is not None  # noqa: SLF001
+        assert comment.text == "private review note"
+
     def it_removes_hidden_text_only_on_explicit_request(self, tmp_path: Path):
         from docx.oxml import parse_xml
         from docx.oxml.ns import nsdecls

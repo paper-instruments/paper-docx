@@ -29,6 +29,11 @@ def _document_for_comments_part(comments_part: "CommentsPart") -> "Optional[Docu
         document_part = package.main_document_part
     except KeyError:
         return None
+    except ValueError:
+        raise UnsupportedStructureError(
+            "multiple main-document relationships make comment mutation"
+            " ambiguous; nothing was changed"
+        ) from None
     document = getattr(document_part, "document", None)
     from docx.document import Document
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
@@ -179,16 +184,30 @@ class Comment(BlockItemContainer):
         the default style for comments.
         """
         document = self._validate_live("edit a comment")
+        previous_last = None
         if document is not None:
-            from docx.commentops import _preflight_comment_add
+            from docx.commentops import (
+                _last_paragraph,
+                _preflight_comment_add,
+                _preflight_comments_extended_write,
+            )
 
             _preflight_comment_add(document)
+            _preflight_comments_extended_write(document)
+            previous_last = _last_paragraph(self._comment_elm)
 
         def add() -> Paragraph:
             paragraph = super(Comment, self).add_paragraph(text, style)
             # Assign directly because paragraph.style raises when the style is absent.
             if style is None:
                 paragraph._p.style = "CommentText"
+            if document is not None:
+                from docx.commentops import _migrate_comment_extension
+
+                assert previous_last is not None
+                _migrate_comment_extension(
+                    document, self._comment_elm, previous_last
+                )
             return paragraph
 
         if document is not None:
@@ -204,13 +223,28 @@ class Comment(BlockItemContainer):
     def add_table(self, rows: int, cols: int, width: Length) -> Table:
         """Return a table appended to this comment."""
         document = self._validate_live("edit a comment")
+        previous_last = None
         if document is not None:
-            from docx.commentops import _preflight_comment_add
+            from docx.commentops import (
+                _last_paragraph,
+                _preflight_comment_add,
+                _preflight_comments_extended_write,
+            )
 
             _preflight_comment_add(document)
+            _preflight_comments_extended_write(document)
+            previous_last = _last_paragraph(self._comment_elm)
 
         def add() -> Table:
-            return super(Comment, self).add_table(rows, cols, width)
+            table = super(Comment, self).add_table(rows, cols, width)
+            if document is not None:
+                from docx.commentops import _migrate_comment_extension
+
+                assert previous_last is not None
+                _migrate_comment_extension(
+                    document, self._comment_elm, previous_last
+                )
+            return table
 
         if document is not None:
             from docx._transaction import rollback_on_error
