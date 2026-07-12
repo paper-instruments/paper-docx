@@ -12,13 +12,18 @@ and refuses loudly.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional, Tuple
+from typing import TYPE_CHECKING, Iterator, Optional, Tuple
 
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml.ns import qn
 from docx.protection import _refuse_if_protected
-from docx.story import _build_block, _iter_block_elements, _story_elements
+from docx.story import (
+    _build_block,
+    _first_choice_children,
+    _iter_block_elements,
+    _story_elements,
+)
 
 if TYPE_CHECKING:
     from lxml.etree import _Element
@@ -222,7 +227,7 @@ def list_numbering(document: "Document") -> NumberingReport:
             paragraphs = (
                 (element,)
                 if kind == "paragraph"
-                else tuple(element.iter(qn("w:p")))
+                else tuple(_table_paragraphs(element))
                 if kind == "table"
                 else ()
             )
@@ -267,6 +272,43 @@ def list_numbering(document: "Document") -> NumberingReport:
     )
 
 
+def _selected_descendants(
+    root: "_Element", target_tag: str, *, stop_tags: "Tuple[str, ...]"
+) -> "Iterator[_Element]":
+    """Yield one compatibility-selected subtree, stopping at nested structures."""
+    for child in _first_choice_children(root):
+        if child.tag == target_tag:
+            yield child
+        if child.tag not in stop_tags:
+            yield from _selected_descendants(
+                child, target_tag, stop_tags=stop_tags
+            )
+
+
+def _table_rows(table: "_Element") -> "Tuple[_Element, ...]":
+    return tuple(
+        _selected_descendants(table, qn("w:tr"), stop_tags=(qn("w:tbl"),))
+    )
+
+
+def _row_cells(row: "_Element") -> "Tuple[_Element, ...]":
+    return tuple(
+        _selected_descendants(row, qn("w:tc"), stop_tags=(qn("w:tbl"),))
+    )
+
+
+def _cell_paragraphs(cell: "_Element") -> "Tuple[_Element, ...]":
+    return tuple(
+        _selected_descendants(cell, qn("w:p"), stop_tags=(qn("w:tbl"),))
+    )
+
+
+def _table_paragraphs(table: "_Element") -> "Iterator[_Element]":
+    for row in _table_rows(table):
+        for cell in _row_cells(row):
+            yield from _cell_paragraphs(cell)
+
+
 def _table_cell_address(paragraph: "_Element") -> "Optional[Tuple[int, int, int]]":
     tc = paragraph.getparent()
     while tc is not None and tc.tag not in (qn("w:tc"), qn("w:body")):
@@ -274,11 +316,17 @@ def _table_cell_address(paragraph: "_Element") -> "Optional[Tuple[int, int, int]
     if tc is None or tc.tag != qn("w:tc"):
         return None
     tr = tc.getparent()
-    tbl = tr.getparent() if tr is not None else None
-    if tr is None or tbl is None:
+    while tr is not None and tr.tag not in (qn("w:tr"), qn("w:body")):
+        tr = tr.getparent()
+    if tr is None or tr.tag != qn("w:tr"):
         return None
-    rows = tbl.findall(qn("w:tr"))
-    cells = tr.findall(qn("w:tc"))
+    tbl = tr.getparent()
+    while tbl is not None and tbl.tag not in (qn("w:tbl"), qn("w:body")):
+        tbl = tbl.getparent()
+    if tbl is None or tbl.tag != qn("w:tbl"):
+        return None
+    rows = _table_rows(tbl)
+    cells = _row_cells(tr)
     column = 0
     tr_pr = tr.find(qn("w:trPr"))
     grid_before = tr_pr.find(qn("w:gridBefore")) if tr_pr is not None else None
@@ -290,7 +338,7 @@ def _table_cell_address(paragraph: "_Element") -> "Optional[Tuple[int, int, int]
         tc_pr = cell.find(qn("w:tcPr"))
         span = tc_pr.find(qn("w:gridSpan")) if tc_pr is not None else None
         column += int(span.get(qn("w:val")) or 1) if span is not None else 1
-    return rows.index(tr), column, tc.findall(qn("w:p")).index(paragraph)
+    return rows.index(tr), column, _cell_paragraphs(tc).index(paragraph)
 
 
 def _document_of_paragraph(paragraph: "Paragraph") -> "Document":

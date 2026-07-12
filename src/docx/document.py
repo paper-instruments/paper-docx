@@ -85,6 +85,11 @@ class Document(ElementProxy):
                 "comment range runs do not belong to this document; nothing was changed"
             )
 
+        from docx.commentops import _preflight_comment_range
+
+        _preflight_comment_range(
+            self, first_run._r, last_run._r, operation="add a comment"
+        )
         with rollback_on_error(self):
             # -- Note that comments can only appear in the document part --
             comment = self.comments.add_comment(

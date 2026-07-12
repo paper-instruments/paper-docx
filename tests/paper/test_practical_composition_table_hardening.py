@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import pytest
+from lxml import etree
 
 import docx
 from docx.bookmarks import create_bookmark
@@ -10,8 +11,8 @@ from docx.composition import insert_blocks_from
 from docx.enum.style import WD_STYLE_TYPE
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.numbering import apply_numbering, ensure_decimal_definition, list_numbering
-from docx.oxml import OxmlElement
-from docx.oxml.ns import qn
+from docx.oxml import OxmlElement, parse_xml
+from docx.oxml.ns import nsdecls, qn
 from docx.search import find_one
 from docx.tableops import update_cell
 
@@ -56,6 +57,62 @@ def it_reports_a_numbered_paragraphs_visible_layout_grid_column() -> None:
     )
 
     assert item.table_cell == (0, 2, 0)
+
+
+def it_reports_numbering_inside_a_table_cell_content_control() -> None:
+    document = docx.Document()
+    num_id = ensure_decimal_definition(document)
+    cell = document.add_table(rows=1, cols=1).cell(0, 0)
+    paragraph = cell.paragraphs[0]
+    paragraph.text = "controlled clause"
+    apply_numbering(paragraph, num_id=num_id)
+    control = OxmlElement("w:sdt")
+    control.append(OxmlElement("w:sdtPr"))
+    content = OxmlElement("w:sdtContent")
+    cell._tc.remove(paragraph._p)
+    content.append(paragraph._p)
+    control.append(content)
+    cell._tc.append(control)
+
+    item = list_numbering(document).numbered_paragraphs[0]
+
+    assert item.text == "controlled clause"
+    assert item.table_cell == (0, 0, 0)
+
+
+def it_selects_one_alternate_content_branch_when_listing_numbering() -> None:
+    document = docx.Document()
+    num_id = ensure_decimal_definition(document)
+    cell = document.add_table(rows=1, cols=1).cell(0, 0)
+    cell._tc.remove(cell.paragraphs[0]._p)
+    alternate = parse_xml(
+        '<mc:AlternateContent '
+        'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006" '
+        f'{nsdecls("w", "w14")}/>'
+    )
+    cell._tc.append(alternate)
+    mc_namespace = "http://schemas.openxmlformats.org/markup-compatibility/2006"
+    etree.SubElement(alternate, f"{{{mc_namespace}}}Choice", Requires="w14")
+    etree.SubElement(alternate, f"{{{mc_namespace}}}Fallback")
+    for branch, text in zip(alternate, ("selected", "fallback")):
+        paragraph = OxmlElement("w:p")
+        properties = OxmlElement("w:pPr")
+        numbering = OxmlElement("w:numPr")
+        number_id = OxmlElement("w:numId")
+        number_id.set(qn("w:val"), str(num_id))
+        numbering.append(number_id)
+        properties.append(numbering)
+        paragraph.append(properties)
+        run = OxmlElement("w:r")
+        text_element = OxmlElement("w:t")
+        text_element.text = text
+        run.append(text_element)
+        paragraph.append(run)
+        branch.append(paragraph)
+
+    report = list_numbering(document)
+
+    assert [item.text for item in report.numbered_paragraphs] == ["selected"]
 
 
 def it_refuses_updating_a_cell_with_a_cross_paragraph_field() -> None:

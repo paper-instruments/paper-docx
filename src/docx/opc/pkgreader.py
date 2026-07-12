@@ -318,10 +318,20 @@ class _SerializedRelationships:
 
 def _validate_relationship_records(blob, base_uri) -> None:
     """Check relationship fields before the object model can normalize them."""
+    parser = etree.XMLParser(
+        load_dtd=False,
+        no_network=True,
+        resolve_entities=False,
+    )
     try:
-        root = etree.fromstring(blob)
+        root = etree.fromstring(blob, parser)
     except etree.XMLSyntaxError as exc:
         raise PackageLimitError(f"relationships for {base_uri!r} are malformed") from exc
+    docinfo = root.getroottree().docinfo
+    if docinfo.doctype or docinfo.internalDTD is not None:
+        raise PackageLimitError(
+            f"relationships for {base_uri!r} contain a prohibited DTD"
+        )
     relationships_tag = (
         "{http://schemas.openxmlformats.org/package/2006/relationships}Relationships"
     )

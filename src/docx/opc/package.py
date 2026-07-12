@@ -250,7 +250,11 @@ def _atomic_package_write(path: str, relationships, parts) -> None:
     descriptor, temporary = _new_atomic_temp(directory, f".{os.path.basename(destination)}.")
     try:
         if os.path.exists(destination):
-            os.fchmod(descriptor, stat.S_IMODE(os.stat(destination).st_mode))
+            mode = stat.S_IMODE(os.stat(destination).st_mode)
+            if hasattr(os, "fchmod"):
+                os.fchmod(descriptor, mode)
+            else:
+                os.chmod(temporary, mode)
         os.close(descriptor)
         descriptor = -1
         PackageWriter.write(temporary, relationships, parts)

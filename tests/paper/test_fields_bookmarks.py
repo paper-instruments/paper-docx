@@ -85,6 +85,18 @@ class DescribeBookmarks:
         with pytest.raises(UnsupportedStructureError, match="already exists"):
             create_bookmark(document, find_one(document, "second"), "definedterm")
 
+    def it_refuses_an_unrelated_malformed_bookmark_before_deletion(self):
+        document = docx.Document()
+        document.add_paragraph("target")
+        create_bookmark(document, find_one(document, "target"), "Target")
+        malformed = OxmlElement("w:bookmarkStart")
+        malformed.set(qn("w:id"), "bad")
+        malformed.set(qn("w:name"), "Other")
+        document.paragraphs[0]._p.append(malformed)
+
+        with pytest.raises(UnsupportedStructureError, match="non-numeric"):
+            delete_bookmark(document, "Target")
+
     def it_validates_word_legal_names(self):
         document = _doc()
         span = find_one(document, "perfectly ordinary")

@@ -206,9 +206,10 @@ def delete_bookmark(document: "Document", name: str) -> None:
     'Error! Reference source not found.' in Word."""
     _refuse_if_protected(document, "delete a bookmark")
     matching_names = {
-        bookmark.name
-        for bookmark in list_bookmarks(document)
-        if bookmark.name.casefold() == name.casefold()
+        start.get(_NAME) or ""
+        for _story, root in _story_elements(document)
+        for start in root.iter(_BOOKMARK_START)
+        if (start.get(_NAME) or "").casefold() == name.casefold()
     }
     if len(matching_names) > 1:
         raise UnsupportedStructureError(

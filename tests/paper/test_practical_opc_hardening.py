@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import docx
+import docx._paperpkg as paperpkg_module
 import docx.opc.package as package_module
 from docx._transaction import rollback_on_error
 from docx.errors import PackageLimitError
@@ -18,6 +19,7 @@ from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.opc.packuri import PackURI
 from docx.opc.part import Part
 from docx.opc.pkgreader import _SerializedRelationships
+from docx.package import patch_save
 from docx.search import find_one
 from docx.story import story_parts
 
@@ -57,6 +59,59 @@ def it_saves_paths_atomically_preserving_mode_and_following_destination_symlink(
     assert stat.S_IMODE(target.stat().st_mode) == 0o640
     assert docx.Document(target).paragraphs[-1].text == "saved through link"
     assert not list(tmp_path.glob("*.partial"))
+
+
+def it_preserves_an_existing_files_mode_without_fchmod(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    target = tmp_path / "target.docx"
+    docx.Document().save(target)
+    target.chmod(0o640)
+    monkeypatch.delattr(package_module.os, "fchmod", raising=False)
+
+    document = docx.Document()
+    document.add_paragraph("portable save")
+    document.save(target)
+
+    assert stat.S_IMODE(target.stat().st_mode) == 0o640
+    assert docx.Document(target).paragraphs[-1].text == "portable save"
+
+
+def it_refuses_a_dtd_before_parsing_relationship_records():
+    relationships = b"""<!DOCTYPE Relationships [<!ENTITY role "unsafe">]>
+    <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+      <Relationship Id="rId1" Type="&role;" Target="word/document.xml"/>
+    </Relationships>"""
+
+    with pytest.raises(PackageLimitError, match="prohibited DTD"):
+        _SerializedRelationships.load_from_xml("/", relationships)
+
+
+def it_validates_patch_save_after_final_recompression(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    source = tmp_path / "source.docx"
+    original = docx.Document()
+    original.add_paragraph("before")
+    original.save(source)
+    document = docx.Document(source)
+    document.paragraphs[0].text = "after"
+    destination = tmp_path / "out.docx"
+    destination.write_bytes(b"existing destination")
+
+    unsafe = io.BytesIO()
+    with zipfile.ZipFile(unsafe, "w", zipfile.ZIP_DEFLATED) as archive:
+        archive.writestr("oversized.xml", b"A" * (17 * 1024 * 1024))
+    monkeypatch.setattr(
+        paperpkg_module,
+        "_deterministic_zip_bytes",
+        lambda _parts, _order: unsafe.getvalue(),
+    )
+
+    with pytest.raises(PackageLimitError, match="compression ratio"):
+        patch_save(source, document, destination)
+
+    assert destination.read_bytes() == b"existing destination"
 
 
 def it_refuses_if_the_destination_symlink_changes_during_save(

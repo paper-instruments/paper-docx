@@ -5,7 +5,13 @@ import copy
 import pytest
 
 import docx
-from docx.commentops import reply
+import docx.search as search_module
+from docx.commentops import (
+    _comments_extended_root,
+    is_resolved,
+    reply,
+    resolve,
+)
 from docx.controls import iter_controls
 from docx.errors import DocumentProtectedError, TargetNotFoundError, UnsupportedStructureError
 from docx.oxml import OxmlElement, parse_xml
@@ -15,6 +21,19 @@ from docx.shared import Inches
 
 
 class DescribePracticalReviewHardening:
+    def it_applies_comment_range_preflight_to_document_add_comment(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        run = paragraph.add_run("field result")
+        begin = OxmlElement("w:fldChar")
+        begin.set(qn("w:fldCharType"), "begin")
+        run._r.insert(0, begin)
+
+        with pytest.raises(UnsupportedStructureError, match="field boundary"):
+            document.add_comment(run, "review", author="A")
+
+        assert len(document.comments) == 0
+
     def it_keeps_a_span_live_after_an_unrelated_preceding_insert(self):
         document = docx.Document()
         target = document.add_paragraph("target")
@@ -45,6 +64,55 @@ class DescribePracticalReviewHardening:
         with pytest.raises(TargetNotFoundError, match="forced stale"):
             replace_all(document, "same", "changed")
         assert document.element.xml == before
+
+    def it_shares_one_freshness_census_across_a_replace_batch(self, monkeypatch):
+        document = docx.Document()
+        for _ in range(100):
+            document.add_paragraph("target")
+        original = search_module._story_atoms
+        calls = 0
+
+        def counted(*args, **kwargs):
+            nonlocal calls
+            calls += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(search_module, "_story_atoms", counted)
+
+        result = replace_all(document, "target", "changed")
+
+        assert result.replaced_count == 100
+        assert calls == 2
+
+    def it_treats_edit_none_as_unrestricted(self):
+        document = docx.Document()
+        document.add_paragraph("target")
+        protection = OxmlElement("w:documentProtection")
+        protection.set(qn("w:edit"), "none")
+        protection.set(qn("w:enforcement"), "1")
+        document.settings.element.append(protection)
+
+        find_one(document, "target").replace("changed")
+
+        assert document.paragraphs[0].text == "changed"
+
+    def it_matches_comment_para_ids_case_insensitively(self):
+        document = docx.Document()
+        comment = document.comments.add_comment("review")
+        comment.paragraphs[-1]._p.set(qn("w14:paraId"), "abcdef12")
+        root = _comments_extended_root(document, create=True)
+        root.append(
+            parse_xml(
+                '<w15:commentEx xmlns:w15="http://schemas.microsoft.com/'
+                'office/word/2012/wordml" w15:paraId="ABCDEF12" w15:done="1"/>'
+            )
+        )
+
+        assert is_resolved(document, comment) is True
+        resolve(document, comment, resolved=False)
+
+        assert len(root) == 1
+        assert is_resolved(document, comment) is False
 
     def it_refuses_generic_replace_on_a_typed_control_surface(self):
         document = docx.Document()

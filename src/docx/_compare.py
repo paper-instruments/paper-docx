@@ -491,6 +491,10 @@ def _verify_compare_algebra(
         ("reject", original_reference),
     ):
         candidate = _docx.Document(io.BytesIO(redline_bytes))
+        from docx.protection import acknowledge_protection, protection_status
+
+        if protection_status(candidate).enforced:
+            acknowledge_protection(candidate)
         if verb == "accept":
             candidate.revisions.accept_all()
         else:

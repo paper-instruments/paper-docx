@@ -2,12 +2,14 @@
 
 from __future__ import annotations
 
+import zipfile
 from pathlib import Path
 
 import pytest
 
 import docx
 from docx.errors import DocumentProtectedError, UnsupportedStructureError
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.protection import acknowledge_protection, protection_status
 from docx.revision import _remaining_markup
 
@@ -63,6 +65,27 @@ class DescribeFinalize:
 
 
 class DescribeScrub:
+    def it_removes_package_root_comment_relationships(self, tmp_path: Path):
+        document = docx.Document()
+        document.comments.add_comment("review")
+        comments_part = document.part.part_related_by(RT.COMMENTS)
+        document.part.package.relate_to(comments_part, RT.COMMENTS)
+
+        report = document.scrub(
+            metadata=False,
+            track_changes_setting=False,
+        )
+        output = tmp_path / "out.docx"
+        document.save(output)
+
+        assert "word/comments.xml" in report.removed_parts
+        assert all(
+            rel.reltype != RT.COMMENTS
+            for rel in document.part.package.rels.values()
+        )
+        with zipfile.ZipFile(output) as archive:
+            assert "word/comments.xml" not in archive.namelist()
+
     def it_scrubs_the_finalized_gauntlet_clean(self, tmp_path: Path):
         document = _doc(GAUNTLET)
         document.finalize()

@@ -39,7 +39,7 @@ class ProtectionStatus:
     """What `w:documentProtection` declares, read-only.
 
     `edit` is the raw `w:edit` token ("readOnly", "forms", "comments",
-    "trackedChanges") or None when no edit restriction is declared;
+    "trackedChanges", or unrestricted "none") or None when no edit restriction is declared;
     `formatting` reflects the independent format restriction. `enforced`
     reports active enforcement of either kind; `acknowledged` is this
     package's in-memory override flag (never persisted).
@@ -95,7 +95,7 @@ def protection_status(document: "Document") -> ProtectionStatus:
     enforcement = _is_on(element.get(qn("w:enforcement")))
     return ProtectionStatus(
         edit=edit,
-        enforced=(edit is not None or formatting) and enforcement,
+        enforced=(edit not in (None, "none") or formatting) and enforcement,
         acknowledged=bool(getattr(package, _ACK_ATTR, False)),
         formatting=formatting,
     )
@@ -131,9 +131,13 @@ def _refuse_if_protected(obj, operation: str) -> None:
     edit = element.get(qn("w:edit"))
     formatting = _is_on(element.get(qn("w:formatting")))
     enforcement = _is_on(element.get(qn("w:enforcement")))
-    if (edit is None and not formatting) or not enforcement:
+    if (edit in (None, "none") and not formatting) or not enforcement:
         return
-    restriction = f"{edit!r} editing" if edit is not None else "formatting-only"
+    restriction = (
+        f"{edit!r} editing"
+        if edit not in (None, "none")
+        else "formatting-only"
+    )
     raise DocumentProtectedError(
         f"cannot {operation}: this document enforces {restriction}"
         " protection (w:documentProtection). Protection is advisory, not"

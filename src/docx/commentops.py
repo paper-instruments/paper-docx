@@ -178,7 +178,7 @@ def _validate_para_id(raw: "Optional[str]", *, attribute: str) -> str:
         or any(character not in "0123456789abcdefABCDEF" for character in raw)
     ):
         raise UnsupportedStructureError(f"malformed {attribute}={raw!r}; nothing was changed")
-    return raw
+    return raw.upper()
 
 
 def _comments_part(document: "Document"):
@@ -290,14 +290,18 @@ def _preflight_comments_extended_write(document: "Document") -> None:
 
 
 def _entry_for(root: "_Element", para_id: str, *, create: bool) -> "Optional[_Element]":
+    normalized = _validate_para_id(para_id, attribute="paragraph id")
     for entry in root.findall(_COMMENT_EX):
-        if entry.get(_PARA_ID) == para_id:
+        existing = _validate_para_id(
+            entry.get(_PARA_ID), attribute="w15:paraId"
+        )
+        if existing == normalized:
             return entry
     if not create:
         return None
     entry = parse_xml(
         '<w15:commentEx xmlns:w15="http://schemas.microsoft.com/office/word/2012/wordml"'
-        f' w15:paraId="{para_id}" w15:done="0"/>'
+        f' w15:paraId="{normalized}" w15:done="0"/>'
     )
     root.append(entry)
     return entry
@@ -340,12 +344,18 @@ def parent_of(document: "Document", comment: "Comment") -> Optional[int]:
     if not para_id:
         return None
     entry = _entry_for(root, para_id, create=False)
-    parent_para = entry.get(_PARA_ID_PARENT) if entry is not None else None
-    if not parent_para:
+    raw_parent_para = entry.get(_PARA_ID_PARENT) if entry is not None else None
+    if not raw_parent_para:
         return None
+    parent_para = _validate_para_id(
+        raw_parent_para, attribute="w15:paraIdParent"
+    )
     for candidate in document.comments:
         candidate_elm = _comment_element(document, candidate)
-        if _last_paragraph(candidate_elm).get(_PARA_ID_ATTR) == parent_para:
+        raw_candidate = _last_paragraph(candidate_elm).get(_PARA_ID_ATTR)
+        if raw_candidate is not None and _validate_para_id(
+            raw_candidate, attribute="w14:paraId"
+        ) == parent_para:
             return candidate.comment_id
     return None
 

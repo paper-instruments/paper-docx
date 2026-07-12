@@ -97,7 +97,12 @@ def _verify_docx_record(dist: Distribution) -> Path:
         if not path.is_file():
             raise DoctorError(f"paper-docx file is missing: {relative_path}")
         algorithm, expected = _parse_hash(hash_spec, relative_path)
-        actual = _file_digest(path, algorithm)
+        try:
+            actual = _file_digest(path, algorithm)
+        except OSError as exc:
+            raise DoctorError(
+                f"paper-docx file cannot be read: {relative_path}"
+            ) from exc
         if not hmac.compare_digest(actual, expected):
             raise DoctorError(f"paper-docx file hash mismatch: {relative_path}")
 
@@ -127,16 +132,21 @@ def _verify_docx_import_path(docx: object, docx_root: Path) -> None:
 
 
 def _docx_record_entries(record: str) -> Iterable[Tuple[PurePosixPath, str]]:
-    for row in csv.reader(StringIO(record)):
-        if len(row) != 3:
-            raise DoctorError("paper-docx RECORD contains a malformed row")
-        raw_path, hash_spec, _size = row
-        path = PurePosixPath(raw_path)
-        if not path.parts or path.parts[0] != "docx":
-            continue
-        if path.is_absolute() or ".." in path.parts:
-            raise DoctorError(f"paper-docx RECORD contains an unsafe path: {raw_path}")
-        yield path, hash_spec
+    try:
+        for row in csv.reader(StringIO(record)):
+            if len(row) != 3:
+                raise DoctorError("paper-docx RECORD contains a malformed row")
+            raw_path, hash_spec, _size = row
+            path = PurePosixPath(raw_path)
+            if not path.parts or path.parts[0] != "docx":
+                continue
+            if path.is_absolute() or ".." in path.parts:
+                raise DoctorError(
+                    f"paper-docx RECORD contains an unsafe path: {raw_path}"
+                )
+            yield path, hash_spec
+    except csv.Error as exc:
+        raise DoctorError("paper-docx RECORD contains malformed CSV") from exc
 
 
 def _parse_hash(hash_spec: str, relative_path: PurePosixPath) -> Tuple[str, str]:

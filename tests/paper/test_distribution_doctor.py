@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import base64
+import csv
 import hashlib
 from types import SimpleNamespace
 
@@ -98,6 +99,24 @@ class DescribePaperDocxDoctor:
 
         with pytest.raises(doctor.DoctorError, match="hash mismatch"):
             doctor.verify_install()
+
+    def it_reports_an_unreadable_owned_file(self, monkeypatch, tmp_path):
+        paper = _paper_distribution(tmp_path)
+        _install_lookup(monkeypatch, paper=paper)
+        monkeypatch.setattr(
+            doctor,
+            "_file_digest",
+            lambda *_args: (_ for _ in ()).throw(PermissionError("denied")),
+        )
+
+        with pytest.raises(doctor.DoctorError, match="cannot be read"):
+            doctor.verify_install()
+
+    def it_reports_malformed_record_csv(self):
+        oversized = "docx/" + "x" * (csv.field_size_limit() + 1) + ",sha256=x,1\n"
+
+        with pytest.raises(doctor.DoctorError, match="malformed CSV"):
+            tuple(doctor._docx_record_entries(oversized))
 
     def it_refuses_a_matching_sentinel_outside_the_owned_docx_root(
         self, monkeypatch, tmp_path

@@ -209,11 +209,14 @@ def scrub(
             _scrub_rsids(document, report)
         if hidden_text:
             _scrub_hidden_text(hidden_runs, report)
+        relationship_owners = (document.part.package,) + tuple(
+            document.part.package.iter_parts()
+        )
         if comments and (
             any(
                 rel.reltype in _COMMENT_RELATIONSHIP_TYPES
-                for part in document.part.package.iter_parts()
-                for rel in part.rels.values()
+                for owner in relationship_owners
+                for rel in owner.rels.values()
             )
             or any(
                 next(root.iter(*_COMMENT_ANCHOR_TAGS), None) is not None
@@ -235,7 +238,7 @@ def _scrub_comment_parts(document: "Document", report: ScrubReport) -> None:
     package = document_part.package
     parts_before = {part.partname: part for part in package.iter_parts()}
     dropped_any = False
-    owners = (document_part,) + tuple(package.iter_parts())
+    owners = (package, document_part) + tuple(package.iter_parts())
     for owner in owners:
         for r_id, rel in list(owner.rels.items()):
             if rel.is_external or rel.reltype not in _COMMENT_RELATIONSHIP_TYPES:
@@ -248,7 +251,10 @@ def _scrub_comment_parts(document: "Document", report: ScrubReport) -> None:
                     "cannot scrub comments: a comment relationship has an"
                     " unexpected target content type; nothing was changed"
                 )
-            owner.drop_rel(r_id)
+            if owner is package:
+                del package.rels[r_id]
+            else:
+                owner.drop_rel(r_id)
             dropped_any = True
     if not dropped_any:
         return

@@ -103,6 +103,15 @@ class _Atom:
         return self.fixed_text is not None
 
 
+@dataclass(frozen=True)
+class _FreshnessCensus:
+    """One story census shared by a synchronous replacement batch."""
+
+    atoms: "Tuple[_Atom, ...]"
+    by_element: "dict[int, _Atom]"
+    positions: "dict[int, int]"
+
+
 _CONTEXT_SCOPE_TAGS = frozenset(
     (_INS, _DEL, _MOVE_FROM, _MOVE_TO, _SDT, _HYPERLINK, _FLD_SIMPLE, _TXBX)
 )
@@ -367,6 +376,9 @@ class Span:
     _atom_sequence: "Tuple[_Element, ...]" = field(init=False, repr=False)
     _sequence_view: "Optional[str]" = field(init=False, repr=False)
     _view: str = field(init=False, repr=False)
+    _freshness_census: "Optional[_FreshnessCensus]" = field(
+        default=None, init=False, repr=False
+    )
 
     def __post_init__(self) -> None:
         self._context_signatures = tuple(
@@ -620,6 +632,7 @@ class Span:
         )
         sub_span._view = self._view
         sub_span._sequence_view = self._sequence_view
+        sub_span._freshness_census = self._freshness_census
         sequence_positions = {
             id(element): index for index, element in enumerate(self._atom_sequence)
         }
@@ -673,9 +686,9 @@ class Span:
             )
         # Text equality is insufficient: moving the same w:t into a field,
         # hyperlink, content control, or revision changes whether/how it may be
-        # edited. Rebuild the story atom census and compare the captured scope
-        # of each live element. Detached and alternate-branch-switched atoms
-        # naturally disappear from this census.
+        # edited. Compare against one shared census for a synchronous batch,
+        # or rebuild the story census for an independently used span. Detached
+        # and alternate-branch-switched atoms naturally disappear from it.
         story_root = next(
             (
                 root
@@ -688,8 +701,17 @@ class Span:
             raise TargetNotFoundError(
                 "span is stale: its story part was removed from the document"
             )
-        current_atoms = _story_atoms(self._document, self.story, story_root)
-        current_by_element = {id(atom.element): atom for atom in current_atoms}
+        census = self._freshness_census
+        if census is None:
+            current_atoms = tuple(
+                _story_atoms(self._document, self.story, story_root)
+            )
+            current_by_element = {
+                id(atom.element): atom for atom in current_atoms
+            }
+        else:
+            current_atoms = census.atoms
+            current_by_element = census.by_element
         for captured, expected in zip(self._atoms, self._context_signatures):
             current = current_by_element.get(id(captured.element))
             if current is None or _atom_context_signature(current) != expected:
@@ -707,9 +729,14 @@ class Span:
                 if _include_atom(atom, self._sequence_view)
             ]
         )
-        sequence_positions = {
-            id(atom.element): index for index, atom in enumerate(sequence_atoms)
-        }
+        sequence_positions = (
+            census.positions
+            if census is not None and self._sequence_view is None
+            else {
+                id(atom.element): index
+                for index, atom in enumerate(sequence_atoms)
+            }
+        )
         expected_first = self._atom_sequence[0]
         expected_last = self._atom_sequence[-1]
         sequence_start = sequence_positions.get(id(expected_first))
@@ -1524,29 +1551,56 @@ def replace_all(
         by_story.setdefault(span.story, []).append(span)
     results: "List[ReplaceResult]" = []
     refused: "List[dict]" = []
-    with rollback_on_error(document):
-        for story_name in sorted(by_story):
-            ordered = sorted(
-                by_story[story_name], key=lambda s: s._norm_start, reverse=True
+    story_roots = dict(_story_elements(document))
+    for story_name, story_spans in by_story.items():
+        root = story_roots.get(story_name)
+        if root is None:
+            raise TargetNotFoundError(
+                f"story {story_name!r} was removed before replacement"
             )
-            for span in ordered:
-                try:
-                    results.append(
-                        span.replace(new_text, tracked=tracked, author=author, date=date)
-                    )
-                except TargetNotFoundError:
-                    # A stale target invalidates the captured batch. The outer
-                    # transaction restores replacements already applied.
-                    raise
-                except PaperRefusal as exc:
-                    refused.append(
-                        {
-                            "story": span.story,
-                            "anchor": span.anchor.to_dict(),
-                            "error": type(exc).__name__,
-                            "message": str(exc),
-                        }
-                    )
+        atoms = tuple(_story_atoms(document, story_name, root))
+        census = _FreshnessCensus(
+            atoms=atoms,
+            by_element={id(atom.element): atom for atom in atoms},
+            positions={
+                id(atom.element): index for index, atom in enumerate(atoms)
+            },
+        )
+        for span in story_spans:
+            span._freshness_census = census
+    try:
+        with rollback_on_error(document):
+            for story_name in sorted(by_story):
+                ordered = sorted(
+                    by_story[story_name], key=lambda s: s._norm_start, reverse=True
+                )
+                for span in ordered:
+                    try:
+                        results.append(
+                            span.replace(
+                                new_text,
+                                tracked=tracked,
+                                author=author,
+                                date=date,
+                            )
+                        )
+                    except TargetNotFoundError:
+                        # A stale target invalidates the captured batch. The outer
+                        # transaction restores replacements already applied.
+                        raise
+                    except PaperRefusal as exc:
+                        refused.append(
+                            {
+                                "story": span.story,
+                                "anchor": span.anchor.to_dict(),
+                                "error": type(exc).__name__,
+                                "message": str(exc),
+                            }
+                        )
+    finally:
+        for story_spans in by_story.values():
+            for span in story_spans:
+                span._freshness_census = None
     return ReplaceAllResult(
         replaced_count=len(results), results=tuple(results), refused=tuple(refused)
     )

@@ -16,6 +16,8 @@ Release History
 - Preserve bookmark, style, numbering, relationship, and field dependencies during composition.
 - Address merged and offset table cells by their visible Word layout grid.
 - Stage and validate complete OPC packages before replacing files or writing output streams.
+- Keep inherited comment authoring, protected compare, and Windows saves within the safety contract.
+- Normalize producer variants in protection, numbering, comment threading, and scrub operations.
 
 
 1.2.0 (2025-06-16)

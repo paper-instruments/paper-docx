@@ -567,7 +567,7 @@ def patch_save(
         output_bytes = original_bytes
     else:
         output_bytes = _deterministic_zip_bytes(candidate_parts, candidate_order)
-    enforce_compressed_size(io.BytesIO(output_bytes))
+    _read_zip(output_bytes)
     _write_bytes_atomically(output_file, output_bytes, output_mode)
     return PatchSaveResult(
         restored_parts=tuple(restored),

@@ -14,6 +14,8 @@ import pytest
 
 import docx
 from docx.errors import UnsupportedStructureError
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.package import compare
 from docx.revision import _remaining_markup
 from docx.story import iter_blocks
@@ -55,6 +57,27 @@ def _compare_fixture_pair():
 
 
 class DescribeCompareAlgebra:
+    def it_verifies_compare_algebra_for_a_protected_document(self, tmp_path: Path):
+        original_path = tmp_path / "original.docx"
+        revised_path = tmp_path / "revised.docx"
+        for path, text in ((original_path, "before"), (revised_path, "after")):
+            document = docx.Document()
+            document.add_paragraph(text)
+            protection = OxmlElement("w:documentProtection")
+            protection.set(qn("w:edit"), "readOnly")
+            protection.set(qn("w:enforcement"), "1")
+            document.settings.element.append(protection)
+            document.save(path)
+
+        result = compare(original_path, revised_path, author="Compare Engine")
+
+        assert result.revision_count > 0
+        assert any(
+            finding.kind == "document_protection_present"
+            for finding in result.findings
+        )
+        result.document.revisions.accept_all()
+
     def it_accept_alls_to_the_revised_text_across_every_story(self):
         result = _compare_fixture_pair()
         assert result.revision_count > 0

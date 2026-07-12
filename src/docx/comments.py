@@ -25,7 +25,11 @@ def _document_for_comments_part(comments_part: "CommentsPart") -> "Optional[Docu
     package = comments_part.package
     if package is None:
         return None
-    document = getattr(package.main_document_part, "document", None)
+    try:
+        document_part = package.main_document_part
+    except KeyError:
+        return None
+    document = getattr(document_part, "document", None)
     from docx.document import Document
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
