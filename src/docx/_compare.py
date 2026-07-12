@@ -182,8 +182,10 @@ def compare(
             f"materialize must be None, 'accept' or 'reject', got {materialize!r}"
         )
     stamp = date if date is not None else _clock.now()
-    raw_original = _read_raw_package(original, label="original")
-    raw_revised = _read_raw_package(revised, label="revised")
+    original_bytes = _source_bytes(original)
+    revised_bytes = _source_bytes(revised)
+    raw_original = _read_raw_package(original_bytes, label="original")
+    raw_revised = _read_raw_package(revised_bytes, label="revised")
     if materialize is None:
         for which, raw_package in (
             ("original", raw_original),
@@ -197,8 +199,8 @@ def compare(
                     " copies first (the input files are not modified)"
                 )
     _refuse_unsupported_package_differences(raw_original, raw_revised)
-    document = _docx.Document(_document_source(original))
-    revised_doc = _docx.Document(_document_source(revised))
+    document = _docx.Document(io.BytesIO(original_bytes))
+    revised_doc = _docx.Document(io.BytesIO(revised_bytes))
     findings: List[CompareFinding] = []
     for which, doc in (("original", document), ("revised", revised_doc)):
         if len(doc.revisions):
@@ -292,9 +294,13 @@ def _serialize_document(document: "Document") -> bytes:
     return stream.getvalue()
 
 
-def _document_source(source):
-    """Return a fresh source suitable for ``Document()`` after raw inspection."""
-    return io.BytesIO(source) if isinstance(source, bytes) else str(source)
+def _source_bytes(source) -> bytes:
+    """Read one bounded input snapshot for validation and document loading."""
+    if isinstance(source, bytes):
+        return source
+    from docx._zipguard import read_compressed_bytes
+
+    return read_compressed_bytes(source)
 
 
 def _read_raw_package(source, *, label: str) -> _RawPackage:

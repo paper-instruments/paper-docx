@@ -79,6 +79,33 @@ def _capitalize_header_part(path: Path) -> None:
 
 
 class DescribeCompareAlgebra:
+    def it_validates_and_loads_the_same_pathlike_bytes(self, tmp_path: Path):
+        class DivergentPath:
+            def __init__(self, path: Path):
+                self.path = path
+
+            def __fspath__(self):
+                return str(self.path)
+
+            def __str__(self):
+                return str(tmp_path / "wrong.docx")
+
+        original_path = tmp_path / "original.docx"
+        revised_path = tmp_path / "revised.docx"
+        for path, text in ((original_path, "before"), (revised_path, "after")):
+            document = docx.Document()
+            document.add_paragraph(text)
+            document.save(path)
+
+        result = compare(
+            DivergentPath(original_path),
+            DivergentPath(revised_path),
+            author="Compare Engine",
+        )
+
+        result.document.revisions.accept_all()
+        assert result.document.paragraphs[0].text == "after"
+
     def it_matches_loaded_story_names_case_insensitively(self, tmp_path: Path):
         original_path = tmp_path / "original.docx"
         revised_path = tmp_path / "revised.docx"
