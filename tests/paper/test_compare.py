@@ -164,6 +164,28 @@ class DescribeCompareAlgebra:
 
 
 class DescribeCompareBehavior:
+    def it_maps_word_edits_after_an_inline_image(self, tmp_path: Path):
+        original_path = tmp_path / "original.docx"
+        revised_path = tmp_path / "revised.docx"
+        image_path = Path(__file__).parents[1] / "test_files" / "python-icon.png"
+        for path, ending in (
+            (original_path, "old language"),
+            (revised_path, "new language"),
+        ):
+            document = docx.Document()
+            paragraph = document.add_paragraph("Logo ")
+            paragraph.add_run().add_picture(str(image_path))
+            paragraph.add_run(f" {ending}")
+            document.save(path)
+
+        result = compare(original_path, revised_path, author="Compare Engine")
+
+        assert result.revision_count > 0
+        assert len(result.document.inline_shapes) == 1
+        result.document.revisions.accept_all()
+        assert result.document.paragraphs[0].text == "Logo  new language"
+        assert len(result.document.inline_shapes) == 1
+
     def it_redlines_a_word_level_edit_minimally(self):
         result = _compare_fixture_pair()
         revisions = result.document.revisions

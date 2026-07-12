@@ -37,6 +37,7 @@ from docx.story import (
     _build_block,
     _iter_block_elements,
     _story_elements,
+    _subtree_text,
     content_hash,
 )
 
@@ -1206,21 +1207,8 @@ def _compare_table(ctx: _Ctx, table_o: "_Element", table_r: "_Element") -> None:
 
 
 def _visible_paragraph_text(paragraph: "_Element") -> str:
-    """Paragraph text with tabs/breaks as their synthetic characters —
-    matching the atom stream _paragraph_span slices, so word-diff offsets
-    never desynchronize."""
-    pieces: List[str] = []
-    for child in paragraph:
-        if child.tag == _PPR:
-            continue  # w:tabs STOP definitions live here, not tab chars
-        for node in child.iter():
-            if node.tag == _T:
-                pieces.append(node.text or "")
-            elif node.tag == qn("w:tab"):
-                pieces.append("\t")
-            elif node.tag in (qn("w:br"), qn("w:cr")):
-                pieces.append("\n")
-    return "".join(pieces)
+    """Current-view paragraph text using the canonical story projection."""
+    return _subtree_text(paragraph, "current", skip_text_boxes=True).text
 
 
 def _replace_row_cells(ctx: _Ctx, row_o: "_Element", row_r: "_Element") -> bool:
@@ -1415,8 +1403,12 @@ def _paragraph_span(ctx: _Ctx, paragraph: "_Element", start: int, end: int):
     ]
     if not atoms or start >= end:
         return None
-    positions = []  # (atom_index, offset) per character
+    positions = []  # (atom_index, offset) per visible character
+    visible_pieces = []
     for index, atom in enumerate(atoms):
+        if atom.barrier:
+            continue
+        visible_pieces.append(atom.text)
         for offset in range(len(atom.text)):
             positions.append((index, offset))
     if end > len(positions):
@@ -1424,7 +1416,9 @@ def _paragraph_span(ctx: _Ctx, paragraph: "_Element", start: int, end: int):
     start_atom, start_offset = positions[start]
     end_atom, end_offset = positions[end - 1]
     span_atoms = atoms[start_atom : end_atom + 1]
-    text = "".join(a.text for a in atoms)[start:end]
+    if any(atom.barrier for atom in span_atoms):
+        return None
+    text = "".join(visible_pieces)[start:end]
     return Span(
         text=text,
         story=ctx.story,
