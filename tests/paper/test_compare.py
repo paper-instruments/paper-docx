@@ -7,7 +7,9 @@ compare(A,A) == nothing, identical inputs -> byte-identical output.
 from __future__ import annotations
 
 import datetime as dt
+import io
 import shutil
+import zipfile
 from pathlib import Path
 
 import pytest
@@ -56,7 +58,41 @@ def _compare_fixture_pair():
     )
 
 
+def _capitalize_header_part(path: Path) -> None:
+    source = path.read_bytes()
+    output = io.BytesIO()
+    with zipfile.ZipFile(io.BytesIO(source)) as incoming, zipfile.ZipFile(
+        output, "w", zipfile.ZIP_DEFLATED
+    ) as outgoing:
+        for name in incoming.namelist():
+            blob = incoming.read(name)
+            target_name = name
+            if name == "word/header1.xml":
+                target_name = "Word/Header1.xml"
+            elif name == "[Content_Types].xml":
+                blob = blob.replace(
+                    b'PartName="/word/header1.xml"',
+                    b'PartName="/Word/Header1.xml"',
+                )
+            outgoing.writestr(target_name, blob)
+    path.write_bytes(output.getvalue())
+
+
 class DescribeCompareAlgebra:
+    def it_matches_loaded_story_names_case_insensitively(self, tmp_path: Path):
+        original_path = tmp_path / "original.docx"
+        revised_path = tmp_path / "revised.docx"
+        for path, text in ((original_path, "before"), (revised_path, "after")):
+            document = docx.Document()
+            document.add_paragraph(text)
+            document.sections[0].header.paragraphs[0].text = "Header"
+            document.save(path)
+            _capitalize_header_part(path)
+
+        result = compare(original_path, revised_path, author="Compare Engine")
+
+        assert result.revision_count > 0
+
     def it_verifies_compare_algebra_for_a_protected_document(self, tmp_path: Path):
         original_path = tmp_path / "original.docx"
         revised_path = tmp_path / "revised.docx"

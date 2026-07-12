@@ -242,13 +242,15 @@ def compare(
             f" only-revised: {sorted(names_r - names_o)}); compare cannot"
             " redline story-part addition or removal"
         )
-    if names_o != set(raw_original.story_parts):
+    raw_names_o = {name.casefold() for name in raw_original.story_parts}
+    raw_names_r = {name.casefold() for name in raw_revised.story_parts}
+    if names_o != raw_names_o:
         raise UnsupportedStructureError(
             "the original package contains a story part compare could not load"
             f" safely (raw: {sorted(raw_original.story_parts)},"
             f" loaded: {sorted(names_o)})"
         )
-    if names_r != set(raw_revised.story_parts):
+    if names_r != raw_names_r:
         raise UnsupportedStructureError(
             "the revised package contains a story part compare could not load"
             f" safely (raw: {sorted(raw_revised.story_parts)},"
@@ -316,7 +318,11 @@ def _read_raw_package(source, *, label: str) -> _RawPackage:
             raise UnsupportedStructureError(
                 f"the {label} package has no [Content_Types].xml part"
             )
-        defaults, overrides = _effective_content_types(content_types, order)
+        defaults, raw_overrides = _effective_content_types(content_types, order)
+        overrides = {
+            partname.casefold(): content_type
+            for partname, content_type in raw_overrides.items()
+        }
         supported_types = frozenset(
             (
                 CT.WML_DOCUMENT_MAIN,
@@ -356,6 +362,7 @@ def _reachable_raw_parts(parts: dict[str, bytes]) -> set[str]:
     relationships_tag = f"{{{rel_ns}}}Relationships"
     relationship_tag = f"{{{rel_ns}}}Relationship"
     reachable = {"[Content_Types].xml"}
+    member_name_by_fold = {name.casefold(): name for name in parts}
     pending = [PACKAGE_URI]
     visited = set()
     while pending:
@@ -364,14 +371,15 @@ def _reachable_raw_parts(parts: dict[str, bytes]) -> set[str]:
             continue
         visited.add(source_uri)
         rels_name = source_uri.rels_uri.membername
-        rels_bytes = parts.get(rels_name)
+        actual_rels_name = member_name_by_fold.get(rels_name.casefold())
+        rels_bytes = parts.get(actual_rels_name) if actual_rels_name else None
         if rels_bytes is None:
             continue
-        reachable.add(rels_name)
+        reachable.add(actual_rels_name)
         root = _parse(rels_bytes)
         if root.tag != relationships_tag:
             raise UnsupportedStructureError(
-                f"relationship part {rels_name!r} has unexpected root {root.tag!r}"
+                f"relationship part {actual_rels_name!r} has unexpected root {root.tag!r}"
             )
         relationship_ids = set()
         for relationship in root:
@@ -405,21 +413,22 @@ def _reachable_raw_parts(parts: dict[str, bytes]) -> set[str]:
                 )
             target_uri = PackURI.from_rel_ref(source_uri.baseURI, target_ref)
             target_name = target_uri.membername
-            if target_name not in parts:
+            actual_target_name = member_name_by_fold.get(target_name.casefold())
+            if actual_target_name is None:
                 raise UnsupportedStructureError(
-                    f"relationship part {rels_name!r} targets missing part"
+                    f"relationship part {actual_rels_name!r} targets missing part"
                     f" {target_name!r}"
                 )
-            if target_name not in reachable:
-                reachable.add(target_name)
-                pending.append(target_uri)
+            if actual_target_name not in reachable:
+                reachable.add(actual_target_name)
+                pending.append(PackURI(f"/{actual_target_name}"))
     return reachable
 
 
 def _raw_content_type(
     name: str, defaults: dict[str, str], overrides: dict[str, str]
 ) -> str:
-    override = overrides.get(f"/{name}")
+    override = overrides.get(f"/{name}".casefold())
     if override is not None:
         return override
     extension = name.rsplit(".", 1)[-1].lower() if "." in name else ""
