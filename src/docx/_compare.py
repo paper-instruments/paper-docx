@@ -37,6 +37,7 @@ from docx.story import (
     _build_block,
     _iter_block_elements,
     _story_elements,
+    _subtree_text,
     content_hash,
 )
 
@@ -173,13 +174,9 @@ def compare(
     if not author:
         raise ValueError("author is required")
     if granularity not in ("word", "block"):
-        raise ValueError(
-            f"granularity must be 'word' or 'block', got {granularity!r}"
-        )
+        raise ValueError(f"granularity must be 'word' or 'block', got {granularity!r}")
     if materialize not in (None, "accept", "reject"):
-        raise ValueError(
-            f"materialize must be None, 'accept' or 'reject', got {materialize!r}"
-        )
+        raise ValueError(f"materialize must be None, 'accept' or 'reject', got {materialize!r}")
     stamp = date if date is not None else _clock.now()
     raw_original = _read_raw_package(original, label="original")
     raw_revised = _read_raw_package(revised, label="revised")
@@ -315,13 +312,10 @@ def _read_raw_package(source, *, label: str) -> _RawPackage:
 
         content_types = parts.get("[Content_Types].xml")
         if content_types is None:
-            raise UnsupportedStructureError(
-                f"the {label} package has no [Content_Types].xml part"
-            )
+            raise UnsupportedStructureError(f"the {label} package has no [Content_Types].xml part")
         defaults, raw_overrides = _effective_content_types(content_types, order)
         overrides = {
-            partname.casefold(): content_type
-            for partname, content_type in raw_overrides.items()
+            partname.casefold(): content_type for partname, content_type in raw_overrides.items()
         }
         supported_types = frozenset(
             (
@@ -388,14 +382,12 @@ def _reachable_raw_parts(parts: dict[str, bytes]) -> set[str]:
             relationship_id = relationship.get("Id")
             if relationship_id is None:
                 raise UnsupportedStructureError(
-                    f"relationship part {rels_name!r} contains a relationship"
-                    " with a missing Id"
+                    f"relationship part {rels_name!r} contains a relationship with a missing Id"
                 )
             normalized_relationship_id = " ".join(relationship_id.split())
             if not normalized_relationship_id:
                 raise UnsupportedStructureError(
-                    f"relationship part {rels_name!r} contains a relationship"
-                    " with an empty Id"
+                    f"relationship part {rels_name!r} contains a relationship with an empty Id"
                 )
             if normalized_relationship_id in relationship_ids:
                 raise UnsupportedStructureError(
@@ -416,8 +408,7 @@ def _reachable_raw_parts(parts: dict[str, bytes]) -> set[str]:
             actual_target_name = member_name_by_fold.get(target_name.casefold())
             if actual_target_name is None:
                 raise UnsupportedStructureError(
-                    f"relationship part {actual_rels_name!r} targets missing part"
-                    f" {target_name!r}"
+                    f"relationship part {actual_rels_name!r} targets missing part {target_name!r}"
                 )
             if actual_target_name not in reachable:
                 reachable.add(actual_target_name)
@@ -425,9 +416,7 @@ def _reachable_raw_parts(parts: dict[str, bytes]) -> set[str]:
     return reachable
 
 
-def _raw_content_type(
-    name: str, defaults: dict[str, str], overrides: dict[str, str]
-) -> str:
+def _raw_content_type(name: str, defaults: dict[str, str], overrides: dict[str, str]) -> str:
     override = overrides.get(f"/{name}".casefold())
     if override is not None:
         return override
@@ -435,17 +424,13 @@ def _raw_content_type(
     return defaults.get(extension, "")
 
 
-def _raw_parts_have_revisions(
-    parts: dict[str, bytes], story_parts: frozenset[str]
-) -> bool:
+def _raw_parts_have_revisions(parts: dict[str, bytes], story_parts: frozenset[str]) -> bool:
     from docx._paperpkg import _parse
     from docx.revision import _MARKUP_SCAN_TAGS
 
     revision_tags = frozenset(_MARKUP_SCAN_TAGS)
     return any(
-        node.tag in revision_tags
-        for name in story_parts
-        for node in _parse(parts[name]).iter()
+        node.tag in revision_tags for name in story_parts for node in _parse(parts[name]).iter()
     )
 
 
@@ -523,9 +508,7 @@ def _verify_compare_algebra(
         )
 
 
-def _assert_packages_match(
-    actual_bytes: bytes, expected_bytes: bytes, *, outcome: str
-) -> None:
+def _assert_packages_match(actual_bytes: bytes, expected_bytes: bytes, *, outcome: str) -> None:
     """Compare every part, allowing only inert run fragmentation in stories."""
     import docx as _docx
     from docx._paperpkg import (
@@ -547,8 +530,7 @@ def _assert_packages_match(
             stories_expected[name]
         ):
             raise UnsupportedStructureError(
-                f"compare could not prove its {outcome} contract;"
-                f" story {name!r} does not match"
+                f"compare could not prove its {outcome} contract; story {name!r} does not match"
             )
 
     actual_parts, actual_order = _read_zip(actual_bytes)
@@ -569,8 +551,7 @@ def _assert_packages_match(
         ):
             continue
         raise UnsupportedStructureError(
-            f"compare could not prove its {outcome} contract;"
-            f" package part {name!r} does not match"
+            f"compare could not prove its {outcome} contract; package part {name!r} does not match"
         )
 
 
@@ -658,10 +639,7 @@ def _numbering_ids(document: "Document") -> frozenset:
     try:
         from docx.numbering import list_numbering
 
-        return frozenset(
-            definition.num_id
-            for definition in list_numbering(document).definitions
-        )
+        return frozenset(definition.num_id for definition in list_numbering(document).definitions)
     except Exception:
         return frozenset()
 
@@ -669,9 +647,7 @@ def _numbering_ids(document: "Document") -> frozenset:
 def _story_blocks(story: str, root: "_Element") -> "List[Tuple[str, _Element, str]]":
     blocks = []
     for kind, index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
-        block = _build_block(
-            story, kind, index, element, "current", in_sdt=in_sdt, in_txbx=in_txbx
-        )
+        block = _build_block(story, kind, index, element, "current", in_sdt=in_sdt, in_txbx=in_txbx)
         blocks.append((kind, element, block.text))
     return blocks
 
@@ -692,9 +668,7 @@ def _compare_story(ctx: _Ctx, root_o: "_Element", root_r: "_Element") -> None:
     for tag, i1, i2, j1, j2 in opcodes:
         if tag == "equal":
             for offset in range(i2 - i1):
-                _report_formatting_difference(
-                    ctx, blocks_o[i1 + offset], blocks_r[j1 + offset]
-                )
+                _report_formatting_difference(ctx, blocks_o[i1 + offset], blocks_r[j1 + offset])
             continue
         if tag == "delete":
             for kind, element, text in blocks_o[i1:i2]:
@@ -872,9 +846,7 @@ def _report_formatting_difference(ctx: _Ctx, block_o, block_r) -> None:
         )
 
 
-def _refuse_non_text_paragraph_change(
-    ctx: _Ctx, original: "_Element", revised: "_Element"
-) -> None:
+def _refuse_non_text_paragraph_change(ctx: _Ctx, original: "_Element", revised: "_Element") -> None:
     """Allow text changes only when the surrounding paragraph markup agrees."""
     if _textless_story_bytes(original) == _textless_story_bytes(revised):
         return
@@ -936,15 +908,11 @@ def _mark_paragraph_deleted(ctx: _Ctx, paragraph: "_Element") -> None:
             current_del = None
             continue
         if current_del is None:
-            current_del = CT_RunTrackChange.new(
-                "w:del", revision_id, ctx.author, ctx.stamp
-            )
+            current_del = CT_RunTrackChange.new("w:del", revision_id, ctx.author, ctx.stamp)
             child.addprevious(current_del)
         _retag_deleted_text(child)
         current_del.append(child)
-    _stamp_paragraph_mark(
-        paragraph, "w:del", _next_id(ctx), ctx.author, ctx.stamp
-    )
+    _stamp_paragraph_mark(paragraph, "w:del", _next_id(ctx), ctx.author, ctx.stamp)
 
 
 def _wrap_children_deleted(ctx: _Ctx, container: "_Element", revision_id: int) -> None:
@@ -956,9 +924,7 @@ def _wrap_children_deleted(ctx: _Ctx, container: "_Element", revision_id: int) -
             wrapper = None
             continue
         if wrapper is None:
-            wrapper = CT_RunTrackChange.new(
-                "w:del", revision_id, ctx.author, ctx.stamp
-            )
+            wrapper = CT_RunTrackChange.new("w:del", revision_id, ctx.author, ctx.stamp)
             child.addprevious(wrapper)
         _retag_deleted_text(child)
         wrapper.append(child)
@@ -991,9 +957,7 @@ def _fldchar_unbalanced(element: "_Element") -> bool:
     return depth != 0
 
 
-def _refuse_unrepresentable_children(
-    ctx: _Ctx, paragraph: "_Element", *, verb: str
-) -> None:
+def _refuse_unrepresentable_children(ctx: _Ctx, paragraph: "_Element", *, verb: str) -> None:
     for child in paragraph:
         if child.tag in _UNREPRESENTABLE_IN_DELETE:
             local = child.tag.rsplit("}", 1)[-1]
@@ -1028,9 +992,7 @@ def _insert_blocks(
 ) -> None:
     """Insert sanitized clones of `new_blocks` as tracked insertions, before
     the original block at `insert_index` (or after `after_element`)."""
-    clones = [
-        _cloned_as_insertion(ctx, kind, element) for kind, element, _t in new_blocks
-    ]
+    clones = [_cloned_as_insertion(ctx, kind, element) for kind, element, _t in new_blocks]
     if after_element is not None:
         reference = after_element
         for clone in clones:
@@ -1044,9 +1006,7 @@ def _insert_blocks(
             reference.addprevious(clone)
         return
     if not blocks_o:
-        raise UnsupportedStructureError(
-            f"compare cannot insert into the empty story {ctx.story}"
-        )
+        raise UnsupportedStructureError(f"compare cannot insert into the empty story {ctx.story}")
     reference = blocks_o[-1][1]
     _require_container_anchor(ctx, reference)
     for clone in clones:
@@ -1064,9 +1024,7 @@ def _require_container_anchor(ctx: _Ctx, reference: "_Element") -> None:
             f"compare cannot add or remove whole blocks next to text-box"
             f" content in {ctx.story} (a declared limit)"
         )
-    if ctx.story.startswith("word/footnotes") or ctx.story.startswith(
-        "word/endnotes"
-    ):
+    if ctx.story.startswith("word/footnotes") or ctx.story.startswith("word/endnotes"):
         raise UnsupportedStructureError(
             f"compare cannot add or remove whole blocks in {ctx.story};"
             " note-content edits must stay within existing notes"
@@ -1157,9 +1115,7 @@ def _refuse_merged_rows(ctx: _Ctx, rows) -> None:
 
 
 def _row_text(row: "_Element") -> str:
-    return "\x00".join(
-        "".join(t.text or "" for t in cell.iter(_T)) for cell in row.findall(_TC)
-    )
+    return "\x00".join("".join(t.text or "" for t in cell.iter(_T)) for cell in row.findall(_TC))
 
 
 def _compare_table(ctx: _Ctx, table_o: "_Element", table_r: "_Element") -> None:
@@ -1191,36 +1147,24 @@ def _compare_table(ctx: _Ctx, table_o: "_Element", table_r: "_Element") -> None:
                 cursor = old_rows[k]
             else:
                 _mark_row_deleted(ctx, old_rows[k])
-                inserted = _insert_rows(
-                    ctx, rows_o, i1 + k, [new_rows[k]], after=old_rows[k]
-                )
+                inserted = _insert_rows(ctx, rows_o, i1 + k, [new_rows[k]], after=old_rows[k])
                 cursor = inserted[-1]
         for row in old_rows[paired:]:
             _mark_row_deleted(ctx, row)
             cursor = row
         if len(new_rows) > paired:
             _insert_rows(
-                ctx, rows_o, i2, new_rows[paired:],
+                ctx,
+                rows_o,
+                i2,
+                new_rows[paired:],
                 after=cursor if cursor is not None else old_rows[-1],
             )
 
 
 def _visible_paragraph_text(paragraph: "_Element") -> str:
-    """Paragraph text with tabs/breaks as their synthetic characters —
-    matching the atom stream _paragraph_span slices, so word-diff offsets
-    never desynchronize."""
-    pieces: List[str] = []
-    for child in paragraph:
-        if child.tag == _PPR:
-            continue  # w:tabs STOP definitions live here, not tab chars
-        for node in child.iter():
-            if node.tag == _T:
-                pieces.append(node.text or "")
-            elif node.tag == qn("w:tab"):
-                pieces.append("\t")
-            elif node.tag in (qn("w:br"), qn("w:cr")):
-                pieces.append("\n")
-    return "".join(pieces)
+    """Current-view paragraph text using the canonical story projection."""
+    return _subtree_text(paragraph, "current", skip_text_boxes=True).text
 
 
 def _replace_row_cells(ctx: _Ctx, row_o: "_Element", row_r: "_Element") -> bool:
@@ -1286,12 +1230,8 @@ def _mark_cloned_row_inserted(ctx: _Ctx, row: "_Element") -> None:
     tr_pr.append(marker)
     for cell in row.findall(_TC):
         for paragraph in cell.findall(_P):
-            _wrap_paragraph_content_as_insertion(
-                paragraph, _next_id(ctx), ctx.author, ctx.stamp
-            )
-            _stamp_paragraph_mark(
-                paragraph, "w:ins", _next_id(ctx), ctx.author, ctx.stamp
-            )
+            _wrap_paragraph_content_as_insertion(paragraph, _next_id(ctx), ctx.author, ctx.stamp)
+            _stamp_paragraph_mark(paragraph, "w:ins", _next_id(ctx), ctx.author, ctx.stamp)
 
 
 def _insert_rows(ctx: _Ctx, rows_o, index: int, new_rows, after=None) -> list:
@@ -1331,9 +1271,7 @@ def _iso(stamp: "dt.datetime") -> str:
 # ---------------------------------------------------------------------------
 
 
-def _replace_paragraph_text(
-    ctx: _Ctx, paragraph: "_Element", text_o: str, text_r: str
-) -> None:
+def _replace_paragraph_text(ctx: _Ctx, paragraph: "_Element", text_o: str, text_r: str) -> None:
     """Token-level tracked edits inside one matched paragraph; whole-block
     del+ins fallback when the span machinery refuses a region.
 
@@ -1348,9 +1286,7 @@ def _replace_paragraph_text(
             span = _paragraph_span(ctx, paragraph, start, end)
             if span is None:
                 raise UnsupportedStructureError("region unmappable to atoms")
-            span.replace(
-                replacement, tracked=True, author=ctx.author, date=ctx.stamp
-            )
+            span.replace(replacement, tracked=True, author=ctx.author, date=ctx.stamp)
     except PaperRefusal as exc:
         parent = paragraph.getparent()
         if parent is not None:
@@ -1403,9 +1339,7 @@ def _paragraph_span(ctx: _Ctx, paragraph: "_Element", start: int, end: int):
     with the exact conventions of `docx.search._spans_for_story`."""
     from docx.search import Span, _include_atom, _story_atoms
 
-    root = next(
-        (root for s, root in _story_elements(ctx.document) if s == ctx.story), None
-    )
+    root = next((root for s, root in _story_elements(ctx.document) if s == ctx.story), None)
     if root is None:
         return None
     atoms = [
@@ -1415,8 +1349,12 @@ def _paragraph_span(ctx: _Ctx, paragraph: "_Element", start: int, end: int):
     ]
     if not atoms or start >= end:
         return None
-    positions = []  # (atom_index, offset) per character
+    positions = []  # (atom_index, offset) per visible character
+    visible_pieces = []
     for index, atom in enumerate(atoms):
+        if atom.barrier:
+            continue
+        visible_pieces.append(atom.text)
         for offset in range(len(atom.text)):
             positions.append((index, offset))
     if end > len(positions):
@@ -1424,7 +1362,9 @@ def _paragraph_span(ctx: _Ctx, paragraph: "_Element", start: int, end: int):
     start_atom, start_offset = positions[start]
     end_atom, end_offset = positions[end - 1]
     span_atoms = atoms[start_atom : end_atom + 1]
-    text = "".join(a.text for a in atoms)[start:end]
+    if any(atom.barrier for atom in span_atoms):
+        return None
+    text = "".join(visible_pieces)[start:end]
     return Span(
         text=text,
         story=ctx.story,
