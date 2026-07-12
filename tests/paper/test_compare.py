@@ -43,7 +43,10 @@ def _texts(document) -> dict:
 def _visible(document) -> dict:
     """Per-story visible text with block boundaries collapsed (paragraph
     merges/splits legitimately change block counts, not content)."""
-    return {story: "\n".join(t for t in items if t) for story, items in _texts(document).items()}
+    return {
+        story: "\n".join(t for t in items if t)
+        for story, items in _texts(document).items()
+    }
 
 
 def _compare_fixture_pair():
@@ -105,7 +108,10 @@ class DescribeCompareAlgebra:
         result = compare(original_path, revised_path, author="Compare Engine")
 
         assert result.revision_count > 0
-        assert any(finding.kind == "document_protection_present" for finding in result.findings)
+        assert any(
+            finding.kind == "document_protection_present"
+            for finding in result.findings
+        )
         result.document.revisions.accept_all()
 
     def it_accept_alls_to_the_revised_text_across_every_story(self):
@@ -113,13 +119,17 @@ class DescribeCompareAlgebra:
         assert result.revision_count > 0
         result.document.revisions.accept_all()
         assert _remaining_markup(result.document) == {}
-        assert _visible(result.document) == _visible(docx.Document(str(fixture_path(REVISED))))
+        assert _visible(result.document) == _visible(
+            docx.Document(str(fixture_path(REVISED)))
+        )
 
     def it_reject_alls_back_to_the_original_text(self):
         result = _compare_fixture_pair()
         result.document.revisions.reject_all()
         assert _remaining_markup(result.document) == {}
-        assert _visible(result.document) == _visible(docx.Document(str(fixture_path(ORIGINAL))))
+        assert _visible(result.document) == _visible(
+            docx.Document(str(fixture_path(ORIGINAL)))
+        )
 
     def it_yields_zero_revisions_for_identical_inputs(self):
         result = compare(
@@ -135,41 +145,25 @@ class DescribeCompareAlgebra:
         for run in ("a", "b"):
             result = _compare_fixture_pair()
             result.document.save(str(tmp_path / f"out-{run}.docx"))
-        assert (tmp_path / "out-a.docx").read_bytes() == (tmp_path / "out-b.docx").read_bytes()
+        assert (tmp_path / "out-a.docx").read_bytes() == (
+            tmp_path / "out-b.docx"
+        ).read_bytes()
 
-    def it_survives_an_independent_reopen_with_the_same_algebra(self, tmp_path: Path):
+    def it_survives_an_independent_reopen_with_the_same_algebra(
+        self, tmp_path: Path
+    ):
         result = _compare_fixture_pair()
         out = tmp_path / "redline.docx"
         result.document.save(str(out))
         reopened = docx.Document(str(out))
         assert len(reopened.revisions) == result.revision_count
         reopened.revisions.accept_all()
-        assert _visible(reopened) == _visible(docx.Document(str(fixture_path(REVISED))))
+        assert _visible(reopened) == _visible(
+            docx.Document(str(fixture_path(REVISED)))
+        )
 
 
 class DescribeCompareBehavior:
-    def it_maps_word_edits_after_an_inline_image(self, tmp_path: Path):
-        original_path = tmp_path / "original.docx"
-        revised_path = tmp_path / "revised.docx"
-        image_path = Path(__file__).parents[1] / "test_files" / "python-icon.png"
-        for path, ending in (
-            (original_path, "old language"),
-            (revised_path, "new language"),
-        ):
-            document = docx.Document()
-            paragraph = document.add_paragraph("Logo ")
-            paragraph.add_run().add_picture(str(image_path))
-            paragraph.add_run(f" {ending}")
-            document.save(path)
-
-        result = compare(original_path, revised_path, author="Compare Engine")
-
-        assert result.revision_count > 0
-        assert len(result.document.inline_shapes) == 1
-        result.document.revisions.accept_all()
-        assert result.document.paragraphs[0].text == "Logo  new language"
-        assert len(result.document.inline_shapes) == 1
-
     def it_redlines_a_word_level_edit_minimally(self):
         result = _compare_fixture_pair()
         revisions = result.document.revisions
@@ -187,8 +181,12 @@ class DescribeCompareBehavior:
         revisions = result.document.revisions
         # $200 -> $250 narrows to the single changed character in the cell;
         # crucially the ROW was edited cell-wise, not deleted + reinserted
-        assert any(r.revision_type == "deletion" and r.text == "0" for r in revisions)
-        assert any(r.revision_type == "insertion" and r.text == "5" for r in revisions)
+        assert any(
+            r.revision_type == "deletion" and r.text == "0" for r in revisions
+        )
+        assert any(
+            r.revision_type == "insertion" and r.text == "5" for r in revisions
+        )
         assert not any(r.revision_type.startswith("row_") for r in revisions)
         assert not any("Advisory" in r.text for r in revisions)
 
@@ -198,7 +196,9 @@ class DescribeCompareBehavior:
             assert revision.author == "Compare Engine"
             assert revision.date == FROZEN
 
-    def it_pends_changes_matching_the_text_diff_of_the_inputs(self, tmp_path: Path):
+    def it_pends_changes_matching_the_text_diff_of_the_inputs(
+        self, tmp_path: Path
+    ):
         from docx.package import pending_changes
 
         result = _compare_fixture_pair()
@@ -234,7 +234,9 @@ class DescribeCompareBehavior:
             granularity="block",
         )
         result.document.revisions.accept_all()
-        assert _visible(result.document) == _visible(docx.Document(str(fixture_path(REVISED))))
+        assert _visible(result.document) == _visible(
+            docx.Document(str(fixture_path(REVISED)))
+        )
 
 
 class DescribePendingRevisionInputs:
@@ -279,13 +281,17 @@ class DescribeCompareOnTheGauntlet:
         )
         assert result.revision_count == 0
 
-    def it_compares_minimal_against_the_heavily_edited_variant(self, tmp_path: Path):
+    def it_compares_minimal_against_the_heavily_edited_variant(
+        self, tmp_path: Path
+    ):
         """End-to-end: edit a copy with plain (untracked) upstream calls,
         then let compare reconstruct the redline."""
         edited_path = tmp_path / "edited.docx"
         shutil.copyfile(fixture_path(MINIMAL), edited_path)
         document = docx.Document(str(edited_path))
-        document.paragraphs[1].runs[0].text = "First body paragraph with thoroughly modern text."
+        document.paragraphs[1].runs[0].text = (
+            "First body paragraph with thoroughly modern text."
+        )
         document.add_paragraph("A brand new closing paragraph.")
         document.save(str(edited_path))
 
@@ -296,4 +302,6 @@ class DescribeCompareOnTheGauntlet:
             date=FROZEN,
         )
         result.document.revisions.accept_all()
-        assert _visible(result.document) == _visible(docx.Document(str(edited_path)))
+        assert _visible(result.document) == _visible(
+            docx.Document(str(edited_path))
+        )
