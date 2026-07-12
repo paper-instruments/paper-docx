@@ -120,19 +120,59 @@ def _same_nodes(left: "Tuple[_Element, ...]", right: "Tuple[_Element, ...]") -> 
 class _ObjectState:
     instance: Any
     attributes: "Dict[str, Any]"
+    mutable_values: "Tuple[_MutableValueState, ...]"
 
     @classmethod
     def capture(cls, instance: Any) -> "_ObjectState":
-        return cls(instance, dict(instance.__dict__))
+        attributes = dict(instance.__dict__)
+        return cls(
+            instance,
+            attributes,
+            tuple(
+                state
+                for value in attributes.values()
+                if (state := _MutableValueState.capture(value)) is not None
+            ),
+        )
 
     def restore(self) -> None:
+        for state in self.mutable_values:
+            state.restore()
         self.instance.__dict__.clear()
         self.instance.__dict__.update(self.attributes)
 
 
 @dataclass(frozen=True)
+class _MutableValueState:
+    value: Any
+    kind: str
+    items: Any
+
+    @classmethod
+    def capture(cls, value: Any) -> "Optional[_MutableValueState]":
+        if isinstance(value, list):
+            return cls(value, "list", tuple(value))
+        if isinstance(value, dict):
+            return cls(value, "dict", tuple(value.items()))
+        if isinstance(value, set):
+            return cls(value, "set", frozenset(value))
+        return None
+
+    def restore(self) -> None:
+        if self.kind == "list":
+            self.value[:] = self.items
+        elif self.kind == "dict":
+            self.value.clear()
+            self.value.update(self.items)
+        else:
+            self.value.clear()
+            self.value.update(self.items)
+
+
+@dataclass(frozen=True)
 class _RelationshipsState:
     relationships: "Relationships"
+    base_uri: str
     items: "Tuple[Tuple[str, _Relationship], ...]"
     target_parts: "Dict[str, Any]"
     target_items: "Tuple[Tuple[str, Any], ...]"
@@ -143,6 +183,7 @@ class _RelationshipsState:
         target_parts = relationships._target_parts_by_rId  # noqa: SLF001
         return cls(
             relationships,
+            relationships._baseURI,  # noqa: SLF001
             tuple(relationships.items()),
             target_parts,
             tuple(target_parts.items()),
@@ -158,11 +199,13 @@ class _RelationshipsState:
         self.target_parts.clear()
         self.target_parts.update(self.target_items)
         self.relationships._target_parts_by_rId = self.target_parts  # noqa: SLF001
+        self.relationships._baseURI = self.base_uri  # noqa: SLF001
 
     def is_restored(self) -> bool:
         return (
             _same_items(tuple(self.relationships.items()), self.items)
             and _same_items(tuple(self.target_parts.items()), self.target_items)
+            and self.relationships._baseURI == self.base_uri  # noqa: SLF001
             and all(
                 state.instance.__dict__ == state.attributes for state in self.relationship_objects
             )
@@ -230,7 +273,9 @@ class _PackageState:
 
     def restore(self) -> None:
         package = cast("OpcPackage", self.objects[0].instance)
-        current_parts = _reachable_package_objects(package)[1]
+        current_parts = _current_package_parts(
+            package, tuple(state.instance for state in self.objects)
+        )
         original_part_ids = {id(state.part) for state in self.part_blobs}
         # Restore owner attributes before the mutable collaborators they name.
         # This also removes lazy properties created only by the failed edit.
@@ -302,6 +347,43 @@ def _reachable_package_objects(
                 for part in image_parts._image_parts:  # noqa: SLF001
                     add(part)
     return tuple(owners), tuple(parts)
+
+
+def _current_package_parts(package: "OpcPackage", seeds: "Tuple[Any, ...]") -> "Tuple[Part, ...]":
+    """Best-effort raw-reference scan tolerating a corrupted live graph."""
+    owners = list(seeds)
+    parts: "List[Part]" = []
+    seen = set()
+
+    def add(candidate: Any) -> None:
+        if id(candidate) in seen:
+            return
+        attributes = getattr(candidate, "__dict__", None)
+        if not isinstance(attributes, dict) or "_package" not in attributes:
+            return
+        seen.add(id(candidate))
+        parts.append(cast("Part", candidate))
+        owners.append(candidate)
+
+    for owner in owners:
+        attributes = getattr(owner, "__dict__", {})
+        relationships = attributes.get("rels")
+        if isinstance(relationships, dict):
+            for relationship in tuple(relationships.values()):
+                rel_attributes = getattr(relationship, "__dict__", {})
+                if not rel_attributes.get("_is_external", False):
+                    add(rel_attributes.get("_target"))
+            target_index = getattr(relationships, "_target_parts_by_rId", None)
+            if isinstance(target_index, dict):
+                for candidate in tuple(target_index.values()):
+                    add(candidate)
+        if owner is package:
+            image_parts = attributes.get("image_parts")
+            image_list = getattr(image_parts, "_image_parts", None)
+            if isinstance(image_list, list):
+                for candidate in tuple(image_list):
+                    add(candidate)
+    return tuple(parts)
 
 
 @contextmanager

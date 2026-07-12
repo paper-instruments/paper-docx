@@ -58,6 +58,7 @@ class NumberedParagraph:
     num_id: int
     level: int
     text: str
+    table_cell: "Optional[Tuple[int, int, int]]" = None
 
     def to_dict(self) -> dict:
         return {
@@ -66,6 +67,7 @@ class NumberedParagraph:
             "num_id": self.num_id,
             "level": self.level,
             "text": self.text,
+            "table_cell": self.table_cell,
         }
 
 
@@ -77,7 +79,7 @@ class NumberingReport:
     def to_dict(self) -> dict:
         return {
             "schema": "paper_numbering",
-            "version": 1,
+            "version": 2,
             "definitions": [d.to_dict() for d in self.definitions],
             "numbered_paragraphs": [p.to_dict() for p in self.numbered_paragraphs],
         }
@@ -119,11 +121,24 @@ def _definitions(numbering: "Optional[_Element]") -> Tuple[NumberingDefinition, 
         num_id = int(num.get(qn("w:numId")))
         abstract_ref = num.find(qn("w:abstractNumId"))
         abstract_id = int(abstract_ref.get(qn("w:val"))) if abstract_ref is not None else -1
+        levels = {level.level: level for level in abstract_levels.get(abstract_id, ())}
+        for override in num.findall(qn("w:lvlOverride")):
+            override_level = int(override.get(qn("w:ilvl")))
+            level = override.find(qn("w:lvl"))
+            if level is None:
+                continue
+            num_fmt = level.find(qn("w:numFmt"))
+            lvl_text = level.find(qn("w:lvlText"))
+            levels[override_level] = NumberingLevel(
+                level=override_level,
+                num_fmt=num_fmt.get(qn("w:val")) if num_fmt is not None else None,
+                lvl_text=lvl_text.get(qn("w:val")) if lvl_text is not None else None,
+            )
         definitions.append(
             NumberingDefinition(
                 num_id=num_id,
                 abstract_num_id=abstract_id,
-                levels=abstract_levels.get(abstract_id, ()),
+                levels=tuple(levels[index] for index in sorted(levels)),
             )
         )
     return tuple(sorted(definitions, key=lambda d: d.num_id))
@@ -199,31 +214,83 @@ def _effective_paragraph_numbering(
 
 def list_numbering(document: "Document") -> NumberingReport:
     """Every numbering definition and every numbered paragraph in `document`."""
+    definitions = _definitions(_numbering_root(document))
+    definitions_by_id = {definition.num_id: definition for definition in definitions}
     numbered = []
     for story, root in _story_elements(document):
         for kind, index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
-            if kind != "paragraph":
-                continue
-            effective = _effective_paragraph_numbering(document, element)
-            if effective is None:
-                continue
-            num_id, level = effective
-            block = _build_block(
-                story, kind, index, element, "current", in_sdt=in_sdt, in_txbx=in_txbx
+            paragraphs = (
+                (element,)
+                if kind == "paragraph"
+                else tuple(element.iter(qn("w:p")))
+                if kind == "table"
+                else ()
             )
-            numbered.append(
-                NumberedParagraph(
-                    story=story,
-                    index=index,
-                    num_id=num_id,
-                    level=level,
-                    text=block.text,
+            for paragraph in paragraphs:
+                effective = _effective_paragraph_numbering(document, paragraph)
+                if effective is None:
+                    continue
+                num_id, level = effective
+                definition = definitions_by_id.get(num_id)
+                if definition is None:
+                    raise UnsupportedStructureError(
+                        f"paragraph resolves to missing numbering definition numId={num_id};"
+                        " nothing was changed"
+                    )
+                if level not in {item.level for item in definition.levels}:
+                    raise UnsupportedStructureError(
+                        f"paragraph resolves to undefined numbering level {level}"
+                        f" for numId={num_id}; nothing was changed"
+                    )
+                block = _build_block(
+                    story,
+                    "paragraph",
+                    index,
+                    paragraph,
+                    "current",
+                    in_sdt=in_sdt,
+                    in_txbx=in_txbx,
                 )
-            )
+                numbered.append(
+                    NumberedParagraph(
+                        story=story,
+                        index=index,
+                        num_id=num_id,
+                        level=level,
+                        text=block.text,
+                        table_cell=_table_cell_address(paragraph),
+                    )
+                )
     return NumberingReport(
-        definitions=_definitions(_numbering_root(document)),
+        definitions=definitions,
         numbered_paragraphs=tuple(numbered),
     )
+
+
+def _table_cell_address(paragraph: "_Element") -> "Optional[Tuple[int, int, int]]":
+    tc = paragraph.getparent()
+    while tc is not None and tc.tag not in (qn("w:tc"), qn("w:body")):
+        tc = tc.getparent()
+    if tc is None or tc.tag != qn("w:tc"):
+        return None
+    tr = tc.getparent()
+    tbl = tr.getparent() if tr is not None else None
+    if tr is None or tbl is None:
+        return None
+    rows = tbl.findall(qn("w:tr"))
+    cells = tr.findall(qn("w:tc"))
+    column = 0
+    tr_pr = tr.find(qn("w:trPr"))
+    grid_before = tr_pr.find(qn("w:gridBefore")) if tr_pr is not None else None
+    if grid_before is not None:
+        column = int(grid_before.get(qn("w:val")) or 0)
+    for cell in cells:
+        if cell is tc:
+            break
+        tc_pr = cell.find(qn("w:tcPr"))
+        span = tc_pr.find(qn("w:gridSpan")) if tc_pr is not None else None
+        column += int(span.get(qn("w:val")) or 1) if span is not None else 1
+    return rows.index(tr), column, tc.findall(qn("w:p")).index(paragraph)
 
 
 def _document_of_paragraph(paragraph: "Paragraph") -> "Document":
@@ -401,7 +468,11 @@ def _append_definition(numbering: "_Element", abstract: "_Element", num: "_Eleme
     if last:
         last[-1].addnext(num)
     else:
-        numbering.append(num)
+        cleanup = numbering.find(qn("w:numIdMacAtCleanup"))
+        if cleanup is not None:
+            cleanup.addprevious(num)
+        else:
+            numbering.append(num)
 
 
 def _structural_signature(

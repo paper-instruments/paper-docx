@@ -43,10 +43,11 @@ _W_ID = qn("w:id")
 _RANGE_START = qn("w:commentRangeStart")
 _RANGE_END = qn("w:commentRangeEnd")
 _REFERENCE = qn("w:commentReference")
+_SDT = qn("w:sdt")
+_FLD_SIMPLE = qn("w:fldSimple")
 
 COMMENTS_EXTENDED_CONTENT_TYPE = (
-    "application/vnd.openxmlformats-officedocument.wordprocessingml"
-    ".commentsExtended+xml"
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtended+xml"
 )
 COMMENTS_EXTENDED_RELATIONSHIP_TYPE = (
     "http://schemas.microsoft.com/office/2011/relationships/commentsExtended"
@@ -65,8 +66,13 @@ def _part_with_name(document: "Document", partname: str):
     package = document.part.package
     if package is None:
         return None
+    folded = partname.casefold()
     return next(
-        (part for part in package.iter_parts() if str(part.partname) == partname),
+        (
+            part
+            for part in package.iter_parts()
+            if str(part.partname).casefold() == folded
+        ),
         None,
     )
 
@@ -86,15 +92,13 @@ def _preflight_comment_add(document: "Document") -> None:
         return
     except ValueError:
         raise UnsupportedStructureError(
-            "multiple comments relationships make comment authoring"
-            " ambiguous; nothing was changed"
+            "multiple comments relationships make comment authoring ambiguous; nothing was changed"
         ) from None
 
     root = getattr(part, "_element", None)
     if root is None or root.tag != _COMMENTS:
         raise UnsupportedStructureError(
-            "the comments relationship does not target a live w:comments"
-            " part; nothing was changed"
+            "the comments relationship does not target a live w:comments part; nothing was changed"
         )
     seen: "set[int]" = set()
     for comment in root.findall(_COMMENT):
@@ -114,13 +118,66 @@ def _preflight_comment_add(document: "Document") -> None:
         seen.add(comment_id)
 
 
-def _validate_para_id(raw: "Optional[str]", *, attribute: str) -> str:
-    if raw is None or len(raw) != 8 or any(
-        character not in "0123456789abcdefABCDEF" for character in raw
-    ):
+def _preflight_comment_range(
+    document: "Document", first_run: "_Element", last_run: "_Element", *, operation: str
+) -> None:
+    """Validate only the selected run interval before adding range markers."""
+    _refuse_if_protected(document, operation)
+    nodes = tuple(document.element.iter())
+    positions = {id(node): index for index, node in enumerate(nodes)}
+    first = positions.get(id(first_run))
+    last = positions.get(id(last_run))
+    if first is None or last is None:
+        raise TargetNotFoundError("comment range runs are stale or detached; reacquire the span")
+    if first > last:
+        raise UnsupportedStructureError("comment range endpoints are reversed; nothing was changed")
+    interval = nodes[first : last + 1]
+    selected_runs = [node for node in interval if node.tag == _R]
+    if any(next(run.iter(qn("w:fldChar")), None) is not None for run in selected_runs):
         raise UnsupportedStructureError(
-            f"malformed {attribute}={raw!r}; nothing was changed"
+            "cannot anchor a comment across a complex field boundary; nothing was changed"
         )
+    selected_ids = {id(run) for run in selected_runs}
+    depth = 0
+    for node in nodes:
+        if node.tag == qn("w:fldChar"):
+            kind = node.get(qn("w:fldCharType"))
+            if kind == "begin":
+                depth += 1
+            elif kind == "end" and depth:
+                depth -= 1
+        if id(node) in selected_ids and depth:
+            raise UnsupportedStructureError(
+                "cannot anchor a comment inside a complex field; nothing was changed"
+            )
+    for run in selected_runs:
+        current = run.getparent()
+        while current is not None:
+            if current.tag == _FLD_SIMPLE:
+                raise UnsupportedStructureError(
+                    "cannot anchor a comment inside a field; nothing was changed"
+                )
+            current = current.getparent()
+    from docx.controls import _refuse_control_write_restrictions
+
+    controls = []
+    for node in interval:
+        current = node
+        while current is not None:
+            if current.tag == _SDT and not any(current is item for item in controls):
+                controls.append(current)
+            current = current.getparent()
+    for control in controls:
+        _refuse_control_write_restrictions(control)
+
+
+def _validate_para_id(raw: "Optional[str]", *, attribute: str) -> str:
+    if (
+        raw is None
+        or len(raw) != 8
+        or any(character not in "0123456789abcdefABCDEF" for character in raw)
+    ):
+        raise UnsupportedStructureError(f"malformed {attribute}={raw!r}; nothing was changed")
     return raw
 
 
@@ -145,13 +202,10 @@ def _existing_para_ids(comments_root: "_Element") -> "List[int]":
     for paragraph in comments_root.iter(_P):
         raw = paragraph.get(_PARA_ID_ATTR)
         if raw is not None:
-            values.append(
-                int(_validate_para_id(raw, attribute="w14:paraId"), 16)
-            )
+            values.append(int(_validate_para_id(raw, attribute="w14:paraId"), 16))
     if len(values) != len(set(values)):
         raise UnsupportedStructureError(
-            "duplicate w14:paraId values make comment threading ambiguous;"
-            " nothing was changed"
+            "duplicate w14:paraId values make comment threading ambiguous; nothing was changed"
         )
     return values
 
@@ -188,14 +242,11 @@ def _comments_extended_root(document: "Document", *, create: bool) -> "Optional[
             )
         if element.tag != f"{{{_W15_NS}}}commentsEx":
             raise UnsupportedStructureError(
-                "commentsExtended has an unexpected root element; nothing"
-                " was changed"
+                "commentsExtended has an unexpected root element; nothing was changed"
             )
         seen: "set[str]" = set()
         for entry in element.findall(_COMMENT_EX):
-            para_id = _validate_para_id(
-                entry.get(_PARA_ID), attribute="w15:paraId"
-            )
+            para_id = _validate_para_id(entry.get(_PARA_ID), attribute="w15:paraId")
             parent_id = entry.get(_PARA_ID_PARENT)
             if parent_id is not None:
                 _validate_para_id(parent_id, attribute="w15:paraIdParent")
@@ -301,7 +352,9 @@ def parent_of(document: "Document", comment: "Comment") -> Optional[int]:
 
 def _anchor_elements(document: "Document", comment_id: int):
     body = document.element.body
-    start = end = reference_run = None
+    starts = []
+    ends = []
+    reference_runs = []
     for node in body.iter(_RANGE_START, _RANGE_END, _REFERENCE):
         raw = node.get(_W_ID)
         try:
@@ -311,18 +364,25 @@ def _anchor_elements(document: "Document", comment_id: int):
         except (TypeError, ValueError):
             name = node.tag.rsplit("}", 1)[-1]
             raise UnsupportedStructureError(
-                f"malformed {name} comment marker w:id={raw!r}; nothing was"
-                " changed"
+                f"malformed {name} comment marker w:id={raw!r}; nothing was changed"
             ) from None
         if marker_id != comment_id:
             continue
         if node.tag == _RANGE_START:
-            start = node
+            starts.append(node)
         elif node.tag == _RANGE_END:
-            end = node
+            ends.append(node)
         else:
-            reference_run = node.getparent()
-    return start, end, reference_run
+            reference_runs.append(node.getparent())
+    if any(len(markers) > 1 for markers in (starts, ends, reference_runs)):
+        raise UnsupportedStructureError(
+            f"comment {comment_id} has duplicate anchor markers; nothing was changed"
+        )
+    return (
+        starts[0] if starts else None,
+        ends[0] if ends else None,
+        reference_runs[0] if reference_runs else None,
+    )
 
 
 def anchored_text(document: "Document", comment: "Comment") -> str:
@@ -330,9 +390,7 @@ def anchored_text(document: "Document", comment: "Comment") -> str:
     _comment_element(document, comment)
     start, end, _ = _anchor_elements(document, comment.comment_id)
     if start is None or end is None:
-        raise TargetNotFoundError(
-            f"comment {comment.comment_id} has no range anchor in the body"
-        )
+        raise TargetNotFoundError(f"comment {comment.comment_id} has no range anchor in the body")
     # document-order walk over the whole story tree: comment ranges may
     # cross paragraph boundaries, where sibling iteration would truncate
     pieces: "List[str]" = []
@@ -345,11 +403,7 @@ def anchored_text(document: "Document", comment: "Comment") -> str:
             continue
         if node is end:
             break
-        if (
-            inside
-            and is_direct_run_child(node)
-            and node.tag not in (DEL_TEXT, INSTR_TEXT)
-        ):
+        if inside and is_direct_run_child(node) and node.tag not in (DEL_TEXT, INSTR_TEXT):
             projection = project_run_child(node)
             if projection.barrier or not projection.text:
                 continue
@@ -390,6 +444,33 @@ def reply(
         raise TargetNotFoundError(
             f"comment {comment.comment_id} has no range anchor to thread onto"
         )
+    ordered = tuple(document.element.iter())
+    positions = {id(node): index for index, node in enumerate(ordered)}
+    start_position = positions.get(id(start))
+    end_position = positions.get(id(end))
+    if (
+        start_position is None
+        or end_position is None
+        or start_position >= end_position
+    ):
+        raise UnsupportedStructureError(
+            "comment range markers are stale, reversed, or detached; nothing was changed"
+        )
+    anchored_runs = [
+        node
+        for node in ordered[start_position + 1 : end_position]
+        if node.tag == _R
+    ]
+    if not anchored_runs:
+        raise UnsupportedStructureError(
+            "comment range contains no live runs to anchor a reply; nothing was changed"
+        )
+    _preflight_comment_range(
+        document,
+        anchored_runs[0],
+        anchored_runs[-1],
+        operation="reply to a comment",
+    )
     _preflight_comment_add(document)
     _preflight_comments_extended_write(document)
     with rollback_on_error(document):
@@ -403,15 +484,11 @@ def reply(
         new_para_id = _ensure_para_id(document, _last_paragraph(new_elm))
 
         new_id = new_comment.comment_id
-        start.addnext(
-            parse_xml(f'<w:commentRangeStart {_W_DECL} w:id="{new_id}"/>')
-        )
-        end.addprevious(
-            parse_xml(f'<w:commentRangeEnd {_W_DECL} w:id="{new_id}"/>')
-        )
+        start.addnext(parse_xml(f'<w:commentRangeStart {_W_DECL} w:id="{new_id}"/>'))
+        end.addprevious(parse_xml(f'<w:commentRangeEnd {_W_DECL} w:id="{new_id}"/>'))
         reference_run.addnext(
             parse_xml(
-                f"<w:r {_W_DECL}><w:rPr><w:rStyle w:val=\"CommentReference\"/></w:rPr>"
+                f'<w:r {_W_DECL}><w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>'
                 f'<w:commentReference w:id="{new_id}"/></w:r>'
             )
         )
@@ -430,8 +507,7 @@ def comment_thread(document: "Document") -> Tuple[dict, ...]:
         comments = document.comments
     except ValueError:
         raise UnsupportedStructureError(
-            "multiple comments relationships make comment inspection"
-            " ambiguous; nothing was changed"
+            "multiple comments relationships make comment inspection ambiguous; nothing was changed"
         ) from None
     entries = []
     for comment in comments:

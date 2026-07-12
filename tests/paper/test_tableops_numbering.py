@@ -77,9 +77,7 @@ class DescribeUpdateCell:
 
     def it_supports_tracked_updates(self, tmp_path: Path):
         document, table = _doc_with_simple_table()
-        result = update_cell(
-            table, 0, 0, "cell 99", tracked=True, author="Carol QA", date=FROZEN
-        )
+        result = update_cell(table, 0, 0, "cell 99", tracked=True, author="Carol QA", date=FROZEN)
         assert result.tracked and result.revision_ids
         reopened = save_and_reopen(document, tmp_path / "out.docx")
         assert reopened.tables[0].cell(0, 0).text.startswith("cell")
@@ -216,7 +214,8 @@ class DescribeListNumbering:
         import json
 
         payload = list_numbering(_doc(NUMBERING)).to_dict()
-        assert payload["schema"] == "paper_numbering" and payload["version"] == 1
+        assert payload["schema"] == "paper_numbering"
+        assert payload["version"] == 2
         assert json.dumps(payload) == json.dumps(list_numbering(_doc(NUMBERING)).to_dict())
 
 

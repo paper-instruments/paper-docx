@@ -34,6 +34,16 @@ _NAME = qn("w:name")
 _INSTR_TEXT = qn("w:instrText")
 _FLD_SIMPLE = qn("w:fldSimple")
 _INSTR = qn("w:instr")
+_CONTENT_REVISION_WRAPPERS = frozenset(
+    (
+        qn("w:ins"),
+        qn("w:del"),
+        qn("w:moveFrom"),
+        qn("w:moveTo"),
+        qn("w14:conflictIns"),
+        qn("w14:conflictDel"),
+    )
+)
 
 #: Word's bookmark-name rules: start with a letter, then letters/digits/
 #: underscores, max 40 chars ("_"-prefixed names are Word-internal)
@@ -99,17 +109,9 @@ def _bookmark_text(root: "_Element", start: "_Element", raw_id: Optional[str]) -
         if node is start:
             collecting = True
             continue
-        if (
-            collecting
-            and node.tag == _BOOKMARK_END
-            and node.get(_ID) == raw_id
-        ):
+        if collecting and node.tag == _BOOKMARK_END and node.get(_ID) == raw_id:
             break
-        if (
-            collecting
-            and is_direct_run_child(node)
-            and node.tag not in (DEL_TEXT, INSTR_TEXT)
-        ):
+        if collecting and is_direct_run_child(node) and node.tag not in (DEL_TEXT, INSTR_TEXT):
             projection = project_run_child(node)
             if projection.barrier or not projection.text:
                 continue
@@ -131,6 +133,23 @@ def _next_bookmark_id(document: "Document") -> int:
     return highest + 1
 
 
+def _revision_scope(node: "_Element") -> tuple:
+    scope = []
+    current = node.getparent()
+    while current is not None:
+        if current.tag in _CONTENT_REVISION_WRAPPERS:
+            scope.append(current)
+        current = current.getparent()
+    return tuple(reversed(scope))
+
+
+def _same_revision_scope(left: "_Element", right: "_Element") -> bool:
+    left_scope, right_scope = _revision_scope(left), _revision_scope(right)
+    return len(left_scope) == len(right_scope) and all(
+        left is right for left, right in zip(left_scope, right_scope)
+    )
+
+
 def create_bookmark(document: "Document", span: "Span", name: str) -> BookmarkInfo:
     """Bookmark exactly `span`'s text under `name` (unique, Word-legal).
 
@@ -144,10 +163,9 @@ def create_bookmark(document: "Document", span: "Span", name: str) -> BookmarkIn
             f"bookmark name {name!r} is not Word-legal (start with a letter;"
             " letters, digits and underscores only; max 40 chars)"
         )
-    if any(b.name == name for b in list_bookmarks(document)):
+    if any(b.name.casefold() == name.casefold() for b in list_bookmarks(document)):
         raise UnsupportedStructureError(
-            f"a bookmark named {name!r} already exists; bookmark names are"
-            " document-unique"
+            f"a bookmark named {name!r} already exists; bookmark names are document-unique"
         )
     span._validate_fresh()  # noqa: SLF001 - same-package machinery
     if span.in_field:
@@ -159,9 +177,13 @@ def create_bookmark(document: "Document", span: "Span", name: str) -> BookmarkIn
     for atom in span._atoms:  # noqa: SLF001
         if atom.run is None:
             raise UnsupportedStructureError(
-                "the span includes content outside ordinary runs; bookmark"
-                " a plain text range"
+                "the span includes content outside ordinary runs; bookmark a plain text range"
             )
+    if not _same_revision_scope(span._atoms[0].run, span._atoms[-1].run):  # noqa: SLF001
+        raise UnsupportedStructureError(
+            "bookmark endpoints cross pending revision scopes; resolve the"
+            " revision or bookmark text within one revision scope. Nothing was changed"
+        )
     # Allocation parses every existing marker id, so it must happen before
     # edge isolation splits any source runs.
     bookmark_id = _next_bookmark_id(document)
@@ -175,9 +197,7 @@ def create_bookmark(document: "Document", span: "Span", name: str) -> BookmarkIn
     last_run = span._atoms[-1].run  # noqa: SLF001
     first_run.addprevious(start_marker)
     last_run.addnext(end_marker)
-    return BookmarkInfo(
-        name=name, bookmark_id=bookmark_id, story=span.story, text=span.text
-    )
+    return BookmarkInfo(name=name, bookmark_id=bookmark_id, story=span.story, text=span.text)
 
 
 def delete_bookmark(document: "Document", name: str) -> None:
@@ -185,7 +205,17 @@ def delete_bookmark(document: "Document", name: str) -> None:
     instruction still references the name — a dangling REF/PAGEREF renders
     'Error! Reference source not found.' in Word."""
     _refuse_if_protected(document, "delete a bookmark")
-    referencing = _field_references(document, name)
+    matching_names = {
+        bookmark.name
+        for bookmark in list_bookmarks(document)
+        if bookmark.name.casefold() == name.casefold()
+    }
+    if len(matching_names) > 1:
+        raise UnsupportedStructureError(
+            f"bookmark name {name!r} is case-ambiguous; nothing was changed"
+        )
+    resolved_name = next(iter(matching_names), name)
+    referencing = _field_references(document, resolved_name)
     if referencing:
         raise UnsupportedStructureError(
             f"bookmark {name!r} is referenced by {referencing} field"
@@ -218,10 +248,15 @@ def delete_bookmark(document: "Document", name: str) -> None:
         pairs.extend(
             (start, ends_by_id[marker_id])
             for marker_id, start in starts_by_id.items()
-            if start.get(_NAME) == name
+            if (start.get(_NAME) or "").casefold() == resolved_name.casefold()
         )
     if not pairs:
         raise TargetNotFoundError(f"no bookmark named {name!r} exists")
+    if any(not _same_revision_scope(start, end) for start, end in pairs):
+        raise UnsupportedStructureError(
+            f"bookmark {name!r} has markers in different revision scopes;"
+            " deleting it could leave a dangling marker. Nothing was changed"
+        )
 
     # -- validated; mutate --
     for start, end in pairs:
@@ -257,27 +292,27 @@ def _iter_field_instructions(root: "_Element"):
                     break
 
 
-def _reference_pattern(name: str):
-    escaped = re.escape(name)
-    return re.compile(
-        rf'\b(?:PAGEREF|NOTEREF|REF)\s+(?:"{escaped}"|{escaped})(?=\s|$)',
-        re.IGNORECASE,
-    )
-
-
 def _field_references(document: "Document", name: str) -> int:
-    pattern = _reference_pattern(name)
+    from docx._fieldcode import bookmark_operands
+
+    target = name.casefold()
     count = 0
     for _story, root in _story_elements(document):
         for instruction, _nodes in _iter_field_instructions(root):
-            if pattern.search(instruction):
+            if any(
+                operand.value.casefold() == target
+                for operand in bookmark_operands(instruction, implicit_names=(name,))
+            ):
                 count += 1
         for node in root.iter(_FLD_SIMPLE):
             instr = node.get(_INSTR)
-            if instr and pattern.search(instr):
+            if instr and any(
+                operand.value.casefold() == target
+                for operand in bookmark_operands(instr, implicit_names=(name,))
+            ):
                 count += 1
         for link in root.iter(qn("w:hyperlink")):
             anchor = link.get(qn("w:anchor"))
-            if anchor is not None and anchor.casefold() == name.casefold():
+            if anchor is not None and anchor.casefold() == target:
                 count += 1  # internal links target bookmarks too
     return count

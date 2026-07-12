@@ -210,7 +210,7 @@ def _story_elements(document: "Document") -> "List[Tuple[str, _Element]]":
     assert package is not None
     found: "List[Tuple[str, _Element]]" = []
     for part in package.iter_parts():
-        name = str(part.partname).lstrip("/")
+        name = str(part.partname).lstrip("/").casefold()
         element = getattr(part, "_element", None)
         if element is None:
             continue

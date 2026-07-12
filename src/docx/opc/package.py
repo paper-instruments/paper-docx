@@ -2,7 +2,12 @@
 
 from __future__ import annotations
 
-from typing import IO, TYPE_CHECKING, Iterator, cast
+import os
+import secrets
+import stat
+import tempfile
+from contextlib import suppress
+from typing import IO, TYPE_CHECKING, BinaryIO, Iterator, Optional, cast
 
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.opc.packuri import PACKAGE_URI, PackURI
@@ -161,9 +166,14 @@ class OpcPackage:
 
         `pkg_file` can be either a file-path or a file-like object.
         """
-        for part in self.parts:
+        parts = self.parts
+        for part in parts:
             part.before_marshal()
-        PackageWriter.write(pkg_file, self.rels, self.parts)
+        parts = self.parts
+        if isinstance(pkg_file, (str, os.PathLike)):
+            _atomic_package_write(os.fspath(pkg_file), self.rels, parts)
+        else:
+            _atomic_stream_write(pkg_file, self.rels, parts)
 
     @property
     def _core_properties_part(self) -> CorePropertiesPart:
@@ -217,3 +227,216 @@ class Unmarshaller:
             source = package if source_uri == "/" else parts[source_uri]
             target = srel.target_ref if srel.is_external else parts[srel.target_partname]
             source.load_rel(srel.reltype, target, srel.rId, srel.is_external)
+
+
+def _validate_serialized_output(source) -> None:
+    """Reopen a staged package so malformed output never reaches its destination."""
+    reader = PackageReader.from_file(source)
+    # Force traversal of the complete serialized relationship graph.
+    tuple(reader.iter_sparts())
+    tuple(reader.iter_srels())
+
+
+def _atomic_package_write(path: str, relationships, parts) -> None:
+    """Serialize beside ``path``, validate, and atomically replace it."""
+    link_state = None
+    if os.path.islink(path):
+        link_stat = os.lstat(path)
+        destination = os.path.realpath(path)
+        link_state = (link_stat.st_dev, link_stat.st_ino, destination)
+    else:
+        destination = path
+    directory = os.path.dirname(os.path.abspath(destination)) or os.curdir
+    descriptor, temporary = _new_atomic_temp(directory, f".{os.path.basename(destination)}.")
+    try:
+        if os.path.exists(destination):
+            os.fchmod(descriptor, stat.S_IMODE(os.stat(destination).st_mode))
+        os.close(descriptor)
+        descriptor = -1
+        PackageWriter.write(temporary, relationships, parts)
+        _validate_serialized_output(temporary)
+        with open(temporary, "rb") as staged:
+            os.fsync(staged.fileno())
+        if link_state is not None:
+            try:
+                current = os.lstat(path)
+            except OSError as exc:
+                raise OSError(
+                    "destination symlink changed during save; nothing was replaced"
+                ) from exc
+            if (
+                not stat.S_ISLNK(current.st_mode)
+                or (current.st_dev, current.st_ino) != link_state[:2]
+                or os.path.realpath(path) != link_state[2]
+            ):
+                raise OSError(
+                    "destination symlink changed during save; nothing was replaced"
+                )
+        os.replace(temporary, destination)
+        with suppress(OSError):
+            directory_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
+    finally:
+        if descriptor >= 0:
+            os.close(descriptor)
+        with suppress(OSError):
+            os.unlink(temporary)
+
+
+def _new_atomic_temp(directory: str, prefix: str) -> "tuple[int, str]":
+    """Create a sibling temporary file using normal umask semantics."""
+    for _ in range(100):
+        path = os.path.join(directory, f"{prefix}{secrets.token_hex(8)}.partial")
+        try:
+            return os.open(path, os.O_RDWR | os.O_CREAT | os.O_EXCL, 0o666), path
+        except FileExistsError:
+            continue
+    raise FileExistsError("could not allocate a unique atomic-save temp file")
+
+
+_STREAM_COPY_BYTES = 1024 * 1024
+_STREAM_SPOOL_BYTES = 8 * 1024 * 1024
+
+
+def _atomic_stream_write(stream: IO[bytes], relationships, parts) -> None:
+    """Stage output and roll back a readable, seekable destination on failure."""
+    start = _stream_position(stream)
+    snapshot_record = _snapshot_stream_tail(stream, start)
+    if snapshot_record is None:
+        if _has_stream_rollback_surface(stream, start):
+            raise OSError(
+                "destination stream exposes rollback operations but its existing"
+                " content could not be snapshotted; nothing was written"
+            )
+        _write_staged_to_unrestorable_stream(
+            stream, relationships, parts, start=start
+        )
+        return
+    snapshot, original_end = snapshot_record
+    try:
+        with tempfile.SpooledTemporaryFile(max_size=_STREAM_SPOOL_BYTES, mode="w+b") as staged:
+            assert start is not None
+            _copy_stream_prefix(stream, staged, start)
+            PackageWriter.write(staged, relationships, parts)
+            _validate_serialized_output(staged)
+            staged.seek(start)
+            try:
+                stream.seek(start)
+                _copy_stream(staged, cast(BinaryIO, stream))
+                stream.truncate()
+                flush = getattr(stream, "flush", None)
+                if callable(flush):
+                    flush()
+            except BaseException:
+                try:
+                    _restore_stream_tail(stream, start, original_end, snapshot)
+                except BaseException as rollback_error:
+                    raise RuntimeError(
+                        "stream save failed and the destination stream could not be restored"
+                    ) from rollback_error
+                raise
+    finally:
+        snapshot.close()
+
+
+def _has_stream_rollback_surface(stream, start: "Optional[int]") -> bool:
+    return start is not None and all(
+        callable(getattr(stream, name, None)) for name in ("read", "seek", "tell", "truncate")
+    )
+
+
+def _write_staged_to_unrestorable_stream(
+    stream, relationships, parts, *, start: "Optional[int]"
+) -> None:
+    """Validate first; after commit starts, write-only stream errors are final."""
+    if start not in (None, 0):
+        raise OSError(
+            "cannot validate a write-only stream with an existing prefix;"
+            " nothing was written"
+        )
+    with tempfile.SpooledTemporaryFile(max_size=_STREAM_SPOOL_BYTES, mode="w+b") as staged:
+        PackageWriter.write(staged, relationships, parts)
+        staged.seek(0)
+        _validate_serialized_output(staged)
+        staged.seek(0)
+        _copy_stream(staged, cast(BinaryIO, stream))
+        flush = getattr(stream, "flush", None)
+        if callable(flush):
+            flush()
+
+
+def _copy_stream_prefix(stream, destination: BinaryIO, length: int) -> None:
+    """Copy the exact preserved prefix into the staged validation stream."""
+    stream.seek(0)
+    remaining = length
+    while remaining:
+        chunk = stream.read(min(_STREAM_COPY_BYTES, remaining))
+        if not isinstance(chunk, bytes) or not chunk:
+            raise OSError(
+                "destination stream prefix could not be read; nothing was written"
+            )
+        destination.write(chunk)
+        remaining -= len(chunk)
+    stream.seek(length)
+
+
+def _stream_position(stream) -> "Optional[int]":
+    try:
+        position = stream.tell()
+    except (AttributeError, OSError, TypeError, ValueError):
+        return None
+    return (
+        position
+        if isinstance(position, int) and not isinstance(position, bool) and position >= 0
+        else None
+    )
+
+
+def _snapshot_stream_tail(stream, start) -> "Optional[tuple[BinaryIO, int]]":
+    if not _has_stream_rollback_surface(stream, start):
+        return None
+    snapshot = tempfile.SpooledTemporaryFile(  # noqa: SIM115 - returned to caller
+        max_size=_STREAM_SPOOL_BYTES, mode="w+b"
+    )
+    try:
+        stream.seek(0, os.SEEK_END)
+        original_end = stream.tell()
+        stream.seek(start)
+        remaining = original_end - start
+        while remaining:
+            chunk = stream.read(min(_STREAM_COPY_BYTES, remaining))
+            if not isinstance(chunk, bytes) or not chunk:
+                raise OSError("destination stream suffix could not be read")
+            snapshot.write(chunk)
+            remaining -= len(chunk)
+        snapshot.seek(0)
+        stream.seek(start)
+        return snapshot, original_end
+    except (AttributeError, OSError, TypeError, ValueError):
+        snapshot.close()
+        with suppress(Exception):
+            stream.seek(start)
+        return None
+
+
+def _restore_stream_tail(stream, start: int, original_end: int, snapshot: BinaryIO) -> None:
+    stream.seek(start)
+    snapshot.seek(0)
+    _copy_stream(snapshot, cast(BinaryIO, stream))
+    stream.truncate(original_end)
+    stream.seek(start)
+
+
+def _copy_stream(source: BinaryIO, destination: BinaryIO) -> None:
+    while chunk := source.read(_STREAM_COPY_BYTES):
+        offset = 0
+        while offset < len(chunk):
+            written = destination.write(chunk[offset:])
+            if not isinstance(written, int) or isinstance(written, bool) or written <= 0:
+                raise OSError("destination stream returned an invalid write count")
+            if written > len(chunk) - offset:
+                raise OSError("destination stream returned an invalid write count")
+            offset += written

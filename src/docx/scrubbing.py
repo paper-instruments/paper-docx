@@ -30,18 +30,32 @@ if TYPE_CHECKING:
 
 #: relationship-type suffixes of the comment part family (base comments part
 #: plus Word's extended/threading/people side-parts)
-_COMMENT_RELTYPE_SUFFIXES = (
-    "/comments",
-    "/commentsExtended",
-    "/commentsIds",
-    "/commentsExtensible",
-    "/people",
+_COMMENT_RELATIONSHIP_TYPES = frozenset(
+    (
+        "http://schemas.openxmlformats.org/officeDocument/2006/relationships/comments",
+        "http://purl.oclc.org/ooxml/officeDocument/relationships/comments",
+        "http://schemas.microsoft.com/office/2011/relationships/commentsExtended",
+        "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds",
+        "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible",
+        "http://schemas.microsoft.com/office/2011/relationships/people",
+    )
+)
+_COMMENT_CONTENT_TYPE_FRAGMENTS = (
+    ".comments+xml",
+    ".commentsExtended+xml",
+    ".commentsIds+xml",
+    ".commentsExtensible+xml",
+    ".people+xml",
 )
 
 _COMMENT_ANCHOR_TAGS = (
     qn("w:commentRangeStart"),
     qn("w:commentRangeEnd"),
     qn("w:commentReference"),
+)
+
+_MC_ALTERNATE_CONTENT = (
+    "{http://schemas.openxmlformats.org/markup-compatibility/2006}AlternateContent"
 )
 
 _RSID_ATTRS = tuple(
@@ -121,9 +135,7 @@ def finalize(document: "Document", *, revisions: str = "accept") -> int:
     rescan of every story finds zero revision markup of any kind.
     """
     if revisions not in ("accept", "reject"):
-        raise ValueError(
-            f"revisions must be 'accept' or 'reject', got {revisions!r}"
-        )
+        raise ValueError(f"revisions must be 'accept' or 'reject', got {revisions!r}")
     _refuse_if_protected(document, "finalize the document")
     snapshot = document.revisions
     with rollback_on_error(document):
@@ -172,9 +184,9 @@ def scrub(
         )
     if metadata:
         _validate_metadata_parts(document)
-    hidden_runs = (
-        _hidden_runs(document, include_comments=not comments) if hidden_text else []
-    )
+    hidden_runs = _hidden_runs(document, include_comments=not comments) if hidden_text else []
+    if hidden_text:
+        _validate_hidden_run_deletions(document, hidden_runs)
     report = ScrubReport()
     status = protection_status(document)
     if status.edit is not None or status.formatting:
@@ -197,6 +209,20 @@ def scrub(
             _scrub_rsids(document, report)
         if hidden_text:
             _scrub_hidden_text(hidden_runs, report)
+        if comments and (
+            any(
+                rel.reltype in _COMMENT_RELATIONSHIP_TYPES
+                for part in document.part.package.iter_parts()
+                for rel in part.rels.values()
+            )
+            or any(
+                next(root.iter(*_COMMENT_ANCHOR_TAGS), None) is not None
+                for _story, root in _story_elements(document)
+            )
+        ):
+            raise UnsupportedStructureError(
+                "comment scrub postcondition failed; operation was rolled back"
+            )
         return report
 
 
@@ -209,11 +235,20 @@ def _scrub_comment_parts(document: "Document", report: ScrubReport) -> None:
     package = document_part.package
     parts_before = {part.partname: part for part in package.iter_parts()}
     dropped_any = False
-    for r_id, rel in list(document_part.rels.items()):
-        if rel.is_external:
-            continue
-        if any(rel.reltype.endswith(sfx) for sfx in _COMMENT_RELTYPE_SUFFIXES):
-            document_part.drop_rel(r_id)
+    owners = (document_part,) + tuple(package.iter_parts())
+    for owner in owners:
+        for r_id, rel in list(owner.rels.items()):
+            if rel.is_external or rel.reltype not in _COMMENT_RELATIONSHIP_TYPES:
+                continue
+            if not any(
+                rel.target_part.content_type.endswith(fragment)
+                for fragment in _COMMENT_CONTENT_TYPE_FRAGMENTS
+            ):
+                raise UnsupportedStructureError(
+                    "cannot scrub comments: a comment relationship has an"
+                    " unexpected target content type; nothing was changed"
+                )
+            owner.drop_rel(r_id)
             dropped_any = True
     if not dropped_any:
         return
@@ -235,9 +270,7 @@ def _scrub_comment_anchors(document: "Document", report: ScrubReport) -> None:
             parent.remove(node)
             report.comment_anchors_removed += 1
             # a run that held only the commentReference is Word residue too
-            if parent.tag == qn("w:r") and not any(
-                child.tag != qn("w:rPr") for child in parent
-            ):
+            if parent.tag == qn("w:r") and not any(child.tag != qn("w:rPr") for child in parent):
                 parent.getparent().remove(parent)
 
 
@@ -262,9 +295,7 @@ def _scrub_metadata(document: "Document", report: ScrubReport) -> None:
     for r_id, rel in list(package.rels.items()):
         if rel.is_external:
             continue
-        if rel.reltype.endswith("/custom-properties") or rel.reltype.endswith(
-            "/thumbnail"
-        ):
+        if rel.reltype.endswith("/custom-properties") or rel.reltype.endswith("/thumbnail"):
             report.removed_parts.append(str(rel.target_part.partname).lstrip("/"))
             del package.rels[r_id]
         elif rel.reltype.endswith("/extended-properties"):
@@ -305,14 +336,12 @@ def _parse_app_properties(app_part):
         root = etree.fromstring(app_part.blob, parser)
     except etree.XMLSyntaxError as exc:
         raise UnsupportedStructureError(
-            "cannot scrub metadata: docProps/app.xml is malformed;"
-            " nothing was changed"
+            "cannot scrub metadata: docProps/app.xml is malformed; nothing was changed"
         ) from exc
     docinfo = root.getroottree().docinfo
     if docinfo.internalDTD is not None or docinfo.doctype:
         raise UnsupportedStructureError(
-            "cannot scrub metadata: docProps/app.xml contains a DTD;"
-            " nothing was changed"
+            "cannot scrub metadata: docProps/app.xml contains a DTD; nothing was changed"
         )
     return root
 
@@ -354,15 +383,18 @@ def _scrub_rsids(document: "Document", report: ScrubReport) -> None:
                     report.rsid_attributes_removed += 1
 
 
-def _hidden_runs(
-    document: "Document", *, include_comments: bool
-) -> "List[_Element]":
+def _hidden_runs(document: "Document", *, include_comments: bool) -> "List[_Element]":
     """Resolve every hidden-text target before scrub mutates any package part."""
     from docx.formatting import _enclosing_paragraph, _resolve_run
+    from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
+    try:
+        comments_root = document.part.part_related_by(RT.COMMENTS)._element
+    except KeyError:
+        comments_root = None
     hidden = []
     for story, root in _story_elements(document):
-        if not include_comments and story == "word/comments.xml":
+        if not include_comments and root is comments_root:
             continue
         for run in root.iter(qn("w:r")):
             resolved = _resolve_run(document, run, _enclosing_paragraph(run))
@@ -383,3 +415,67 @@ def _scrub_hidden_text(hidden_runs: "List[_Element]", report: ScrubReport) -> No
         if parent is not None:
             parent.remove(run)
             report.hidden_runs_removed += 1
+
+
+def _validate_hidden_run_deletions(document: "Document", hidden_runs: "List[_Element]") -> None:
+    """Refuse only hidden targets whose deletion breaks local structure."""
+    hidden_ids = {id(run) for run in hidden_runs}
+    structural = {
+        qn("w:fldChar"),
+        qn("w:instrText"),
+        qn("w:commentReference"),
+        qn("w:footnoteReference"),
+        qn("w:endnoteReference"),
+    }
+    from docx.controls import (
+        _refuse_control_write_restrictions,
+        _validate_span_surface_edit,
+    )
+
+    for run in hidden_runs:
+        if any(node.tag in structural for node in run.iter()):
+            raise UnsupportedStructureError(
+                "cannot scrub hidden text because a target run carries"
+                " structural review or field markup; nothing was changed"
+            )
+        current = run.getparent()
+        while current is not None:
+            if current.tag == _MC_ALTERNATE_CONTENT:
+                raise UnsupportedStructureError(
+                    "cannot scrub hidden text inside mc:AlternateContent because"
+                    " different consumers may select different branches; nothing was changed"
+                )
+            if current.tag == qn("w:fldSimple"):
+                raise UnsupportedStructureError(
+                    "cannot scrub hidden text inside a field; nothing was changed"
+                )
+            if current.tag == qn("w:sdt"):
+                _validate_span_surface_edit(current)
+                _refuse_control_write_restrictions(current)
+            current = current.getparent()
+
+    start_tag, end_tag, run_tag = (qn("w:bookmarkStart"), qn("w:bookmarkEnd"), qn("w:r"))
+    id_attr = qn("w:id")
+    for _story, root in _story_elements(document):
+        ordered = list(root.iter())
+        positions = {id(node): index for index, node in enumerate(ordered)}
+        ends = {node.get(id_attr): node for node in ordered if node.tag == end_tag}
+        for start in (node for node in ordered if node.tag == start_tag):
+            end = ends.get(start.get(id_attr))
+            if end is None:
+                continue
+            runs = [
+                node
+                for node in ordered[positions[id(start)] + 1 : positions[id(end)]]
+                if node.tag == run_tag
+                and any(
+                    child.tag != qn("w:rPr")
+                    and (child.tag != qn("w:t") or bool(child.text))
+                    for child in node
+                )
+            ]
+            if runs and all(id(run) in hidden_ids for run in runs):
+                raise UnsupportedStructureError(
+                    "cannot scrub hidden text because it would hollow out"
+                    " a bookmark; nothing was changed"
+                )

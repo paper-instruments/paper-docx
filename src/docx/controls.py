@@ -58,6 +58,7 @@ _BLOCK_CONTROL_PARENTS = frozenset(
 )
 _SHOWING_PLC_HDR = qn("w:showingPlcHdr")
 _DATA_BINDING = qn("w:dataBinding")
+_LOCK = qn("w:lock")
 _DROPDOWN = qn("w:dropDownList")
 _COMBO = qn("w:comboBox")
 _DATE = qn("w:date")
@@ -458,6 +459,7 @@ class Control:
                 " custom XML part Word re-syncs on open; editing the surface"
                 " text would silently vanish"
             )
+        _refuse_control_write_restrictions(self._sdt)
         control_type = self.control_type
         if control_type == "checkbox":
             if not isinstance(value, bool):
@@ -593,6 +595,42 @@ class Control:
                 content.remove(child)
             content.append(run)
         _clear_placeholder_state(self._sdt)
+
+
+def _validate_span_surface_edit(sdt: "_Element") -> None:
+    """Allow generic edits only on plain or rich-text control surfaces."""
+    sdt_pr = sdt.find(_SDT_PR)
+    if sdt_pr is not None and sdt_pr.find(_DATA_BINDING) is not None:
+        raise UnsupportedStructureError(
+            "span lies in a data-bound control whose surface text Word"
+            " re-syncs from custom XML; use the binding source instead"
+        )
+    control_type = _control_type(sdt_pr)
+    if control_type not in ("text", "rich_text"):
+        raise UnsupportedStructureError(
+            f"span lies in a {control_type} control whose display text is tied"
+            " to machine-readable control state; use Control.set_value()"
+        )
+
+
+def _refuse_control_write_restrictions(sdt: "_Element") -> None:
+    """Honor binding and content locks without rejecting typed controls."""
+    sdt_pr = sdt.find(_SDT_PR)
+    if sdt_pr is None:
+        return
+    if sdt_pr.find(_DATA_BINDING) is not None:
+        raise UnsupportedStructureError(
+            "control is data-bound; edits could be discarded on sync"
+        )
+    locks = sdt_pr.findall(_LOCK)
+    if len(locks) > 1:
+        raise UnsupportedStructureError(
+            "control has multiple w:lock declarations; nothing was changed"
+        )
+    if locks and locks[0].get(_W_VAL) in ("contentLocked", "sdtContentLocked"):
+        raise UnsupportedStructureError(
+            "control content is locked; nothing was changed"
+        )
 
 
 def _iter_sdts(element: "_Element") -> "Iterator[_Element]":

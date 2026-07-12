@@ -25,6 +25,8 @@ from docx.fields import (
     add_reference_field,
     insert_toc_after,
 )
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.search import find_one
 
 from .harness.contract import save_and_reopen
@@ -75,6 +77,14 @@ class DescribeBookmarks:
                 document, find_one(document, "for definitions"), "DefinedTerm"
             )
 
+    def it_treats_bookmark_names_as_case_insensitive(self):
+        document = docx.Document()
+        document.add_paragraph("first second")
+        create_bookmark(document, find_one(document, "first"), "DefinedTerm")
+
+        with pytest.raises(UnsupportedStructureError, match="already exists"):
+            create_bookmark(document, find_one(document, "second"), "definedterm")
+
     def it_validates_word_legal_names(self):
         document = _doc()
         span = find_one(document, "perfectly ordinary")
@@ -97,6 +107,44 @@ class DescribeBookmarks:
         add_reference_field(paragraph, bookmark="DefinedTerm")
         with pytest.raises(UnsupportedStructureError, match="referenced by"):
             delete_bookmark(document, "DefinedTerm")
+
+    def it_refuses_deleting_an_implicitly_referenced_bookmark(self):
+        document = _doc(BOOKMARKS)
+        field = OxmlElement("w:fldSimple")
+        field.set(qn("w:instr"), " DefinedTerm \\* MERGEFORMAT ")
+        document.add_paragraph()._p.append(field)
+
+        with pytest.raises(UnsupportedStructureError, match="referenced by"):
+            delete_bookmark(document, "DefinedTerm")
+
+    def it_never_treats_quote_literal_text_as_a_bookmark_reference(self):
+        document = _doc(BOOKMARKS)
+        field = OxmlElement("w:fldSimple")
+        instruction = ' QUOTE "literal REF DefinedTerm text" '
+        field.set(qn("w:instr"), instruction)
+        document.add_paragraph()._p.append(field)
+
+        delete_bookmark(document, "DefinedTerm")
+
+        assert field.get(qn("w:instr")) == instruction
+
+    def it_ignores_a_reference_to_a_different_bookmark(self):
+        document = _doc(BOOKMARKS)
+        field = OxmlElement("w:fldSimple")
+        field.set(qn("w:instr"), " REF OtherBookmark ")
+        document.add_paragraph()._p.append(field)
+
+        delete_bookmark(document, "DefinedTerm")
+
+    def it_does_not_mistake_an_embed_field_for_an_implicit_reference(self):
+        document = docx.Document()
+        document.add_paragraph("embedded")
+        create_bookmark(document, find_one(document, "embedded"), "EMBED")
+        field = OxmlElement("w:fldSimple")
+        field.set(qn("w:instr"), " EMBED Word.Document.12 ")
+        document.add_paragraph()._p.append(field)
+
+        delete_bookmark(document, "EMBED")
 
     def it_refuses_unknown_names(self):
         with pytest.raises(TargetNotFoundError):

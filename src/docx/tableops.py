@@ -47,6 +47,25 @@ _TBL = qn("w:tbl")
 _TC = qn("w:tc")
 _SDT = qn("w:sdt")
 _W_VAL = qn("w:val")
+_FLD_CHAR = qn("w:fldChar")
+
+
+def _refuse_whole_cell_semantics(tc) -> None:
+    """Refuse semantics that may begin/end outside the chosen paragraph."""
+    from docx.revision import _MARKUP_SCAN_TAGS
+
+    if (
+        next(tc.iter(_FLD_CHAR), None) is not None
+        or next(tc.iter(qn("w:fldSimple")), None) is not None
+    ):
+        raise UnsupportedStructureError(
+            "cell contains a Word field; update its field/result explicitly"
+        )
+    revision = next((node for node in tc.iter() if node.tag in _MARKUP_SCAN_TAGS), None)
+    if revision is not None:
+        raise UnsupportedStructureError(
+            "cell contains pending revision markup; resolve it before replacing the cell"
+        )
 
 
 def _cell_is_merged(tc) -> bool:
@@ -193,12 +212,14 @@ def _cell_at(table: "Table", row: int, column: int) -> "_Cell":
     rows = table.rows
     if not 0 <= row < len(rows):
         raise TargetNotFoundError(f"row {row} does not exist (0..{len(rows) - 1})")
-    cells = rows[row].cells
-    if not 0 <= column < len(cells):
+    row_proxy = rows[row]
+    offset = column - row_proxy.grid_cols_before
+    cells = row_proxy.cells
+    if offset < 0 or offset >= len(cells):
         raise TargetNotFoundError(
-            f"column {column} does not exist (0..{len(cells) - 1})"
+            f"layout-grid column {column} has no cell in row {row}"
         )
-    return cells[column]
+    return cells[offset]
 
 
 def update_cell(
@@ -226,6 +247,7 @@ def update_cell(
     _refuse_if_protected(document, "update a table cell")
     cell = _cell_at(table, row, column)
     _refuse_complex_cell(cell._tc, row=row, column=column)
+    _refuse_whole_cell_semantics(cell._tc)
 
     populated = [p for p in cell.paragraphs if p.text]
     if len(populated) > 1:
@@ -252,6 +274,11 @@ def update_cell(
         )
     atoms = [atom for atom in all_atoms if atom.tag == _T]
     if not atoms:
+        if next(cell._tc.iter(_SDT), None) is not None:
+            raise UnsupportedStructureError(
+                "empty cell contains a content control; set it through"
+                " Control.set_value() instead"
+            )
         return _fill_empty_cell(
             document, story, target_paragraph, new_text,
             tracked=tracked, author=author, date=date,

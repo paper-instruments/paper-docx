@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import copy
 import io
-import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
@@ -296,6 +295,9 @@ def _compose(
     )
 
     report = CompositionReport()
+    has_fields = any(
+        True for element in range_elements for _node in element.iter(_FLD_SIMPLE, qn("w:fldChar"))
+    )
     # ALL refusal conditions run before any mutation (refusal atomicity):
     # importing styles/numbering/media first would leave orphaned
     # definitions behind when the destination anchor turns out invalid
@@ -312,6 +314,7 @@ def _compose(
         root = next(r for s, r in _story_elements_of(document) if s == story)
         _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
     _refuse_malformed_numeric_ids(document, range_elements)
+    _preflight_bookmark_references(source, range_elements)
     _preflight_relationships(source, range_elements)
     chained_definitions = _chained_source_definitions(source, range_elements)
     numbering_plan = _preflight_numbering(document, source, range_elements + chained_definitions)
@@ -334,6 +337,10 @@ def _compose(
 
     _pad_adjacent_tables(anchor_p, clones)
     _insert_after(anchor_p, clones)
+    if has_fields:
+        from docx.fields import _set_update_fields_on_open
+
+        _set_update_fields_on_open(document)
     report.inserted_blocks = len(clones)
     report.declared_parts = [
         "word/document.xml",
@@ -355,9 +362,10 @@ def _story_elements_of(document: "Document"):
 def _chained_source_definitions(source: "Document", elements: "List[_Element]") -> "List[_Element]":
     """The source style definitions the copied range pulls in (transitive
     basedOn/link/next chains) — they carry numbering references too."""
-    _root, by_id, _by_name = _style_definitions(source)
+    _root, by_id, by_name = _style_definitions(source)
+    referenced = _referenced_style_ids(elements) + _styleref_style_ids(elements, by_name)
     return [
-        by_id[style_id] for style_id in _expand_style_chain(by_id, _referenced_style_ids(elements))
+        by_id[style_id] for style_id in _expand_style_chain(by_id, referenced)
     ]
 
 
@@ -388,6 +396,58 @@ def _preflight_relationships(source: "Document", range_elements: "List[_Element]
                     _refuse_relationship(node, attribute, r_id, rel, "external hyperlink")
                 expected = "linked image" if attribute == _R_LINK else None
                 _refuse_relationship(node, attribute, r_id, rel, expected)
+
+
+def _preflight_bookmark_references(
+    source: "Document", range_elements: "List[_Element]"
+) -> None:
+    """Refuse references whose bookmark definition is not copied with them."""
+    from docx._fieldcode import bookmark_operands
+    from docx.bookmarks import _iter_field_instructions, list_bookmarks
+
+    bookmarks = list_bookmarks(source)
+    names_by_fold: "Dict[str, set[str]]" = {}
+    for bookmark in bookmarks:
+        names_by_fold.setdefault(bookmark.name.casefold(), set()).add(bookmark.name)
+    ambiguous = sorted(names for names in names_by_fold.values() if len(names) > 1)
+    if ambiguous:
+        raise UnsupportedStructureError(
+            f"source bookmark names are case-ambiguous: {ambiguous}; nothing was changed"
+        )
+
+    starts = {}
+    ends = set()
+    for element in range_elements:
+        for start in element.iter(_BOOKMARK_START):
+            starts[start.get(_ID)] = start.get(_NAME) or ""
+        ends.update(end.get(_ID) for end in element.iter(_BOOKMARK_END))
+    copied = {
+        name.casefold() for bookmark_id, name in starts.items() if bookmark_id in ends
+    }
+    known_names = tuple(bookmark.name for bookmark in bookmarks)
+
+    def validate_instruction(instruction: str) -> None:
+        for operand in bookmark_operands(instruction, implicit_names=known_names):
+            if operand.value.casefold() not in copied:
+                raise UnsupportedStructureError(
+                    f"the source range references bookmark {operand.value!r}, but its"
+                    " definition is outside the copied range. Nothing was changed"
+                )
+
+    for element in range_elements:
+        for instruction, _nodes in _iter_field_instructions(element):
+            validate_instruction(instruction)
+        for simple_field in element.iter(_FLD_SIMPLE):
+            instruction = simple_field.get(_INSTR)
+            if instruction:
+                validate_instruction(instruction)
+        for hyperlink in element.iter(_HYPERLINK):
+            anchor = hyperlink.get(qn("w:anchor"))
+            if anchor and anchor.casefold() not in copied:
+                raise UnsupportedStructureError(
+                    f"the source range links to bookmark {anchor!r}, but its definition"
+                    " is outside the copied range. Nothing was changed"
+                )
 
 
 def _refuse_relationship(node, attribute, r_id, rel, expected=None) -> None:
@@ -500,10 +560,10 @@ def _refuse_malformed_numeric_ids(document: "Document", range_elements: "List[_E
 
 def _style_definitions(
     document: "Document",
-) -> "Tuple[_Element, Dict[str, _Element], Dict[str, _Element]]":
+) -> "Tuple[_Element, Dict[str, _Element], Dict[tuple, _Element]]":
     root = document.styles.element
     by_id: "Dict[str, _Element]" = {}
-    by_name: "Dict[str, _Element]" = {}
+    by_name: "Dict[tuple, _Element]" = {}
     for style in root.findall(qn("w:style")):
         style_id = style.get(qn("w:styleId"))
         name_element = style.find(qn("w:name"))
@@ -511,7 +571,7 @@ def _style_definitions(
         if style_id:
             by_id[style_id] = style
         if name:
-            by_name[name] = style
+            by_name[(name.casefold(), style.get(qn("w:type")) or "paragraph")] = style
     return root, by_id, by_name
 
 
@@ -524,6 +584,28 @@ def _referenced_style_ids(clones: "List[_Element]") -> "List[str]":
                 if value and value not in seen:
                     seen.append(value)
     return seen
+
+
+def _styleref_style_ids(elements: "List[_Element]", source_by_name) -> "List[str]":
+    from docx._fieldcode import command_operand
+    from docx.bookmarks import _iter_field_instructions
+
+    style_ids = []
+    instructions = []
+    for element in elements:
+        instructions.extend(text for text, _nodes in _iter_field_instructions(element))
+        instructions.extend(
+            field.get(_INSTR) for field in element.iter(_FLD_SIMPLE) if field.get(_INSTR)
+        )
+    for instruction in instructions:
+        operand = command_operand(instruction, "STYLEREF")
+        definition = (
+            source_by_name.get((operand.value.casefold(), "paragraph")) if operand else None
+        )
+        style_id = definition.get(qn("w:styleId")) if definition is not None else None
+        if style_id and style_id not in style_ids:
+            style_ids.append(style_id)
+    return style_ids
 
 
 def _expand_style_chain(source_by_id: "Dict[str, _Element]", wanted: "List[str]") -> "List[str]":
@@ -571,8 +653,9 @@ def _reconcile_styles(
     """Reconcile and remap; returns the IMPORTED definitions (their
     numbering references still need remapping by the caller)."""
     destination_root, destination_by_id, destination_by_name = _style_definitions(document)
-    _root, source_by_id, _source_by_name = _style_definitions(source)
-    wanted = _expand_style_chain(source_by_id, _referenced_style_ids(clones))
+    _root, source_by_id, source_by_name = _style_definitions(source)
+    referenced = _referenced_style_ids(clones) + _styleref_style_ids(clones, source_by_name)
+    wanted = _expand_style_chain(source_by_id, referenced)
     style_map: "Dict[str, str]" = {}
     to_import: "List[Tuple[str, _Element]]" = []
     taken_ids = set(destination_by_id)  # incl. ids allocated THIS batch
@@ -580,7 +663,8 @@ def _reconcile_styles(
         definition = source_by_id[style_id]
         name_element = definition.find(qn("w:name"))
         name = name_element.get(_VAL) if name_element is not None else style_id
-        existing = destination_by_name.get(name)
+        style_type = definition.get(qn("w:type")) or "paragraph"
+        existing = destination_by_name.get((name.casefold(), style_type))
         if existing is not None:
             if mode == "match_by_name":
                 style_map[style_id] = existing.get(qn("w:styleId"))
@@ -591,7 +675,7 @@ def _reconcile_styles(
             # import_renamed: clone under a fresh id AND name
             new_id = _fresh_style_id(taken_ids, style_id)
             taken_ids.add(new_id)
-            new_name = _fresh_style_name(destination_by_name, name)
+            new_name = _fresh_style_name(destination_by_name, name, style_type)
             style_map[style_id] = new_id
             report.renamed_styles[name] = new_name
             to_import.append((new_id, _renamed_clone(definition, new_id, new_name)))
@@ -618,7 +702,35 @@ def _reconcile_styles(
                 if value in style_map and style_map[value] != value:
                     node.set(_VAL, style_map[value])
     report.style_map = style_map
+    if report.renamed_styles:
+        _remap_styleref_fields(clones, report.renamed_styles)
     return [definition for _new_id, definition in to_import]
+
+
+def _remap_styleref_fields(elements: "List[_Element]", renames: "Dict[str, str]") -> None:
+    from docx._fieldcode import rewrite_command_operand
+    from docx.bookmarks import _iter_field_instructions
+
+    for element in elements:
+        for instruction, nodes in _iter_field_instructions(element):
+            rewritten = rewrite_command_operand(instruction, "STYLEREF", renames)
+            if rewritten != instruction:
+                offset = 0
+                for position, node in enumerate(nodes):
+                    width = len(node.text or "")
+                    node.text = (
+                        rewritten[offset:]
+                        if position == len(nodes) - 1
+                        else rewritten[offset : offset + width]
+                    )
+                    offset += width
+        for simple_field in element.iter(_FLD_SIMPLE):
+            instruction = simple_field.get(_INSTR)
+            if instruction:
+                simple_field.set(
+                    _INSTR,
+                    rewrite_command_operand(instruction, "STYLEREF", renames),
+                )
 
 
 def _renamed_clone(definition: "_Element", new_id: str, new_name: Optional[str]) -> "_Element":
@@ -640,10 +752,12 @@ def _fresh_style_id(taken_ids, base: str) -> str:
     return candidate
 
 
-def _fresh_style_name(destination_by_name: "Dict[str, _Element]", base: str) -> str:
+def _fresh_style_name(
+    destination_by_name: "Dict[tuple, _Element]", base: str, style_type: str
+) -> str:
     candidate = f"{base} (imported)"
     counter = 1
-    while candidate in destination_by_name:
+    while (candidate.casefold(), style_type) in destination_by_name:
         counter += 1
         candidate = f"{base} (imported {counter})"
     return candidate
@@ -702,6 +816,17 @@ def _preflight_numbering(
             )
         source_abstract_id = source_abstract_refs[source_num_id]
         source_abstract = source_abstracts[source_abstract_id]
+        if (
+            next(
+                source_abstract.iter(qn("w:numStyleLink"), qn("w:styleLink")),
+                None,
+            )
+            is not None
+        ):
+            raise UnsupportedStructureError(
+                f"source numbering id {source_num_id} depends on a linked numbering"
+                " style that composition cannot reconcile. Nothing was changed"
+            )
         if any(source_abstract.iter(qn("w:lvlPicBulletId"))):
             raise UnsupportedStructureError(
                 f"source numbering id {source_num_id} uses a picture bullet;"
@@ -851,7 +976,11 @@ def _remap_numbering(
         num_clone.set(qn("w:numId"), str(remap.destination_num_id))
         new_ref = num_clone.find(qn("w:abstractNumId"))
         new_ref.set(_VAL, str(remap.destination_abstract_id))
-        destination_root.append(num_clone)
+        cleanup = destination_root.find(qn("w:numIdMacAtCleanup"))
+        if cleanup is not None:
+            cleanup.addprevious(num_clone)
+        else:
+            destination_root.append(num_clone)
         numbering_map[remap.source_num_id] = remap.destination_num_id
     for clone in clones:
         for num_id_element in clone.iter(qn("w:numId")):
@@ -930,12 +1059,12 @@ def _reconcile_bookmarks(
 ) -> None:
     from docx.story import _story_elements
 
-    existing_names = set()
+    existing_names_folded = set()
     max_id = 0
     for _story, root in _story_elements(document):
         for start in root.iter(_BOOKMARK_START):
             if start.get(_NAME):
-                existing_names.add(start.get(_NAME))
+                existing_names_folded.add(start.get(_NAME).casefold())
             max_id = max(max_id, int(start.get(_ID) or 0))
         for end in root.iter(_BOOKMARK_END):
             max_id = max(max_id, int(end.get(_ID) or 0))
@@ -957,13 +1086,13 @@ def _reconcile_bookmarks(
             id_map[old_id] = str(next_id)
             start.set(_ID, str(next_id))
             next_id += 1
-            if name in existing_names:
-                new_name = _fresh_bookmark_name(existing_names, name)
+            if name.casefold() in existing_names_folded:
+                new_name = _fresh_bookmark_name(existing_names_folded, name)
                 renames[name] = new_name
                 start.set(_NAME, new_name)
-                existing_names.add(new_name)
+                existing_names_folded.add(new_name.casefold())
             else:
-                existing_names.add(name)
+                existing_names_folded.add(name.casefold())
         for end in list(clone.iter(_BOOKMARK_END)):
             old_id = end.get(_ID)
             if old_id in id_map:
@@ -1003,7 +1132,7 @@ def _reconcile_bookmarks(
     report.bookmarks_renamed = renames
 
 
-def _fresh_bookmark_name(existing: set, base: str) -> str:
+def _fresh_bookmark_name(existing_folded: set, base: str) -> str:
     # Imported names are authored by this package, so they must obey Word's
     # public bookmark grammar even when the source name did not.
     stem = "".join(char if char == "_" or char.isalnum() else "_" for char in base)
@@ -1013,7 +1142,7 @@ def _fresh_bookmark_name(existing: set, base: str) -> str:
     while True:
         suffix = "_imported" if counter == 1 else f"_imported{counter}"
         candidate = f"{stem[: 40 - len(suffix)]}{suffix}"
-        if candidate not in existing:
+        if candidate.casefold() not in existing_folded:
             return candidate
         counter += 1
 
@@ -1025,25 +1154,13 @@ def _remap_field_refs(clones: "List[_Element]", renames: "Dict[str, str]") -> No
     All renames apply SIMULTANEOUSLY (one alternation pass — sequential
     substitution chains A->B then B->C), and complex-field instructions are
     matched on their CONCATENATION across split w:instrText runs."""
+    from docx._fieldcode import rewrite_bookmark_operands
     from docx.bookmarks import _iter_field_instructions
 
     lookup = {old.casefold(): new for old, new in renames.items()}
-    alternatives = "|".join(re.escape(old) for old in sorted(renames, key=len, reverse=True))
-    reference_operand = re.compile(
-        rf"(?P<prefix>\b(?:PAGEREF|NOTEREF|REF)\s+)"
-        rf'(?:"(?P<quoted>{alternatives})"|(?P<bare>{alternatives}))'
-        r"(?=\s|$)",
-        re.IGNORECASE,
-    )
 
     def rewrite(text: str) -> str:
-        def replacement(match) -> str:
-            old = match.group("quoted") or match.group("bare")
-            new = lookup[old.casefold()]
-            operand = f'"{new}"' if match.group("quoted") is not None else new
-            return f"{match.group('prefix')}{operand}"
-
-        return reference_operand.sub(replacement, text)
+        return rewrite_bookmark_operands(text, renames)
 
     def redistribute(nodes: "List[_Element]", instruction: str) -> None:
         """Write a rewritten concatenation back across its existing nodes."""

@@ -404,7 +404,12 @@ class Span:
         if date is not None and not isinstance(date, dt.datetime):
             raise TypeError("date must be a datetime or None")
         _refuse_if_protected(self._document, "anchor a comment")
-        if self.story != "word/document.xml":
+        main_story = next(
+            story
+            for story, root in _story_elements(self._document)
+            if root is self._document.element
+        )
+        if self.story != main_story:
             raise UnsupportedStructureError(
                 "comments anchor in the main document story"
                 f" (span is in {self.story})"
@@ -415,9 +420,17 @@ class Span:
                 raise UnsupportedStructureError(
                     "span text is not inside runs; cannot anchor a comment"
                 )
-        from docx.commentops import _preflight_comment_add
+        from docx.commentops import _preflight_comment_add, _preflight_comment_range
 
         _preflight_comment_add(self._document)
+        runs = []
+        for atom in self._atoms:
+            if atom.run is not None and not any(atom.run is run for run in runs):
+                runs.append(atom.run)
+        if runs:
+            _preflight_comment_range(
+                self._document, runs[0], runs[-1], operation="anchor a comment"
+            )
         with rollback_on_error(self._document, self):
             self._isolate_edge_runs()
             runs = []
@@ -759,6 +772,21 @@ class Span:
                 "span crosses a content-control boundary; edit inside or"
                 " outside the control, not across it"
             )
+        from docx.controls import (
+            _refuse_control_write_restrictions,
+            _validate_span_surface_edit,
+        )
+
+        controls = []
+        for atom in self._atoms:
+            current = atom.element.getparent()
+            while current is not None:
+                if current.tag == _SDT and not any(current is item for item in controls):
+                    controls.append(current)
+                current = current.getparent()
+        for control in controls:
+            _validate_span_surface_edit(control)
+            _refuse_control_write_restrictions(control)
         # both modes: an untracked replace crossing a hyperlink boundary
         # would silently move text into or out of the link
         link_scopes = {
@@ -1486,30 +1514,39 @@ def replace_all(
         raise ValueError("author is required when tracked=True")
     _validate_writable_text(new_text, argument="new_text")
     _refuse_if_protected(document, "replace text")
-    spans = find_text(document, needle, story=story, view=view)
+    spans = [
+        span
+        for span in find_text(document, needle, story=story, view=view)
+        if span.text != new_text
+    ]
     by_story: "dict[str, List[Span]]" = {}
     for span in spans:
         by_story.setdefault(span.story, []).append(span)
     results: "List[ReplaceResult]" = []
     refused: "List[dict]" = []
-    for story_name in sorted(by_story):
-        ordered = sorted(
-            by_story[story_name], key=lambda s: s._norm_start, reverse=True
-        )
-        for span in ordered:
-            try:
-                results.append(
-                    span.replace(new_text, tracked=tracked, author=author, date=date)
-                )
-            except PaperRefusal as exc:
-                refused.append(
-                    {
-                        "story": span.story,
-                        "anchor": span.anchor.to_dict(),
-                        "error": type(exc).__name__,
-                        "message": str(exc),
-                    }
-                )
+    with rollback_on_error(document):
+        for story_name in sorted(by_story):
+            ordered = sorted(
+                by_story[story_name], key=lambda s: s._norm_start, reverse=True
+            )
+            for span in ordered:
+                try:
+                    results.append(
+                        span.replace(new_text, tracked=tracked, author=author, date=date)
+                    )
+                except TargetNotFoundError:
+                    # A stale target invalidates the captured batch. The outer
+                    # transaction restores replacements already applied.
+                    raise
+                except PaperRefusal as exc:
+                    refused.append(
+                        {
+                            "story": span.story,
+                            "anchor": span.anchor.to_dict(),
+                            "error": type(exc).__name__,
+                            "message": str(exc),
+                        }
+                    )
     return ReplaceAllResult(
         replaced_count=len(results), results=tuple(results), refused=tuple(refused)
     )
