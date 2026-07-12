@@ -120,7 +120,7 @@ and model priors.
 
 - GitHub repository / PyPI distribution: **`paper-docx`**
 - Python import: **`docx`**
-- Fork sentinel: `docx.__paper_version__ = "0.1.1"`
+- Fork sentinel: `docx.__paper_version__ = "0.1.2"`
 
 ## Installation
 

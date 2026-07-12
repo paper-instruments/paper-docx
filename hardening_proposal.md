@@ -8,9 +8,9 @@ than the full research audit. The priority is preventing lost work, silent
 document damage, incorrect edits, and unreliable review artifacts in contracts,
 transaction documents, reports, and other long-lived Word files.
 
-The `0.1.1` candidate remains the baseline. The work below should be delivered
-as small, independently reviewed changes after that release rather than as one
-large hardening patch.
+The unmerged `0.1.1` candidate is the baseline. The `0.1.2` candidate combines
+that work with the priorities below so the safety contract can be reviewed and
+released as one coherent change.
 
 ## Priority findings
 
@@ -152,11 +152,10 @@ Recommended contract:
 
 ## Delivery approach
 
-Each priority should be implemented as a separate PR with a narrow public
-contract and regression fixtures that demonstrate the user-visible failure.
-Tests should include successful round trips, typed refusals, forced late
-failures, package reopen checks, and LibreOffice load smoke where the saved file
-is affected.
+Each priority has a narrow public contract and regression fixtures that
+demonstrate the user-visible failure. Tests include successful round trips,
+typed refusals, forced late failures, package reopen checks, and LibreOffice
+load smoke where the saved file is affected.
 
 The work should not expand the public API unless a new return value is necessary
 to report provenance, remapping, or refusal details. Existing import names,
@@ -169,4 +168,4 @@ This proposal excludes hardening that only concerns contrived XML shapes,
 resource limits with no plausible Office producer, cosmetic API consistency,
 internal refactoring, speculative schema coverage, and checks that duplicate an
 existing guarantee without preventing a practical failure. Those findings can
-remain in the research branch and should not block `0.1.1`.
+remain in the research branch and do not block `0.1.2`.
