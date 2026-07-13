@@ -1,23 +1,27 @@
 [build-system]
-requires = ["setuptools>=61.0.0"]
+requires = ["setuptools==80.9.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "python-docx"
-authors = [{name = "Steve Canny", email = "stcanny@gmail.com"}]
+name = "paper-docx"
+dynamic = ["version"]
+authors = [
+    {name = "Steve Canny", email = "stcanny@gmail.com"},
+    {name = "Paper Instruments, Inc."},
+]
+maintainers = [{name = "Paper Instruments, Inc."}]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
-    "License :: OSI Approved :: MIT License",
     "Operating System :: OS Independent",
     "Programming Language :: Python",
     "Programming Language :: Python :: 3",
-    "Programming Language :: Python :: 3.7",
-    "Programming Language :: Python :: 3.8",
     "Programming Language :: Python :: 3.9",
     "Programming Language :: Python :: 3.10",
     "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
     "Topic :: Office/Business :: Office Suites",
     "Topic :: Software Development :: Libraries",
 ]
@@ -26,33 +30,39 @@ dependencies = [
     "typing_extensions>=4.9.0",
 ]
 description = "Create, read, and update Microsoft Word .docx files."
-dynamic = ["version"]
 keywords = ["docx", "office", "openxml", "word"]
-license = { text = "MIT" }
+license = "MIT"
 readme = "README.md"
 requires-python = ">=3.9"
 
 [dependency-groups]
 dev = [
-    "Jinja2==2.11.3",
-    "MarkupSafe==0.23",
-    "Sphinx==1.8.6",
-    "alabaster<0.7.14",
+    "Jinja2>=3.1.6,<4; python_version >= '3.10'",
+    "MarkupSafe>=2.1.3,<4; python_version >= '3.10'",
+    "Sphinx>=7.4.7,<8; python_version >= '3.10'",
+    "alabaster>=0.7.14,<0.8; python_version >= '3.10'",
     "behave>=1.2.6",
     "pyparsing>=3.2.3",
     "pyright>=1.1.401",
     "pytest>=8.4.0",
     "ruff>=0.11.13",
-    "tox>=4.26.0",
-    "twine>=6.1.0",
+    "tox>=4.26.0; python_version >= '3.10'",
+    "twine>=6.1.0; python_version >= '3.10'",
     "types-lxml-multi-subclass>=2025.3.30",
 ]
 
 [project.urls]
-Changelog = "https://github.com/python-openxml/python-docx/blob/master/HISTORY.rst"
-Documentation = "https://python-docx.readthedocs.org/en/latest/"
-Homepage = "https://github.com/python-openxml/python-docx"
-Repository = "https://github.com/python-openxml/python-docx"
+Changelog = "https://github.com/The-LLM-Data-Company/paper-docx/blob/main/HISTORY.rst"
+Documentation = "https://github.com/The-LLM-Data-Company/paper-docx"
+Homepage = "https://github.com/The-LLM-Data-Company/paper-docx"
+Issues = "https://github.com/The-LLM-Data-Company/paper-docx/issues"
+Repository = "https://github.com/The-LLM-Data-Company/paper-docx"
+
+[project.scripts]
+paper-docx-doctor = "paper_docx_doctor:main"
+
+[tool.setuptools.dynamic]
+version = {attr = "docx._version.__paper_version__"}
 
 [tool.pyright]
 include = ["src/docx", "tests"]
@@ -121,7 +131,3 @@ select = [
 [tool.ruff.lint.isort]
 known-first-party = ["docx"]
 known-local-folder = ["helpers"]
-
-[tool.setuptools.dynamic]
-version = {attr = "docx.__version__"}
-

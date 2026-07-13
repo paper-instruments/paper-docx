@@ -20,6 +20,7 @@ from ..unitutil.mock import (
     Mock,
     call,
     class_mock,
+    function_mock,
     instance_mock,
     loose_mock,
     method_mock,
@@ -120,14 +121,14 @@ class DescribeOpcPackage:
         assert related_part is related_part_
 
     def it_can_save_to_a_pkg_file(
-        self, pkg_file_: Mock, PackageWriter_: Mock, parts_prop_: Mock, parts_: list[Mock]
+        self, pkg_file_: Mock, atomic_stream_write_: Mock, parts_prop_: Mock, parts_: list[Mock]
     ):
         parts_prop_.return_value = parts_
         pkg = OpcPackage()
         pkg.save(pkg_file_)
         for part in parts_:
             part.before_marshal.assert_called_once_with()
-        PackageWriter_.write.assert_called_once_with(pkg_file_, pkg.rels, parts_)
+        atomic_stream_write_.assert_called_once_with(pkg_file_, pkg.rels, parts_)
 
     def it_provides_access_to_the_core_properties(self, core_props_fixture):
         opc_package, core_properties_ = core_props_fixture
@@ -222,8 +223,8 @@ class DescribeOpcPackage:
         return instance_mock(request, PackURI)
 
     @pytest.fixture
-    def PackageWriter_(self, request: FixtureRequest):
-        return class_mock(request, "docx.opc.package.PackageWriter")
+    def atomic_stream_write_(self, request: FixtureRequest):
+        return function_mock(request, "docx.opc.package._atomic_stream_write")
 
     @pytest.fixture
     def PartFactory_(self, request: FixtureRequest):

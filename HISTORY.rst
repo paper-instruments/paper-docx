@@ -3,6 +3,23 @@
 Release History
 ---------------
 
+0.1.2 (unreleased)
+++++++++++++++++++
+
+- Refuse unsupported comparisons instead of producing lossy redlines.
+- Validate revision, editing, composition, and package operations before mutation.
+- Roll back compound composition, review, scrub, and comment operations after late failures.
+- Reject ambiguous or unsafe ZIP packages with bounded reads.
+- Write deterministic ZIP metadata so identical saves are byte-identical.
+- Verify distribution identity and strengthen test and release gates.
+- Reject stale or structurally ambiguous text, comment, bookmark, field, and content-control edits.
+- Preserve bookmark, style, numbering, relationship, and field dependencies during composition.
+- Address merged and offset table cells by their visible Word layout grid.
+- Stage and validate complete OPC packages before replacing files or writing output streams.
+- Keep inherited comment authoring, protected compare, and Windows saves within the safety contract.
+- Normalize producer variants in protection, numbering, comment threading, and scrub operations.
+
+
 1.2.0 (2025-06-16)
 ++++++++++++++++++
 

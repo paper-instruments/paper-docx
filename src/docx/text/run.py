@@ -4,9 +4,11 @@ from __future__ import annotations
 
 from typing import IO, TYPE_CHECKING, Iterator, cast
 
+from docx._transaction import rollback_xml_on_error
 from docx.drawing import Drawing
 from docx.enum.style import WD_STYLE_TYPE
 from docx.enum.text import WD_BREAK
+from docx.errors import UnsupportedStructureError
 from docx.oxml.drawing import CT_Drawing
 from docx.oxml.text.pagebreak import CT_LastRenderedPageBreak
 from docx.shape import InlineShape
@@ -178,12 +180,25 @@ class Run(StoryChild):
 
         `comment_id` identfies the comment that references this range.
         """
-        # -- insert `w:commentRangeStart` with `comment_id` before this (first) run --
-        self._r.insert_comment_range_start_above(comment_id)
+        root = self._r.getroottree().getroot()
+        if root is not last_run._r.getroottree().getroot():
+            raise UnsupportedStructureError(
+                "comment range runs belong to different documents; nothing was changed"
+            )
+        for element in root.iter():
+            if element is self._r:
+                break
+            if element is last_run._r:
+                raise UnsupportedStructureError(
+                    "comment range ends before it starts; nothing was changed"
+                )
+        with rollback_xml_on_error(root):
+            # -- insert `w:commentRangeStart` with `comment_id` before this (first) run --
+            self._r.insert_comment_range_start_above(comment_id)
 
-        # -- insert `w:commentRangeEnd` and `w:commentReference` run with `comment_id` after
-        # -- `last_run`
-        last_run._r.insert_comment_range_end_and_reference_below(comment_id)
+            # -- insert `w:commentRangeEnd` and `w:commentReference` run with `comment_id` after
+            # -- `last_run`
+            last_run._r.insert_comment_range_end_and_reference_below(comment_id)
 
     @property
     def style(self) -> CharacterStyle:

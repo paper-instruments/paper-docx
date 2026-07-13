@@ -18,6 +18,11 @@ class Relationships(Dict[str, "_Relationship"]):
         self._baseURI = baseURI
         self._target_parts_by_rId: dict[str, Any] = {}
 
+    def __delitem__(self, rId: str) -> None:
+        """Remove `rId` from both relationship indexes."""
+        super().__delitem__(rId)
+        self._target_parts_by_rId.pop(rId, None)
+
     def add_relationship(
         self, reltype: str, target: Part | str, rId: str, is_external: bool = False
     ) -> "_Relationship":

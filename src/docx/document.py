@@ -7,9 +7,11 @@ from __future__ import annotations
 
 from typing import IO, TYPE_CHECKING, Iterator, List, Sequence
 
+from docx._transaction import rollback_on_error
 from docx.blkcntnr import BlockItemContainer
 from docx.enum.section import WD_SECTION
 from docx.enum.text import WD_BREAK
+from docx.errors import UnsupportedStructureError
 from docx.section import Section, Sections
 from docx.shared import ElementProxy, Emu, Inches, Length
 from docx.text.run import Run
@@ -78,14 +80,26 @@ class Document(ElementProxy):
         runs = [runs] if isinstance(runs, Run) else runs
         first_run = runs[0]
         last_run = runs[-1]
+        if first_run.part is not self.part or last_run.part is not self.part:
+            raise UnsupportedStructureError(
+                "comment range runs do not belong to this document; nothing was changed"
+            )
 
-        # -- Note that comments can only appear in the document part --
-        comment = self.comments.add_comment(text=text, author=author, initials=initials)
+        from docx.commentops import _preflight_comment_range
 
-        # -- let the first run orchestrate placement of the comment range start and end --
-        first_run.mark_comment_range(last_run, comment.comment_id)
+        _preflight_comment_range(
+            self, first_run._r, last_run._r, operation="add a comment"
+        )
+        with rollback_on_error(self):
+            # -- Note that comments can only appear in the document part --
+            comment = self.comments.add_comment(
+                text=text, author=author, initials=initials
+            )
 
-        return comment
+            # -- let the first run orchestrate placement of the comment range start and end --
+            first_run.mark_comment_range(last_run, comment.comment_id)
+
+            return comment
 
     def add_heading(self, text: str = "", level: int = 1):
         """Return a heading paragraph newly added to the end of the document.
@@ -194,6 +208,54 @@ class Document(ElementProxy):
     def part(self) -> DocumentPart:
         """The |DocumentPart| object of this document."""
         return self._part
+
+    @property
+    def revisions(self):
+        """|Revisions| object enumerating tracked changes across all story parts.
+
+        paper-docx addition: a fresh snapshot on each access; supports
+        accept/reject of all revisions or filtered by author. See
+        `docx.revision`.
+        """
+        from docx.revision import Revisions
+
+        return Revisions(self)
+
+    def finalize(self, *, revisions: str = "accept"):
+        """Totally resolve every tracked revision, or refuse (typed) naming
+        what blocked it — never a file that looks final while markup remains.
+
+        paper-docx addition; see `docx.scrubbing.finalize`.
+        """
+        from docx.scrubbing import finalize
+
+        return finalize(self, revisions=revisions)
+
+    def scrub(
+        self,
+        *,
+        comments: bool = True,
+        metadata: bool = True,
+        track_changes_setting: bool = True,
+        rsids: bool = False,
+        hidden_text: bool = False,
+    ):
+        """Remove reviewing residue (comments, metadata, the track-changes
+        switch, optional RSIDs/hidden text); returns an itemized ScrubReport.
+        Document protection is reported, never removed.
+
+        paper-docx addition; see `docx.scrubbing.scrub`.
+        """
+        from docx.scrubbing import scrub
+
+        return scrub(
+            self,
+            comments=comments,
+            metadata=metadata,
+            track_changes_setting=track_changes_setting,
+            rsids=rsids,
+            hidden_text=hidden_text,
+        )
 
     def save(self, path_or_stream: str | IO[bytes]):
         """Save this document to `path_or_stream`.

@@ -64,6 +64,13 @@ class DescribeCommentsPart:
         )
         assert len(comments_part.element) == 0
 
+    def it_adds_a_comment_to_a_standalone_default_part(self):
+        comments_part = CommentsPart.default(Package())
+
+        comment = comments_part.comments.add_comment("standalone")
+
+        assert comment.text == "standalone"
+
     # -- fixtures --------------------------------------------------------------------------------
 
     @pytest.fixture

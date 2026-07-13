@@ -1,6 +1,14 @@
 """Low-level, read-only API to a serialized Open Packaging Convention (OPC) package."""
 
+from lxml import etree
+
+from docx._contenttypes import content_type_matches
+from docx._rels import is_relationship_type, is_xml_id
+from docx._zipguard import _parse_content_types
+from docx.errors import PackageLimitError
+from docx.opc.constants import CONTENT_TYPE as CT
 from docx.opc.constants import RELATIONSHIP_TARGET_MODE as RTM
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.opc.oxml import parse_xml
 from docx.opc.packuri import PACKAGE_URI, PackURI
 from docx.opc.phys_pkg import PhysPkgReader
@@ -20,11 +28,14 @@ class PackageReader:
     def from_file(pkg_file):
         """Return a |PackageReader| instance loaded with contents of `pkg_file`."""
         phys_reader = PhysPkgReader(pkg_file)
-        content_types = _ContentTypeMap.from_xml(phys_reader.content_types_xml)
-        pkg_srels = PackageReader._srels_for(phys_reader, PACKAGE_URI)
-        sparts = PackageReader._load_serialized_parts(phys_reader, pkg_srels, content_types)
-        phys_reader.close()
-        return PackageReader(content_types, pkg_srels, sparts)
+        try:
+            content_types = _ContentTypeMap.from_xml(phys_reader.content_types_xml)
+            pkg_srels = PackageReader._srels_for(phys_reader, PACKAGE_URI)
+            _validate_package_relationships(pkg_srels)
+            sparts = PackageReader._load_serialized_parts(phys_reader, pkg_srels, content_types)
+            return PackageReader(content_types, pkg_srels, sparts)
+        finally:
+            phys_reader.close()
 
     def iter_sparts(self):
         """Generate a 4-tuple `(partname, content_type, reltype, blob)` for each of the
@@ -47,7 +58,9 @@ class PackageReader:
         `phys_reader` accessible by walking the relationship graph starting with
         `pkg_srels`."""
         sparts = []
-        part_walker = PackageReader._walk_phys_parts(phys_reader, pkg_srels)
+        part_walker = PackageReader._walk_phys_parts(
+            phys_reader, pkg_srels, content_types=content_types
+        )
         for partname, blob, reltype, srels in part_walker:
             content_type = content_types[partname]
             spart = _SerializedPart(partname, content_type, reltype, blob, srels)
@@ -62,7 +75,7 @@ class PackageReader:
         return _SerializedRelationships.load_from_xml(source_uri.baseURI, rels_xml)
 
     @staticmethod
-    def _walk_phys_parts(phys_reader, srels, visited_partnames=None):
+    def _walk_phys_parts(phys_reader, srels, visited_partnames=None, content_types=None):
         """Generate a 4-tuple `(partname, blob, reltype, srels)` for each of the parts
         in `phys_reader` by walking the relationship graph rooted at srels."""
         if visited_partnames is None:
@@ -71,14 +84,34 @@ class PackageReader:
             if srel.is_external:
                 continue
             partname = srel.target_partname
-            if partname in visited_partnames:
+            if content_types is not None:
+                try:
+                    phys_reader.partname_for(partname)
+                except KeyError as exc:
+                    raise PackageLimitError(
+                        f"relationship {srel.rId!r} targets missing package part"
+                        f" {partname!s}"
+                    ) from exc
+                try:
+                    content_type = content_types[partname]
+                except KeyError as exc:
+                    raise PackageLimitError(
+                        f"relationship {srel.rId!r} targets {partname!s}, which has no"
+                        " declared content type"
+                    ) from exc
+                _validate_relationship_target_content_type(
+                    srel.reltype, content_type, partname
+                )
+            if str(partname).casefold() in {str(item).casefold() for item in visited_partnames}:
                 continue
             visited_partnames.append(partname)
             reltype = srel.reltype
             part_srels = PackageReader._srels_for(phys_reader, partname)
             blob = phys_reader.blob_for(partname)
             yield (partname, blob, reltype, part_srels)
-            next_walker = PackageReader._walk_phys_parts(phys_reader, part_srels, visited_partnames)
+            next_walker = PackageReader._walk_phys_parts(
+                phys_reader, part_srels, visited_partnames, content_types
+            )
             for partname, blob, reltype, srels in next_walker:
                 yield (partname, blob, reltype, srels)
 
@@ -108,6 +141,7 @@ class _ContentTypeMap:
     def from_xml(content_types_xml):
         """Return a new |_ContentTypeMap| instance populated with the contents of
         `content_types_xml`."""
+        _parse_content_types(content_types_xml)
         types_elm = parse_xml(content_types_xml)
         ct_map = _ContentTypeMap()
         for o in types_elm.overrides:
@@ -248,7 +282,149 @@ class _SerializedRelationships:
         """
         srels = _SerializedRelationships()
         if rels_item_xml is not None:
+            if isinstance(rels_item_xml, (bytes, str)):
+                _validate_relationship_records(rels_item_xml, baseURI)
             rels_elm = parse_xml(rels_item_xml)
+            seen_ids = set()
             for rel_elm in rels_elm.Relationship_lst:
-                srels._srels.append(_SerializedRelationship(baseURI, rel_elm))
+                serialized = _SerializedRelationship(baseURI, rel_elm)
+                if isinstance(serialized.rId, str) and not is_xml_id(serialized.rId):
+                    raise PackageLimitError(
+                        f"relationship Id {serialized.rId!r} is not a valid XML ID"
+                    )
+                if isinstance(serialized.rId, str) and serialized.rId in seen_ids:
+                    raise PackageLimitError(
+                        f"relationships for {baseURI!r} contain duplicate Id {serialized.rId!r}"
+                    )
+                if isinstance(serialized.rId, str):
+                    seen_ids.add(serialized.rId)
+                if isinstance(serialized.target_mode, str) and serialized.target_mode not in (
+                    RTM.INTERNAL,
+                    RTM.EXTERNAL,
+                ):
+                    raise PackageLimitError(
+                        f"relationship {serialized.rId!r} has invalid TargetMode"
+                    )
+                if not serialized.is_external:
+                    try:
+                        serialized.target_partname
+                    except (IndexError, TypeError, ValueError) as exc:
+                        raise PackageLimitError(
+                            f"relationship {serialized.rId!r} has an invalid target"
+                        ) from exc
+                srels._srels.append(serialized)
         return srels
+
+
+def _validate_relationship_records(blob, base_uri) -> None:
+    """Check relationship fields before the object model can normalize them."""
+    parser = etree.XMLParser(
+        load_dtd=False,
+        no_network=True,
+        resolve_entities=False,
+    )
+    try:
+        root = etree.fromstring(blob, parser)
+    except etree.XMLSyntaxError as exc:
+        raise PackageLimitError(f"relationships for {base_uri!r} are malformed") from exc
+    docinfo = root.getroottree().docinfo
+    if docinfo.doctype or docinfo.internalDTD is not None:
+        raise PackageLimitError(
+            f"relationships for {base_uri!r} contain a prohibited DTD"
+        )
+    relationships_tag = (
+        "{http://schemas.openxmlformats.org/package/2006/relationships}Relationships"
+    )
+    relationship_tag = (
+        "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
+    )
+    if root.tag != relationships_tag:
+        raise PackageLimitError(
+            f"relationships for {base_uri!r} have an unexpected root element"
+        )
+    seen = set()
+    for child in root:
+        if not isinstance(child.tag, str):
+            continue
+        if child.tag != relationship_tag:
+            raise PackageLimitError(
+                f"relationships for {base_uri!r} contain an unexpected element"
+            )
+        relationship_id = child.get("Id")
+        if not is_xml_id(relationship_id):
+            raise PackageLimitError(f"relationship Id {relationship_id!r} is not a valid XML ID")
+        if relationship_id in seen:
+            raise PackageLimitError(
+                f"relationships for {base_uri!r} contain duplicate Id {relationship_id!r}"
+            )
+        seen.add(relationship_id)
+        if not child.get("Type") or not child.get("Target"):
+            raise PackageLimitError(f"relationship {relationship_id!r} is missing Type or Target")
+        if child.get("TargetMode", RTM.INTERNAL) not in (RTM.INTERNAL, RTM.EXTERNAL):
+            raise PackageLimitError(f"relationship {relationship_id!r} has invalid TargetMode")
+
+
+def _validate_package_relationships(relationships) -> None:
+    """Reject ambiguous main-part declarations before object construction."""
+    office_documents = [
+        relationship
+        for relationship in relationships
+        if is_relationship_type(relationship.reltype, RT.OFFICE_DOCUMENT)
+    ]
+    if len(office_documents) > 1:
+        raise PackageLimitError(
+            "package contains multiple officeDocument relationships"
+        )
+    if office_documents and office_documents[0].is_external:
+        raise PackageLimitError("package officeDocument relationship is external")
+
+
+_OFFICE_DOCUMENT_CONTENT_TYPES = (
+    CT.WML_DOCUMENT_MAIN,
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml",
+    "application/vnd.ms-word.document.macroEnabled.main+xml",
+    "application/vnd.ms-word.template.macroEnabledTemplate.main+xml",
+    CT.PML_PRESENTATION_MAIN,
+    CT.PML_SLIDESHOW_MAIN,
+    CT.PML_TEMPLATE_MAIN,
+    "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml",
+    "application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml",
+    "application/vnd.ms-powerpoint.template.macroEnabled.main+xml",
+    CT.SML_SHEET_MAIN,
+    CT.SML_TEMPLATE_MAIN,
+    "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
+    "application/vnd.ms-excel.template.macroEnabled.main+xml",
+)
+_KNOWN_RELATIONSHIP_CONTENT_TYPES = (
+    (RT.CORE_PROPERTIES, (CT.OPC_CORE_PROPERTIES,)),
+    (RT.OFFICE_DOCUMENT, _OFFICE_DOCUMENT_CONTENT_TYPES),
+    (RT.STYLES, (CT.WML_STYLES, CT.SML_STYLES)),
+    (RT.SETTINGS, (CT.WML_SETTINGS,)),
+    (RT.NUMBERING, (CT.WML_NUMBERING,)),
+    (RT.FONT_TABLE, (CT.WML_FONT_TABLE,)),
+    (RT.HEADER, (CT.WML_HEADER,)),
+    (RT.FOOTER, (CT.WML_FOOTER,)),
+    (RT.FOOTNOTES, (CT.WML_FOOTNOTES,)),
+    (RT.ENDNOTES, (CT.WML_ENDNOTES,)),
+    (RT.COMMENTS, (CT.WML_COMMENTS, CT.PML_COMMENTS, CT.SML_COMMENTS)),
+    (RT.THEME, (CT.OFC_THEME,)),
+)
+
+
+def _validate_relationship_target_content_type(reltype, content_type, partname) -> None:
+    """Reject a known role pointing at a part with an incompatible media type."""
+    if is_relationship_type(reltype, RT.IMAGE):
+        if content_type.partition(";")[0].strip().casefold().startswith("image/"):
+            return
+        raise PackageLimitError(
+            f"image relationship targets {partname!s} with invalid content type {content_type!r}"
+        )
+    for expected_reltype, expected_types in _KNOWN_RELATIONSHIP_CONTENT_TYPES:
+        if not is_relationship_type(reltype, expected_reltype):
+            continue
+        if any(content_type_matches(content_type, item) for item in expected_types):
+            return
+        raise PackageLimitError(
+            f"relationship type {reltype!r} targets {partname!s} with invalid content type"
+            f" {content_type!r}"
+        )

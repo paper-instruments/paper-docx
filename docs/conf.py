@@ -20,7 +20,7 @@ import sys
 # documentation root, use os.path.abspath to make it absolute, like shown here.
 sys.path.insert(0, os.path.abspath(".."))
 
-from docx import __version__  # noqa
+from docx import __paper_version__  # noqa
 
 
 # -- General configuration ---------------------------------------------------
@@ -51,17 +51,19 @@ source_suffix = ".rst"
 master_doc = "index"
 
 # General information about the project.
-project = "python-docx"
-copyright = "2013, Steve Canny"
+# paper-docx is a strict-superset fork; upstream attribution is appended,
+# never erased (the same discipline as LICENSE).
+project = "paper-docx"
+copyright = "2013, Steve Canny (python-docx); 2026, Paper Instruments, Inc. (paper-docx fork)"
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
 # built documents.
 #
 # The short X.Y version.
-version = __version__
+version = __paper_version__
 # The full version, including alpha/beta/rc tags.
-release = __version__
+release = __paper_version__
 
 # A string of reStructuredText that will be included at the end of every source
 # file that is read. This is the right place to add substitutions that should
@@ -200,6 +202,99 @@ rst_epilog = """
 .. |True| replace:: :class:`True`
 
 .. |ValueError| replace:: :class:`ValueError`
+
+.. ---------------------------------------------------------------------------
+.. paper-docx additions. One substitution per fork type, so a docstring or
+.. fork page can cross-reference it (leading-dot form resolves against the
+.. autodoc'd page in docs/api/paper-*.rst). Grouped by module; functions are
+.. referenced inline, so only types appear here — same convention as above.
+.. ---------------------------------------------------------------------------
+
+.. |PaperRefusal| replace:: :exc:`.PaperRefusal`
+
+.. |PackageLimitError| replace:: :exc:`.PackageLimitError`
+
+.. |AmbiguousTargetError| replace:: :exc:`.AmbiguousTargetError`
+
+.. |TargetNotFoundError| replace:: :exc:`.TargetNotFoundError`
+
+.. |UnsupportedStructureError| replace:: :exc:`.UnsupportedStructureError`
+
+.. |BoundaryViolationError| replace:: :exc:`.BoundaryViolationError`
+
+.. |RelationshipPolicyError| replace:: :exc:`.RelationshipPolicyError`
+
+.. |DocumentProtectedError| replace:: :exc:`.DocumentProtectedError`
+
+.. |Anchor| replace:: :class:`.Anchor`
+
+.. |Block| replace:: :class:`.Block`
+
+.. |Outline| replace:: :class:`.Outline`
+
+.. |TableShape| replace:: :class:`.TableShape`
+
+.. |Span| replace:: :class:`.Span`
+
+.. |ReplaceResult| replace:: :class:`.ReplaceResult`
+
+.. |ReplaceAllResult| replace:: :class:`.ReplaceAllResult`
+
+.. |TextRun| replace:: :class:`.TextRun`
+
+.. |RichParagraph| replace:: :class:`.RichParagraph`
+
+.. |ListBlock| replace:: :class:`.ListBlock`
+
+.. |TableBlock| replace:: :class:`.TableBlock`
+
+.. |BlockEditResult| replace:: :class:`.BlockEditResult`
+
+.. |Revision| replace:: :class:`.Revision`
+
+.. |Revisions| replace:: :class:`.Revisions`
+
+.. |NumberingReport| replace:: :class:`.NumberingReport`
+
+.. |NumberingDefinition| replace:: :class:`.NumberingDefinition`
+
+.. |NumberingLevel| replace:: :class:`.NumberingLevel`
+
+.. |NumberedParagraph| replace:: :class:`.NumberedParagraph`
+
+.. |ControlInfo| replace:: :class:`.ControlInfo`
+
+.. |Control| replace:: :class:`.Control`
+
+.. |PackageDiff| replace:: :class:`.PackageDiff`
+
+.. |PartDiff| replace:: :class:`.PartDiff`
+
+.. |PatchSaveResult| replace:: :class:`.PatchSaveResult`
+
+.. |PackageDiagnosis| replace:: :class:`.PackageDiagnosis`
+
+.. |TextDiff| replace:: :class:`.TextDiff`
+
+.. |StoryTextDiff| replace:: :class:`.StoryTextDiff`
+
+.. |CompareResult| replace:: :class:`.CompareResult`
+
+.. |CompareFinding| replace:: :class:`.CompareFinding`
+
+.. |ScrubReport| replace:: :class:`.ScrubReport`
+
+.. |ProtectionStatus| replace:: :class:`.ProtectionStatus`
+
+.. |CompositionReport| replace:: :class:`.CompositionReport`
+
+.. |CompositionFinding| replace:: :class:`.CompositionFinding`
+
+.. |BookmarkInfo| replace:: :class:`.BookmarkInfo`
+
+.. |EffectiveFormat| replace:: :class:`.EffectiveFormat`
+
+.. |ResolvedValue| replace:: :class:`.ResolvedValue`
 """
 
 
@@ -307,7 +402,7 @@ html_sidebars = {"**": ["localtoc.html", "relations.html", "sidebarlinks.html", 
 # html_file_suffix = None
 
 # Output file base name for HTML help builder.
-htmlhelp_basename = "python-docxdoc"
+htmlhelp_basename = "paper-docxdoc"
 
 
 # -- Options for LaTeX output -----------------------------------------------
@@ -328,7 +423,13 @@ latex_elements = {
 #  author,
 #  documentclass [howto/manual]).
 latex_documents = [
-    ("index", "python-docx.tex", "python-docx Documentation", "Steve Canny", "manual"),
+    (
+        "index",
+        "paper-docx.tex",
+        "paper-docx Documentation",
+        "Steve Canny; Paper Instruments, Inc.",
+        "manual",
+    ),
 ]
 
 # The name of an image file (relative to this directory) to place at the top of
@@ -356,7 +457,15 @@ latex_documents = [
 
 # One entry per manual page. List of tuples
 # (source start file, name, description, authors, manual section).
-man_pages = [("index", "python-docx", "python-docx Documentation", ["Steve Canny"], 1)]
+man_pages = [
+    (
+        "index",
+        "paper-docx",
+        "paper-docx Documentation",
+        ["Steve Canny", "Paper Instruments, Inc."],
+        1,
+    )
+]
 
 # If true, show URL addresses after external links.
 # man_show_urls = False
@@ -370,11 +479,11 @@ man_pages = [("index", "python-docx", "python-docx Documentation", ["Steve Canny
 texinfo_documents = [
     (
         "index",
-        "python-docx",
-        "python-docx Documentation",
-        "Steve Canny",
-        "python-docx",
-        "One line description of project.",
+        "paper-docx",
+        "paper-docx Documentation",
+        "Steve Canny; Paper Instruments, Inc.",
+        "paper-docx",
+        "Create, inspect, edit, review, and compose Microsoft Word documents.",
         "Miscellaneous",
     ),
 ]
@@ -390,4 +499,4 @@ texinfo_documents = [
 
 
 # Example configuration for intersphinx: refer to the Python standard library.
-intersphinx_mapping = {"http://docs.python.org/3/": None}
+intersphinx_mapping = {"python": ("https://docs.python.org/3/", None)}

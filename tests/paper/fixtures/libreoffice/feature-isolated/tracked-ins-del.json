@@ -1,0 +1,49 @@
+{
+  "fixture": "tracked-ins-del.docx",
+  "provenance": {
+    "app": "LibreOffice",
+    "version": "26.2.4.2",
+    "notes": "Headless `soffice --convert-to docx` round-trip of generated/feature-isolated/tracked-ins-del.docx; LibreOffice re-authored every part, so markup shapes are LibreOffice's own. Authors, dates and delText survived verbatim."
+  },
+  "features": [
+    "tracked-insertion",
+    "tracked-deletion",
+    "two-authors",
+    "del-text"
+  ],
+  "ground_truth": {
+    "tracked_insertions": {
+      "count": 2,
+      "authors": [
+        "Alice Editor",
+        "Bob Reviewer"
+      ],
+      "dates": [
+        "2026-06-01T09:30:00Z",
+        "2026-06-02T14:45:00Z"
+      ],
+      "inserted_texts": [
+        "forty-seven",
+        "This whole sentence was inserted with tracking on."
+      ]
+    },
+    "tracked_deletions": {
+      "count": 1,
+      "authors": [
+        "Bob Reviewer"
+      ],
+      "dates": [
+        "2026-06-02T14:45:00Z"
+      ],
+      "deleted_texts": [
+        "forty-two"
+      ]
+    },
+    "revised_paragraph": {
+      "visible_text_current": "The quarterly total was forty-seven units.",
+      "visible_text_original": "The quarterly total was forty-two units."
+    }
+  },
+  "verified_by": "UNVERIFIED — agent-authored (Claude), machine-cross-checked; human sign-off pending",
+  "date": "2026-07-07"
+}

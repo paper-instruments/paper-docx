@@ -1,0 +1,27 @@
+{
+  "fixture": "textbox.docx",
+  "provenance": {
+    "app": "LibreOffice",
+    "version": "26.2.4.2",
+    "notes": "Headless `soffice --convert-to docx` round-trip of generated/feature-isolated/textbox.docx; LibreOffice re-authored every part, so markup shapes are LibreOffice's own. LibreOffice wrapped the shape in mc:AlternateContent with a VML fallback, so w:txbxContent occurs TWICE in raw XML for one visible text box — traversal must not double-count it."
+  },
+  "features": [
+    "textbox",
+    "wps-drawing",
+    "mc-alternate-content",
+    "vml-fallback"
+  ],
+  "ground_truth": {
+    "textbox_visible_texts": [
+      "Text living inside the text box."
+    ],
+    "raw_txbx_content_occurrences": 2,
+    "body_paragraph_texts": [
+      "Body text before the text box.",
+      "Body text after the text box."
+    ],
+    "drawing_form": "mc:AlternateContent (wps choice + VML w:pict fallback)"
+  },
+  "verified_by": "UNVERIFIED — agent-authored (Claude), machine-cross-checked; human sign-off pending",
+  "date": "2026-07-07"
+}
