@@ -1,4 +1,28 @@
-# paper-docx
+<div align="center">
+  <a href="https://github.com/paper-instruments/paper-docx">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset=".github/assets/logo-dark.svg">
+      <img alt="paper-docx logo" src=".github/assets/logo-light.svg" height="128">
+    </picture>
+  </a>
+  <h1>paper-docx</h1>
+
+[![PyPI](https://img.shields.io/pypi/v/paper-docx.svg)](https://pypi.org/project/paper-docx/)
+[![Python versions](https://img.shields.io/pypi/pyversions/paper-docx.svg)](https://pypi.org/project/paper-docx/)
+[![License](https://img.shields.io/pypi/l/paper-docx.svg)](LICENSE)
+[![CI](https://github.com/paper-instruments/paper-docx/actions/workflows/test.yml/badge.svg)](https://github.com/paper-instruments/paper-docx/actions/workflows/test.yml)
+[![Downloads](https://img.shields.io/pypi/dm/paper-docx.svg)](https://pypi.org/project/paper-docx/)
+
+</div>
+
+<div align="center">
+  <a href="https://github.com/paper-instruments/paper-docx">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset=".github/assets/logo-dark.svg">
+      <img alt="paper-docx logo" src=".github/assets/logo-light.svg" height="128">
+    </picture>
+  </a>
+  <h1>paper-docx</h1>
 
 [![PyPI](https://img.shields.io/pypi/v/paper-docx.svg)](https://pypi.org/project/paper-docx/)
 [![Python versions](https://img.shields.io/pypi/pyversions/paper-docx.svg)](https://pypi.org/project/paper-docx/)
