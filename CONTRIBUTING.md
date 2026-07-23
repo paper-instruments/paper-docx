@@ -15,7 +15,7 @@ uv sync
 ```
 
 `uv sync` installs the package in editable mode with the `dev` dependency
-group (pytest, behave, ruff, pyright, Sphinx, tox).
+group (pytest, behave, ruff, pyright, Sphinx).
 
 ## Running the checks
 
@@ -28,7 +28,6 @@ uv run pytest                 # unit suite (also: make test)
 uv run behave --stop          # acceptance suite (also: make accept)
 uv run ruff check src tests   # lint
 uv run pyright                # strict type checking
-uv run tox                    # full matrix, if you have the interpreters
 make docs                     # Sphinx build
 ```
 
