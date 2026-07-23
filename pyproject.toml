@@ -52,7 +52,7 @@ dev = [
 ]
 
 [project.urls]
-Changelog = "https://github.com/The-LLM-Data-Company/paper-docx/blob/main/HISTORY.rst"
+Changelog = "https://github.com/The-LLM-Data-Company/paper-docx/releases"
 Documentation = "https://github.com/The-LLM-Data-Company/paper-docx"
 Homepage = "https://github.com/The-LLM-Data-Company/paper-docx"
 Issues = "https://github.com/The-LLM-Data-Company/paper-docx/issues"
