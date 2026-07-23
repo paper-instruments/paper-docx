@@ -93,7 +93,6 @@ norecursedirs = [
     "*.egg-info",
     "features",
     ".git",
-    "ref",
     "_scratch",
     ".tox",
 ]

@@ -63,6 +63,15 @@ Behavioral tests should save and reopen the document rather than asserting on
 in-memory state alone, and should assert a changed-part budget (see the
 harness helpers in `tests/paper/harness/`).
 
+## OOXML references
+
+The WordprocessingML spec and its RELAX NG / XSD schemas are the authority
+for element semantics and child ordering when extending the oxml layer. The
+standard is freely available as
+[ECMA-376](https://ecma-international.org/publications-and-standards/standards/ecma-376/)
+(identical in substance to ISO/IEC 29500): Part 1 covers the markup
+language, Part 2 covers OPC packaging.
+
 ## Submitting changes
 
 - Open an issue first for anything that changes public API surface;
