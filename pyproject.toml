@@ -52,11 +52,11 @@ dev = [
 ]
 
 [project.urls]
-Changelog = "https://github.com/The-LLM-Data-Company/paper-docx/releases"
-Documentation = "https://github.com/The-LLM-Data-Company/paper-docx"
-Homepage = "https://github.com/The-LLM-Data-Company/paper-docx"
-Issues = "https://github.com/The-LLM-Data-Company/paper-docx/issues"
-Repository = "https://github.com/The-LLM-Data-Company/paper-docx"
+Changelog = "https://github.com/paper-instruments/paper-docx/releases"
+Documentation = "https://github.com/paper-instruments/paper-docx"
+Homepage = "https://github.com/paper-instruments/paper-docx"
+Issues = "https://github.com/paper-instruments/paper-docx/issues"
+Repository = "https://github.com/paper-instruments/paper-docx"
 
 [project.scripts]
 paper-docx-doctor = "paper_docx_doctor:main"

@@ -12,8 +12,8 @@ authors:
 version: 0.1.2
 date-released: "2026-07-23"
 license: MIT
-repository-code: "https://github.com/The-LLM-Data-Company/paper-docx"
-url: "https://github.com/The-LLM-Data-Company/paper-docx"
+repository-code: "https://github.com/paper-instruments/paper-docx"
+url: "https://github.com/paper-instruments/paper-docx"
 keywords:
   - docx
   - word

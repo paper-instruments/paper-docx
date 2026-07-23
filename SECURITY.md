@@ -9,7 +9,7 @@ XML parsing) as high-severity issues.
 Please do not report security vulnerabilities through public GitHub issues.
 
 Instead, use GitHub's private vulnerability reporting for this repository:
-[Report a vulnerability](https://github.com/The-LLM-Data-Company/paper-docx/security/advisories/new).
+[Report a vulnerability](https://github.com/paper-instruments/paper-docx/security/advisories/new).
 
 Include, where possible:
 

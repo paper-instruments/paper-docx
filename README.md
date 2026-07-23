@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/paper-docx.svg)](https://pypi.org/project/paper-docx/)
 [![Python versions](https://img.shields.io/pypi/pyversions/paper-docx.svg)](https://pypi.org/project/paper-docx/)
 [![License](https://img.shields.io/pypi/l/paper-docx.svg)](LICENSE)
-[![CI](https://github.com/The-LLM-Data-Company/paper-docx/actions/workflows/test.yml/badge.svg)](https://github.com/The-LLM-Data-Company/paper-docx/actions/workflows/test.yml)
+[![CI](https://github.com/paper-instruments/paper-docx/actions/workflows/test.yml/badge.svg)](https://github.com/paper-instruments/paper-docx/actions/workflows/test.yml)
 [![Downloads](https://img.shields.io/pypi/dm/paper-docx.svg)](https://pypi.org/project/paper-docx/)
 
 paper-docx is an agent-first Python library for safely inspecting, editing,
@@ -603,14 +603,14 @@ The near-term direction:
 See [`CONTRIBUTING.md`](CONTRIBUTING.md) for setup (`uv sync`), the check
 suite (pytest, behave, ruff, pyright), fixture rules, and what every change
 must preserve — above all, refusal atomicity. Bug reports and PRs are welcome
-on [GitHub issues](https://github.com/The-LLM-Data-Company/paper-docx/issues).
+on [GitHub issues](https://github.com/paper-instruments/paper-docx/issues).
 
 ## Community
 
 Questions and ideas belong in
-[GitHub Discussions](https://github.com/The-LLM-Data-Company/paper-docx/discussions);
+[GitHub Discussions](https://github.com/paper-instruments/paper-docx/discussions);
 bug reports in
-[GitHub issues](https://github.com/The-LLM-Data-Company/paper-docx/issues).
+[GitHub issues](https://github.com/paper-instruments/paper-docx/issues).
 If you are building agent systems on paper-docx, we would like to hear what
 refuses that shouldn't, and what doesn't refuse that should.
 
@@ -631,7 +631,7 @@ project it builds on (see [`CITATION.cff`](CITATION.cff)):
   title   = {paper-docx: an agent-first fork of python-docx for safely editing Word documents},
   author  = {{Paper Instruments, Inc.} and Canny, Steve},
   year    = {2026},
-  url     = {https://github.com/The-LLM-Data-Company/paper-docx},
+  url     = {https://github.com/paper-instruments/paper-docx},
   version = {0.1.2},
   license = {MIT}
 }
