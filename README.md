@@ -1,5 +1,10 @@
 # paper-docx
 
+[![PyPI](https://img.shields.io/pypi/v/paper-docx.svg)](https://pypi.org/project/paper-docx/)
+[![Python versions](https://img.shields.io/pypi/pyversions/paper-docx.svg)](https://pypi.org/project/paper-docx/)
+[![License](https://img.shields.io/pypi/l/paper-docx.svg)](LICENSE)
+[![CI](https://github.com/paper-instruments/paper-docx/actions/workflows/test.yml/badge.svg)](https://github.com/paper-instruments/paper-docx/actions/workflows/test.yml)
+
 `paper-docx` is an agent-first Python library for safely inspecting, editing,
 reviewing, and composing existing Microsoft Word (`.docx`) documents. It is a
 strict-superset hard fork of

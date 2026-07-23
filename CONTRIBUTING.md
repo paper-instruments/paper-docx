@@ -9,7 +9,7 @@ safe to change.
 The project is managed with [uv](https://docs.astral.sh/uv/). Clone and sync:
 
 ```bash
-git clone https://github.com/The-LLM-Data-Company/paper-docx
+git clone https://github.com/paper-instruments/paper-docx
 cd paper-docx
 uv sync
 ```
