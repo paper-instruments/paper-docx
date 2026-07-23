@@ -1,0 +1,30 @@
+cff-version: 1.2.0
+message: >-
+  If you use this software, please cite it as below. paper-docx is a hard
+  fork of python-docx by Steve Canny and contributors; please credit the
+  upstream project as well.
+title: "paper-docx: an agent-first fork of python-docx for safely editing Word documents"
+type: software
+authors:
+  - name: "Paper Instruments, Inc."
+  - family-names: Canny
+    given-names: Steve
+version: 0.1.2
+date-released: "2026-07-23"
+license: MIT
+repository-code: "https://github.com/The-LLM-Data-Company/paper-docx"
+url: "https://github.com/The-LLM-Data-Company/paper-docx"
+keywords:
+  - docx
+  - word
+  - openxml
+  - document-editing
+  - agents
+references:
+  - type: software
+    title: python-docx
+    authors:
+      - family-names: Canny
+        given-names: Steve
+    repository-code: "https://github.com/python-openxml/python-docx"
+    license: MIT
