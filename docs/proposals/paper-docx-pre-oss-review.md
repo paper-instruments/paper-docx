@@ -1,0 +1,72 @@
+# paper-docx audit
+
+Package: [paper-docx](https://github.com/paper-instruments/paper-docx) `a55be76` (0.1.2), vs tag `paper-base` (`e454546`). `git diff paper-base -- src`: 44 files, +15244/−64.
+
+Stock python-docx is the create/edit baseline. This fork is for **agent Word work on real files**: inspect, edit, review, structure, combine, save, deliver. The agent should use the package, not unzip and patch XML.
+
+## Every Paper addition: does it have a place?
+
+Read **What it does** first. The API column is only the name in the library.
+
+| What it does | API | Use case | Place? | Why |
+| --- | --- | --- | --- | --- |
+| Read the whole file (body, headers, footers, footnotes, comments), including text that is still a tracked insertion or deletion. | `docx.story` | Edit existing, review | Yes | Stock only sees the main body and ignores pending revisions. Notes can be read, not created. |
+| Find a quoted phrase even when Word split it across bold/italic runs, and replace it without wiping that formatting. Can stamp the edit as a tracked change. | `docx.search`, `Span.replace` | Edit existing, review | Yes | Stock `paragraph.text` wipes run formatting. Agents otherwise splice XML. |
+| Insert a heading and paragraphs, a real list, or a simple table after a known place. Mark whole paragraphs deleted or replaced as Word track-changes. | `docx.blocks` | Edit existing, review | Yes | Stock has no safe paragraph-level tracked edit. Clean (non-redline) remove is tracked-delete then `finalize`. |
+| List every tracked change and accept or reject it (inserts, deletes, moves, some formatting). | `Document.revisions` | Review | Yes | Stock cannot list or resolve tracked changes. Rare types (table-property, cell, section, numbering, custom XML) can be listed but not resolved. |
+| Comment on an exact phrase, reply, and resolve the thread. | `Span.comment`, `commentops` | Review | Yes | Stock comments attach to whole runs, with no reply or resolve. Cannot delete one comment (see Missing). |
+| Diff two `.docx` files into a Word redline of the text. | `docx.package.compare` | Review | Yes | Native ins/del is what reviewers open in Word. Images, fields, controls, and formatting-only diffs refuse. |
+| Change one table cell, or insert/delete a row, without breaking a merged header. | `docx.tableops` | Structured | Yes | Stock cell/row edits scramble real tables. |
+| Apply a real Word numbered or bulleted list, not fake Unicode bullets. Restart numbering when needed. | `docx.numbering` | Structured | Yes | Needed when inserting blocks into existing lists. |
+| Fill a form control: text, checkbox, dropdown, or date. | `docx.controls` | Structured | Yes | Stock cannot fill content controls safely. Picture and data-bound controls refuse (see Missing). |
+| Put a bookmark on a phrase, list bookmarks, or remove the markers (the text stays). | `docx.bookmarks` | Structured | Yes | Anchors for cross-references and TOC in existing files. |
+| Insert a page number, date, cross-reference, or table of contents. The displayed value is computed when Word opens the file, not here. | `docx.fields` | Structured | Yes | Stock is weak; agents otherwise hand-edit field XML. |
+| Copy a range, or a whole document, into another file, keeping styles, lists, and images. | `docx.composition` | Combine | Yes | Cross-file copy is where styles and relationships corrupt. Will not copy comments, pending revisions, headers, or footnotes. |
+| Save an edited file without rewriting ZIP parts that did not change. | `docx.package.patch_save` | Package | Yes | Stock save rewrites the whole ZIP, which noisily diffs and can break unrelated parts. |
+| On open and save: bound ZIP size, refuse junk, write atomically, and roll back a failed edit instead of leaving a half-written file. | zipguard, atomic `save`, transactions, `PaperRefusal` | Package | Yes | Infrastructure so the rows above refuse instead of corrupting. |
+| Say why a file will not open: encrypted, template, macros, not Word, damaged ZIP. | `docx.package.diagnose` | Package | Yes | Stock raises untyped errors on bad input. |
+| Show which ZIP parts or visible text changed between two files, or what pending revisions would change if accepted. | `diff_package`, `text_diff`, `pending_changes` | Package | Yes | Proof of what an edit did. Library belongs; not a ritual after every call. |
+| Strip comments and author metadata for a clean outgoing copy. Optional: RSIDs and hidden text. Does not remove Restrict Editing. | `Document.scrub` | Deliver | Yes | Reviewing residue should not leave with the file. |
+| Accept or reject every tracked change in one call. | `Document.finalize` | Deliver | Weak | Same as `revisions.accept_all` / `reject_all`. Keep as sugar or drop. |
+| See whether Restrict Editing is on, and refuse Paper edits until you override in memory for this session. Cannot turn protection on or strip it from the file. | `docx.protection` | Deliver | Yes | Editing a locked template by accident is silent corruption. Authoring protection is Missing. |
+| Report some of the formatting on a run or paragraph (bold, italic, which style set them). | `docx.formatting` | Edit existing | Weak | Paper addition, not stock. The report covers only a subset of properties; theme, spacing, and table styles are omitted. Incomplete inspect. |
+| Check that `import docx` is this fork, not a mixed install with python-docx. | `paper-docx-doctor` | Package | Yes | Both packages own the same import name. |
+
+
+---
+
+## Missing
+
+Jobs the agent still cannot do through the package, so it would unzip and patch XML (or call another tool).
+
+| What the agent needs to do | Use case | Why the package does not cover it | Found in |
+| --- | --- | --- | --- |
+| Delete one comment and leave the rest | Review | You can add a comment, reply, mark it resolved, or strip every comment when delivering. You cannot remove a single comment. That still means deleting the range markers and the comments.xml entry by hand. | Code: `commentops` has add/reply/resolve/thread, no delete. |
+| Add a comment that current Word will show and round-trip | Review | Word stores comment identity in extra package parts, not only the comment text. This fork writes the two older parts (`comments.xml` and `commentsExtended.xml`). Without the two newer ones (`commentsIds.xml`, `commentsExtensible.xml`), a comment can fail to appear or fail to round-trip after Word opens the file. | Anthropic `skills/docx/SKILL.md` (helper writes six parts). Code: we only create `commentsExtended`. |
+| Lock a file for the recipient (read-only, comments only, or forms only) | Deliver | You can see that Restrict Editing is already on, and Paper will refuse to edit (or you can override that refusal in memory for this session). You cannot turn protection *on* for delivery. Authoring a locked file still means writing `w:documentProtection` yourself. | Codex `set_protection.py`. Code: `protection.py` has no setter. |
+| Replace one existing picture, keep size and position | Edit existing | You can insert a new picture (stock) or copy pictures along when combining documents. You cannot swap the bytes of one picture already in the file without sharing that image part with other shapes. Picture form controls also refuse to be filled. | Anthropic skill (insert/replace images). Codex images task. Code: no replace API; `controls` refuses `picture`. |
+| Turn a phrase into a hyperlink, or change where an existing link goes | Edit existing, review | You can read a link's URL. You cannot create a link, retarget one, or record that as a tracked change. External links are copied only when you paste a range from another file. Editing a link in place still means XML. | Anthropic edit path is XML. Codex `hyperlinks_and_fields`. Code: `Hyperlink.address` is read-only. |
+| Caption a figure or table so numbers update (Figure 1, Figure 2, …) | Structured | You can bookmark the caption text and insert a cross-reference to that bookmark. Word captions are different: they use an auto-number field, so later figures renumber. This package cannot insert that field, so numbers stay as typed text. | Codex `captions_crossrefs`. Code: `fields.py` has PAGE, NUMPAGES, DATE, REF, TOC only. |
+| Add a footnote or endnote | Edit existing | If a note already exists, you can find and edit its text. You cannot add a new note or the superscript mark in the body. | Codex `footnotes_endnotes`. Code: footnote/endnote parts load for reading; they are never created. |
+| Fill a form field whose value lives in Word's hidden custom XML | Structured | Ordinary controls (text, checkbox, dropdown, date) can be filled. Some templates bind the control to a hidden part; Word overwrites the visible text from that part on open. Filling the surface would look like it worked and then vanish. There is no API to write the bound part. | Codex `forms_content_controls`. Code: `set_value` refuses data-bound controls. |
+| Append another document and keep *its* letterhead | Combine | You can append another document's body, keeping styles and images. Headers and footers stay those of the destination file. If both files have a letterhead, the source one is dropped. The code calls keeping source headers a future mode. | Codex `multi_doc_merge`. Code: `append_document` docstring. |
+
+Not a package hole (stock, QA outside the library, or a different product): insert image (`Run.add_picture`), edit header/footer text (stock + story/search), page/section breaks (stock `add_section`), fill existing non-bound form controls, visual PNG render, flatten-runs, redaction, a11y audit, watermarks, Google Docs title sanitizer, `.doc` conversion.
+
+---
+
+## Defects in what we already shipped
+
+These are not new Word jobs. They are holes in APIs that already exist. Source: [#12](https://github.com/paper-instruments/paper-docx/pull/12), checked against `a55be76` where noted.
+
+
+| Defect                                                                    | Why it matters                                                                                                                                                                                                                                                                                    | Found in                                                                                         |
+| ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
+| `patch_save` does not use the same path writer as `Document.save`         | Saving through a symlink replaces the shortcut instead of updating the real file. No `fsync`. Same function name, weaker durability. Confirmed: `OpcPackage.save` uses `_atomic_package_write` (follow symlink, fsync); `patch_save` uses `_write_bytes_atomically` (replace the path, no fsync). | [#12](https://github.com/paper-instruments/paper-docx/pull/12) P0-1                              |
+| Refusal/rollback is not a closed contract for every public mutator        | Docs say unsafe edits change nothing. `search` / `commentops` / `revision` wrap `rollback_on_error`. `blocks.py` public mutators and `fields.py` inserts validate then mutate with no rollback wrapper. `Comment.author` / `initials` setters validate then assign.                               | [#12](https://github.com/paper-instruments/paper-docx/pull/12) P0-2; confirmed in those files    |
+| Mixed `paper-docx` / `python-docx` install can leave a broken `docx` tree | Shared import name. Doctor and import-time `assert_distribution_identity` catch a lot; `import docx` alone cannot detect every overwrite.                                                                                                                                                         | [#12](https://github.com/paper-instruments/paper-docx/pull/12) P0-3                              |
+| No desktop-Word or Google-exported fixtures                               | Review/compare/accept-reject are tested on generated + LibreOffice files. Word-authored redlines are unproven.                                                                                                                                                                                    | [#12](https://github.com/paper-instruments/paper-docx/pull/12); `tests/paper/fixtures/README.md` |
+| Composition test always passes                                            | `tests/paper/test_composition.py` has `assert ... or True`. Combine use case is untested at that assertion.                                                                                                                                                                                       | [#12](https://github.com/paper-instruments/paper-docx/pull/12); confirmed in code                |
+
+
+Left in [#12](https://github.com/paper-instruments/paper-docx/pull/12) and not copied here: README claim matrix, Ruff/Pyright CI, ZIP fuzzing, determinism hashes, upstream-sync process. Those are docs/process, not package capability.
