@@ -23,11 +23,11 @@ Read **What it does** first. The API column is only the name in the library.
 | Insert a page number, date, cross-reference, or table of contents. The displayed value is computed when Word opens the file, not here. | `docx.fields` | Structured | Yes | Stock is weak; agents otherwise hand-edit field XML. |
 | Copy a range, or a whole document, into another file, keeping styles, lists, and images. | `docx.composition` | Combine | Yes | Cross-file copy is where styles and relationships corrupt. Will not copy comments, pending revisions, headers, or footnotes. |
 | Save an edited file without rewriting ZIP parts that did not change. | `docx.package.patch_save` | Package | Yes | Stock save rewrites the whole ZIP, which noisily diffs and can break unrelated parts. |
-| On open and save: bound ZIP size, refuse junk, write atomically, and roll back a failed edit instead of leaving a half-written file. | zipguard, atomic `save`, transactions, `PaperRefusal` | Package | Yes | Infrastructure so the rows above refuse instead of corrupting. |
+| On open and save: refuse a broken ZIP with a typed error, write atomically, and roll back a failed edit instead of leaving a half-written file. | zipguard, atomic `save`, transactions, `PaperRefusal` | Package | Yes | Infrastructure so the rows above refuse instead of corrupting. Size/count caps in zipguard are a separate leftover (see Defects). |
 | Say why a file will not open: encrypted, template, macros, not Word, damaged ZIP. | `docx.package.diagnose` | Package | Yes | Stock raises untyped errors on bad input. |
 | Show which ZIP parts or visible text changed between two files, or what pending revisions would change if accepted. | `diff_package`, `text_diff`, `pending_changes` | Package | Yes | Proof of what an edit did. Library belongs; not a ritual after every call. |
 | Strip comments and author metadata for a clean outgoing copy. Optional: RSIDs and hidden text. Does not remove Restrict Editing. | `Document.scrub` | Deliver | Yes | Reviewing residue should not leave with the file. |
-| Accept or reject every tracked change in one call. | `Document.finalize` | Deliver | Weak | Same as `revisions.accept_all` / `reject_all`. Keep as sugar or drop. |
+| Accept or reject every tracked change in one call. | `Document.finalize` | Deliver | Remove | Same as `revisions.accept_all` / `reject_all`. Drop the alias. |
 | See whether Restrict Editing is on, and refuse Paper edits until you override in memory for this session. Cannot turn protection on or strip it from the file. | `docx.protection` | Deliver | Yes | Editing a locked template by accident is silent corruption. Authoring protection is Missing. |
 | Report some of the formatting on a run or paragraph (bold, italic, which style set them). | `docx.formatting` | Edit existing | Weak | Paper addition, not stock. The report covers only a subset of properties; theme, spacing, and table styles are omitted. Incomplete inspect. |
 | Check that `import docx` is this fork, not a mixed install with python-docx. | `paper-docx-doctor` | Package | Yes | Both packages own the same import name. |
@@ -67,6 +67,47 @@ These are not new Word jobs. They are holes in APIs that already exist. Source: 
 | Mixed `paper-docx` / `python-docx` install can leave a broken `docx` tree | Shared import name. Doctor and import-time `assert_distribution_identity` catch a lot; `import docx` alone cannot detect every overwrite.                                                                                                                                                         | [#12](https://github.com/paper-instruments/paper-docx/pull/12) P0-3                              |
 | No desktop-Word or Google-exported fixtures                               | Review/compare/accept-reject are tested on generated + LibreOffice files. Word-authored redlines are unproven.                                                                                                                                                                                    | [#12](https://github.com/paper-instruments/paper-docx/pull/12); `tests/paper/fixtures/README.md` |
 | Composition test always passes                                            | `tests/paper/test_composition.py` has `assert ... or True`. Combine use case is untested at that assertion.                                                                                                                                                                                       | [#12](https://github.com/paper-instruments/paper-docx/pull/12); confirmed in code                |
+| Zip size/count/ratio caps refuse large but valid files                    | Zip-bomb limits (`MAX_COMPRESSED_BYTES`, member count, expansion ratio). Not in python-docx. Same leftover as pptx: drop the caps, keep typed refusal on a corrupt ZIP.                                                                                                                          | `src/docx/_zipguard.py`                                                                          |
 
 
 Left in [#12](https://github.com/paper-instruments/paper-docx/pull/12) and not copied here: README claim matrix, Ruff/Pyright CI, ZIP fuzzing, determinism hashes, upstream-sync process. Those are docs/process, not package capability.
+
+---
+
+## Constants, enums, and error classes vs python-docx
+
+Not functions. Stock `WD_*` / `MSO_*` enums and stock error classes (`PythonDocxError`, `InvalidSpanError`, OPC and image errors) are unchanged. Nothing was removed. No new Enum types were added; callers get string lists instead.
+
+| Name | Kind | Change | What it is |
+| --- | --- | --- | --- |
+| `PaperRefusal` | Error | Added | Base. Edit was refused; file and memory unchanged. |
+| `PackageLimitError` | Error | Added | ZIP is too big, corrupt, encrypted, or otherwise unsafe to open. |
+| `AmbiguousTargetError` | Error | Added | Search matched more than one place. |
+| `TargetNotFoundError` | Error | Added | Nothing matched, or the span went stale. |
+| `UnsupportedStructureError` | Error | Added | This edit is not supported on that Word structure. |
+| `BoundaryViolationError` | Error | Added | The edit would cross a paragraph, table, or control boundary. |
+| `RelationshipPolicyError` | Error | Added | The edit would create an unsafe package relationship. |
+| `DocumentProtectedError` | Error | Added | Restrict Editing is on. Acknowledge in memory to proceed. |
+| `UnsupportedXmlError` | Error | Added | XML we will not compare (for example a DOCTYPE). A `ValueError`, not a `PaperRefusal`. In `docx._paperpkg`. |
+| `DoctorError` | Error | Added | Install is mixed or not paper-docx. A `RuntimeError`. In `paper_docx_doctor`. |
+| `__paper_version__` | Constant | Added | `"0.1.2"`. Stock still has `__version__ = "1.2.0"`. |
+| `MAX_COMPRESSED_BYTES` | Constant | Added; drop | 256 MiB zip-bomb cap. See Defects. |
+| `MAX_MEMBER_COUNT` | Constant | Added; drop | 4096-member zip-bomb cap. See Defects. |
+| `MAX_CENTRAL_DIRECTORY_BYTES` | Constant | Added; drop | 16 MiB zip-bomb cap. See Defects. |
+| `MAX_XML_MEMBER_BYTES` | Constant | Added; drop | 64 MiB zip-bomb cap. See Defects. |
+| `MAX_BINARY_MEMBER_BYTES` | Constant | Added; drop | 256 MiB zip-bomb cap. See Defects. |
+| `MAX_TOTAL_EXPANDED_BYTES` | Constant | Added; drop | 512 MiB zip-bomb cap. See Defects. |
+| `MAX_COMPRESSION_RATIO` | Constant | Added; drop | 100:1 zip-bomb cap. See Defects. |
+| `RATIO_ENFORCEMENT_FLOOR_BYTES` | Constant | Added; drop | 16 MiB floor for the ratio cap. See Defects. |
+| `VIEWS` | Constant | Added | `("current", "original", "all")`. Story read modes. |
+| `RESOLVABLE_TYPES` | Constant | Added | Revision types `accept`/`reject` can resolve. |
+| `BLIND_REGION_KEYS` | Constant | Added | Inspection keys for content story cannot fully read. |
+| `COMMENTS_EXTENDED_CONTENT_TYPE` | Constant | Added | Word `commentsExtended` content type. Not in stock `CONTENT_TYPE`. |
+| `COMMENTS_EXTENDED_RELATIONSHIP_TYPE` | Constant | Added | Word `commentsExtended` relationship. Not in stock `RELATIONSHIP_TYPE`. |
+| Story view | String list | Added | `current`, `original`, `all`. |
+| Resolvable revision type | String list | Added | `insertion`, `deletion`, `format_change`, `row_insertion`, `row_deletion`, `move_from`, `move_to`. |
+| Listed but not resolvable | String list | Added | `table_property_change`, `cell_revision`, `section_property_change`, `numbering_change`, `custom_xml_revision`. |
+| Control type | String list | Added | `text`, `rich_text`, `checkbox`, `dropdown`, `combo`, `date`, `picture`, `group`, `building_block`. |
+| Protection `edit` | String list | Added | Word tokens: `readOnly`, `forms`, `comments`, `trackedChanges`, `none`. |
+| Diagnose `kind` | String list | Added | `missing`, `encrypted-or-legacy-binary`, `not-a-zip`, `unsafe-archive`, `corrupt-zip`, `docx`, `dotx`, `docm`, `dotm`, `xlsx`, `pptx`, `opc-unknown`. |
+| Cross-reference kind | String list | Added | `text`, `page`, `number` (REF / PAGEREF). |
