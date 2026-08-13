@@ -78,36 +78,38 @@ Left in [#12](https://github.com/paper-instruments/paper-docx/pull/12) and not c
 
 Not functions. Stock `WD_*` / `MSO_*` enums and stock error classes (`PythonDocxError`, `InvalidSpanError`, OPC and image errors) are unchanged. Nothing was removed. No new Enum types were added; callers get string lists instead.
 
-| Name | Kind | Change | What it is |
-| --- | --- | --- | --- |
-| `PaperRefusal` | Error | Added | Base. Edit was refused; file and memory unchanged. |
-| `PackageLimitError` | Error | Added | ZIP is too big, corrupt, encrypted, or otherwise unsafe to open. |
-| `AmbiguousTargetError` | Error | Added | Search matched more than one place. |
-| `TargetNotFoundError` | Error | Added | Nothing matched, or the span went stale. |
-| `UnsupportedStructureError` | Error | Added | This edit is not supported on that Word structure. |
-| `BoundaryViolationError` | Error | Added | The edit would cross a paragraph, table, or control boundary. |
-| `RelationshipPolicyError` | Error | Added | The edit would create an unsafe package relationship. |
-| `DocumentProtectedError` | Error | Added | Restrict Editing is on. Acknowledge in memory to proceed. |
-| `UnsupportedXmlError` | Error | Added | XML we will not compare (for example a DOCTYPE). A `ValueError`, not a `PaperRefusal`. In `docx._paperpkg`. |
-| `DoctorError` | Error | Added | Install is mixed or not paper-docx. A `RuntimeError`. In `paper_docx_doctor`. |
-| `__paper_version__` | Constant | Added | `"0.1.2"`. Stock still has `__version__ = "1.2.0"`. |
-| `MAX_COMPRESSED_BYTES` | Constant | Added; drop | 256 MiB zip-bomb cap. See Defects. |
-| `MAX_MEMBER_COUNT` | Constant | Added; drop | 4096-member zip-bomb cap. See Defects. |
-| `MAX_CENTRAL_DIRECTORY_BYTES` | Constant | Added; drop | 16 MiB zip-bomb cap. See Defects. |
-| `MAX_XML_MEMBER_BYTES` | Constant | Added; drop | 64 MiB zip-bomb cap. See Defects. |
-| `MAX_BINARY_MEMBER_BYTES` | Constant | Added; drop | 256 MiB zip-bomb cap. See Defects. |
-| `MAX_TOTAL_EXPANDED_BYTES` | Constant | Added; drop | 512 MiB zip-bomb cap. See Defects. |
-| `MAX_COMPRESSION_RATIO` | Constant | Added; drop | 100:1 zip-bomb cap. See Defects. |
-| `RATIO_ENFORCEMENT_FLOOR_BYTES` | Constant | Added; drop | 16 MiB floor for the ratio cap. See Defects. |
-| `VIEWS` | Constant | Added | `("current", "original", "all")`. Story read modes. |
-| `RESOLVABLE_TYPES` | Constant | Added | Revision types `accept`/`reject` can resolve. |
-| `BLIND_REGION_KEYS` | Constant | Added | Inspection keys for content story cannot fully read. |
-| `COMMENTS_EXTENDED_CONTENT_TYPE` | Constant | Added | Word `commentsExtended` content type. Not in stock `CONTENT_TYPE`. |
-| `COMMENTS_EXTENDED_RELATIONSHIP_TYPE` | Constant | Added | Word `commentsExtended` relationship. Not in stock `RELATIONSHIP_TYPE`. |
-| Story view | String list | Added | `current`, `original`, `all`. |
-| Resolvable revision type | String list | Added | `insertion`, `deletion`, `format_change`, `row_insertion`, `row_deletion`, `move_from`, `move_to`. |
-| Listed but not resolvable | String list | Added | `table_property_change`, `cell_revision`, `section_property_change`, `numbering_change`, `custom_xml_revision`. |
-| Control type | String list | Added | `text`, `rich_text`, `checkbox`, `dropdown`, `combo`, `date`, `picture`, `group`, `building_block`. |
-| Protection `edit` | String list | Added | Word tokens: `readOnly`, `forms`, `comments`, `trackedChanges`, `none`. |
-| Diagnose `kind` | String list | Added | `missing`, `encrypted-or-legacy-binary`, `not-a-zip`, `unsafe-archive`, `corrupt-zip`, `docx`, `dotx`, `docm`, `dotm`, `xlsx`, `pptx`, `opc-unknown`. |
-| Cross-reference kind | String list | Added | `text`, `page`, `number` (REF / PAGEREF). |
+Provenance is `paper-original-plans-and-specs-2026-08-13/paper-docx` (plans + reference harness). **Asked for** = named there. **Supported** = follows a plan rule, but the name or extra values were not written down. **No support** = not in that folder.
+
+| Name | Kind | Change | What it is | Why | Plans |
+| --- | --- | --- | --- | --- | --- |
+| `PaperRefusal` | Error | Added | Base. Edit was refused; file and memory unchanged. | Agents catch “safe no” separately from a bug. | **Asked for.** `CONVENTIONS.md` pins this name. |
+| `PackageLimitError` | Error | Added | ZIP is too big, corrupt, encrypted, or otherwise unsafe to open. | One typed error for a file that must not be opened. Also used for size caps (see Defects). | **Supported, not named.** `PLAN-v0.11` asked for typed refusals on corrupt zip / encrypted files, not this class and not size caps. |
+| `AmbiguousTargetError` | Error | Added | Search matched more than one place. | Do not guess which hit to edit. | **Asked for.** `CONVENTIONS.md`; `PLAN-paper-docx.md`. |
+| `TargetNotFoundError` | Error | Added | Nothing matched, or the span went stale. | Do not invent a target. | **Asked for.** `CONVENTIONS.md`; `PLAN-v0.1.md` H7. |
+| `UnsupportedStructureError` | Error | Added | This edit is not supported on that Word structure. | Refuse instead of a quietly wrong file. | **Asked for.** `CONVENTIONS.md`; `PLAN-v0.1.md` H3/H4/H8. |
+| `BoundaryViolationError` | Error | Added | The edit would cross a paragraph, table, or control boundary. | Keep replacements inside one safe range. | **Asked for.** `CONVENTIONS.md`; `PLAN-paper-docx.md`. |
+| `RelationshipPolicyError` | Error | Added | The edit would create an unsafe package relationship. | Pinned in the error list for copy/rel work. Code defines it; nothing raises it yet. | **Asked for.** `CONVENTIONS.md` taxonomy. No docx plan names a call site. |
+| `DocumentProtectedError` | Error | Added | Restrict Editing is on. Acknowledge in memory to proceed. | Editing a locked template by accident looks successful and is wrong. | **Asked for.** `PLAN-v0.11` Phase 3 names this class. |
+| `UnsupportedXmlError` | Error | Added | XML we will not compare (for example a DOCTYPE). A `ValueError`, not a `PaperRefusal`. In `docx._paperpkg`. | Compare must not treat two parts as equal when a DTD could change the text. | **No support.** Not in the docx plans. |
+| `DoctorError` | Error | Added | Install is mixed or not paper-docx. A `RuntimeError`. In `paper_docx_doctor`. | Shared import name `docx` can hide a mixed install. | **No support.** Plans asked only for `__paper_version__`, not a doctor exception. |
+| `__paper_version__` | Constant | Added | `"0.1.2"`. Stock still has `__version__ = "1.2.0"`. | Tell this fork apart from stock python-docx in the same import. | **Asked for.** `CONVENTIONS.md`; `SUMMARY-paper-docx-v0.11.md`. |
+| `MAX_COMPRESSED_BYTES` | Constant | Added; drop | 256 MiB zip-bomb cap. See Defects. | Stop a tiny zip from expanding into huge memory. | **No support.** Plans asked for typed errors on a *corrupt* zip, not a size cap. |
+| `MAX_MEMBER_COUNT` | Constant | Added; drop | 4096-member zip-bomb cap. See Defects. | Same as above. | **No support.** |
+| `MAX_CENTRAL_DIRECTORY_BYTES` | Constant | Added; drop | 16 MiB zip-bomb cap. See Defects. | Same as above. | **No support.** |
+| `MAX_XML_MEMBER_BYTES` | Constant | Added; drop | 64 MiB zip-bomb cap. See Defects. | Same as above. | **No support.** |
+| `MAX_BINARY_MEMBER_BYTES` | Constant | Added; drop | 256 MiB zip-bomb cap. See Defects. | Same as above. | **No support.** |
+| `MAX_TOTAL_EXPANDED_BYTES` | Constant | Added; drop | 512 MiB zip-bomb cap. See Defects. | Same as above. | **No support.** |
+| `MAX_COMPRESSION_RATIO` | Constant | Added; drop | 100:1 zip-bomb cap. See Defects. | Same as above. | **No support.** |
+| `RATIO_ENFORCEMENT_FLOOR_BYTES` | Constant | Added; drop | 16 MiB floor for the ratio cap. See Defects. | Same as above. | **No support.** |
+| `VIEWS` | Constant | Added | `("current", "original", "all")`. Story read modes. | Search/replace must see what Word shows, what was deleted, or both. | **Asked for** `current` and `original` (`PLAN-v0.1.md` H1). **`all` not named.** |
+| `RESOLVABLE_TYPES` | Constant | Added | Revision types `accept`/`reject` can resolve. | H3: refuse the whole set if any selected type cannot be resolved. | **Asked for** as that rule (`PLAN-v0.1.md` H3). Constant name not written down. |
+| `BLIND_REGION_KEYS` | Constant | Added | Inspection keys for content story cannot fully read. | Do not claim “we saw the whole file” when math/OLE/hidden text is present. | **Asked for.** `PLAN-v0.1.md` H9; harness `BLIND_REGION_TAGS`. |
+| `COMMENTS_EXTENDED_CONTENT_TYPE` | Constant | Added | Word `commentsExtended` content type. Not in stock `CONTENT_TYPE`. | Reply/resolve live in that extra part. | **Asked for.** `PLAN-v0.1.md` V4 (`commentsExtended`). Constant name not written down. |
+| `COMMENTS_EXTENDED_RELATIONSHIP_TYPE` | Constant | Added | Word `commentsExtended` relationship. Not in stock `RELATIONSHIP_TYPE`. | Same as above. | **Asked for.** `PLAN-v0.1.md` V4. Constant name not written down. |
+| Story view | String list | Added | `current`, `original`, `all`. | Same as `VIEWS`. | **Asked for** `current`/`original`. **`all` not named.** |
+| Resolvable revision type | String list | Added | `insertion`, `deletion`, `format_change`, `row_insertion`, `row_deletion`, `move_from`, `move_to`. | Name what Word tracked so accept/reject can be honest. | **Asked for.** `PLAN-v0.1.md` H1–H3; `PLAN-v0.11` Phases 1–2 add rows and moves. |
+| Listed but not resolvable | String list | Added | `table_property_change`, `cell_revision`, `section_property_change`, `numbering_change`, `custom_xml_revision`. | Count them so “clean” is never a lie; refuse to resolve. | **Asked for.** `PLAN-v0.1.md` H2/H3. |
+| Control type | String list | Added | `text`, `rich_text`, `checkbox`, `dropdown`, `combo`, `date`, `picture`, `group`, `building_block`. | Fill the types Word templates use; refuse the rest. | **Asked for** text/rich_text/checkbox/dropdown/combo/date (`PLAN-v0.1.md` V1). **picture/group/building_block not named** (we enumerate and refuse). |
+| Protection `edit` | String list | Added | Word tokens: `readOnly`, `forms`, `comments`, `trackedChanges`, `none`. | Report the Restrict Editing mode the refusal named. | **Asked for.** `PLAN-v0.11` Phase 3. |
+| Diagnose `kind` | String list | Added | `missing`, `encrypted-or-legacy-binary`, `not-a-zip`, `unsafe-archive`, `corrupt-zip`, `docx`, `dotx`, `docm`, `dotm`, `xlsx`, `pptx`, `opc-unknown`. | `Document()` stays stock; this API says why open failed. | **Asked for** as `diagnose()` (`PLAN-v0.1.md` H10). The kind strings themselves are not listed. |
+| Cross-reference kind | String list | Added | `text`, `page`, `number` (REF / PAGEREF). | Insert a formula Word will renumber, not pasted digits. | **Asked for.** `PLAN-v0.11` Phase 6: text / number / page. |
