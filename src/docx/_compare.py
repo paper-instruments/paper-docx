@@ -295,7 +295,7 @@ def _serialize_document(document: "Document") -> bytes:
 
 
 def _source_bytes(source) -> bytes:
-    """Read one bounded input snapshot for validation and document loading."""
+    """Read one input snapshot for validation and document loading."""
     if isinstance(source, bytes):
         return source
     from docx._zipguard import read_compressed_bytes

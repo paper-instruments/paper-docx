@@ -5,6 +5,7 @@ from __future__ import annotations
 import copy
 import io
 import stat
+import struct
 import zipfile
 from pathlib import Path
 
@@ -100,15 +101,22 @@ def it_validates_patch_save_after_final_recompression(
     destination.write_bytes(b"existing destination")
 
     unsafe = io.BytesIO()
-    with zipfile.ZipFile(unsafe, "w", zipfile.ZIP_DEFLATED) as archive:
-        archive.writestr("oversized.xml", b"A" * (17 * 1024 * 1024))
+    with zipfile.ZipFile(unsafe, "w", zipfile.ZIP_STORED) as archive:
+        archive.writestr("word/document.xml", b"<document/>")
+    payload = bytearray(unsafe.getvalue())
+    local_offset = payload.index(b"PK\x03\x04")
+    central_offset = payload.index(b"PK\x01\x02")
+    local_flags = struct.unpack_from("<H", payload, local_offset + 6)[0]
+    central_flags = struct.unpack_from("<H", payload, central_offset + 8)[0]
+    struct.pack_into("<H", payload, local_offset + 6, local_flags | 0x0001)
+    struct.pack_into("<H", payload, central_offset + 8, central_flags | 0x0001)
     monkeypatch.setattr(
         paperpkg_module,
         "_deterministic_zip_bytes",
-        lambda _parts, _order: unsafe.getvalue(),
+        lambda _parts, _order: bytes(payload),
     )
 
-    with pytest.raises(PackageLimitError, match="compression ratio"):
+    with pytest.raises(PackageLimitError, match="encrypted"):
         patch_save(source, document, destination)
 
     assert destination.read_bytes() == b"existing destination"

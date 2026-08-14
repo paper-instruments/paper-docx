@@ -16,6 +16,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, List, Optional
 
+from docx._guard import check_install
 from docx._transaction import rollback_on_error
 from docx.errors import UnsupportedStructureError
 from docx.oxml.ns import qn
@@ -27,6 +28,8 @@ if TYPE_CHECKING:
     from lxml.etree import _Element
 
     from docx.document import Document
+
+check_install()
 
 #: relationship-type suffixes of the comment part family (base comments part
 #: plus Word's extended/threading/people side-parts)

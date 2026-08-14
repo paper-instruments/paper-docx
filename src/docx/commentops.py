@@ -13,6 +13,7 @@ import datetime as dt
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from docx import _clock
+from docx._guard import check_install
 from docx._ownership import require_comment_owner
 from docx._textatoms import DEL_TEXT, INSTR_TEXT, is_direct_run_child, project_run_child
 from docx._transaction import rollback_on_error
@@ -28,6 +29,8 @@ if TYPE_CHECKING:
 
     from docx.comments import Comment
     from docx.document import Document
+
+check_install()
 
 _W15_NS = "http://schemas.microsoft.com/office/word/2012/wordml"
 _COMMENT_EX = f"{{{_W15_NS}}}commentEx"

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import pytest
 
-from docx import _version
+from docx import _guard, _version
 
 
 class DescribeDistributionIdentity:
@@ -21,3 +21,8 @@ class DescribeDistributionIdentity:
 
         monkeypatch.setattr(_version, "distribution", distribution)
         _version.assert_distribution_identity()
+
+    def it_refuses_paper_only_modules_through_the_shared_guard(self, monkeypatch):
+        monkeypatch.setattr(_version, "distribution", lambda _name: object())
+        with pytest.raises(ImportError, match="both installed"):
+            _guard.check_install()

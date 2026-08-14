@@ -8,6 +8,10 @@ from "bug" — programmer errors remain `TypeError`/`ValueError`.
 
 from __future__ import annotations
 
+from docx._guard import check_install
+
+check_install()
+
 
 class PaperRefusal(Exception):
     """Base for every safe refusal raised by paper-docx APIs.
@@ -18,11 +22,11 @@ class PaperRefusal(Exception):
 
 
 class PackageLimitError(PaperRefusal):
-    """A package archive is too large, ambiguous, or unsafe to expand.
+    """A package archive is corrupt, encrypted, or malformed.
 
-    Package reads validate ZIP structure and resource bounds before any XML is
-    parsed or output is replaced. This exception therefore represents a safe
-    refusal, including for encrypted entries, duplicate/noncanonical member
+    Package reads validate ZIP structure before any XML is parsed or output is
+    replaced. This exception therefore represents a safe refusal, including for
+    encrypted entries, duplicate/noncanonical member
     names, unsupported entry types, and forged ZIP size metadata.
     """
 

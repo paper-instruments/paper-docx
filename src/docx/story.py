@@ -29,6 +29,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Tuple
 
 from docx import _textatoms
+from docx._guard import check_install
 from docx._normalize import normalize_text
 from docx.oxml.ns import qn
 
@@ -36,6 +37,8 @@ if TYPE_CHECKING:
     from lxml.etree import _Element
 
     from docx.document import Document
+
+check_install()
 
 VIEWS = ("current", "original", "all")
 

@@ -16,6 +16,7 @@ import datetime as dt
 from typing import TYPE_CHECKING, Optional, Sequence, Tuple
 
 from docx import _clock
+from docx._guard import check_install
 from docx.errors import (
     AmbiguousTargetError,
     TargetNotFoundError,
@@ -36,6 +37,8 @@ from docx.story import Anchor, _iter_block_elements, _story_elements, content_ha
 if TYPE_CHECKING:
     from docx.document import Document
     from docx.table import Table, _Cell
+
+check_install()
 
 _T = qn("w:t")
 

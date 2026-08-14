@@ -20,6 +20,7 @@ import datetime as dt
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING, Iterator, List, Optional, Sequence, Tuple
 
+from docx._guard import check_install
 from docx._transaction import rollback_on_error
 from docx.errors import UnsupportedStructureError
 from docx.oxml.ns import qn
@@ -36,6 +37,8 @@ if TYPE_CHECKING:
     from lxml.etree import _Element
 
     from docx.document import Document
+
+check_install()
 
 _INS = qn("w:ins")
 _DEL = qn("w:del")
