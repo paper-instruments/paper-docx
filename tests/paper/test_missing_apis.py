@@ -49,6 +49,46 @@ def _blip_embed(drawing: Drawing) -> str:
     return drawing._drawing.xpath(".//pic:blipFill/a:blip/@r:embed")[0]
 
 
+def _attach_bound_control(document, tag: str, *, locked: bool = False) -> None:
+    item = parse_xml(
+        '<ns0:root xmlns:ns0="http://example.com/form">'
+        "<ns0:name>old</ns0:name></ns0:root>"
+    )
+    item_part = XmlPart(
+        PackURI("/customXml/item2.xml"),
+        "application/xml",
+        item,
+        document.part.package,
+    )
+    props = parse_xml(
+        '<ds:datastoreItem xmlns:ds="http://schemas.openxmlformats.org/'
+        'officeDocument/2006/customXml"'
+        f' ds:itemID="{STORE_ID}"/>'
+    )
+    props_part = XmlPart(
+        PackURI("/customXml/itemProps2.xml"),
+        CT.OFC_CUSTOM_XML_PROPERTIES,
+        props,
+        document.part.package,
+    )
+    document.part.relate_to(item_part, RT.CUSTOM_XML)
+    item_part.relate_to(props_part, RT.CUSTOM_XML_PROPS)
+    lock = '<w:lock w:val="contentLocked"/>' if locked else ""
+    document.element.body.insert(
+        len(document.element.body) - 1,
+        parse_xml(
+            '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+            f'<w:sdt><w:sdtPr><w:tag w:val="{tag}"/>{lock}'
+            "<w:dataBinding"
+            " w:prefixMappings=\"xmlns:ns0='http://example.com/form'\""
+            ' w:xpath="/ns0:root/ns0:name"'
+            f' w:storeItemID="{STORE_ID}"/></w:sdtPr>'
+            "<w:sdtContent><w:r><w:t>old</w:t></w:r></w:sdtContent>"
+            "</w:sdt></w:p>"
+        ),
+    )
+
+
 class DescribeCommentDeleteAndIdentity:
     def it_writes_modern_comment_identity_parts(self):
         document = _doc()
@@ -204,43 +244,23 @@ class DescribeNotes:
 class DescribeDataBoundControls:
     def it_writes_the_custom_xml_store(self, tmp_path: Path):
         document = _doc()
-        item = parse_xml(
-            '<ns0:root xmlns:ns0="http://example.com/form">'
-            "<ns0:name>old</ns0:name></ns0:root>"
-        )
-        item_part = XmlPart(
-            PackURI("/customXml/item2.xml"),
-            "application/xml",
-            item,
-            document.part.package,
-        )
-        props = parse_xml(
-            '<ds:datastoreItem xmlns:ds="http://schemas.openxmlformats.org/'
-            'officeDocument/2006/customXml"'
-            f' ds:itemID="{STORE_ID}"/>'
-        )
-        props_part = XmlPart(
-            PackURI("/customXml/itemProps2.xml"),
-            CT.OFC_CUSTOM_XML_PROPERTIES,
-            props,
-            document.part.package,
-        )
-        document.part.relate_to(item_part, RT.CUSTOM_XML)
-        item_part.relate_to(props_part, RT.CUSTOM_XML_PROPS)
-        body = document.element.body
-        body.insert(
-            len(body) - 1,
-            parse_xml(
-                '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-                "<w:sdt><w:sdtPr><w:tag w:val=\"bound\"/>"
-                "<w:dataBinding"
-                " w:prefixMappings=\"xmlns:ns0='http://example.com/form'\""
-                ' w:xpath="/ns0:root/ns0:name"'
-                f' w:storeItemID="{STORE_ID}"/></w:sdtPr>'
-                "<w:sdtContent><w:r><w:t>old</w:t></w:r></w:sdtContent>"
-                "</w:sdt></w:p>"
-            ),
-        )
+        _attach_bound_control(document, "bound")
+        set_control_value(document, "new", tag="bound")
+        assert get_control(document, tag="bound").value == "new"
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        store = None
+        for part in reopened.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                element = getattr(part, "_element", None)
+                store = element if element is not None else parse_xml(part.blob)
+        assert store is not None
+        ns = {"ns0": "http://example.com/form"}
+        assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"
+
+    def it_writes_the_store_when_the_package_has_binary_parts(self, tmp_path: Path):
+        document = _doc()
+        document.add_paragraph().add_run().add_picture(io.BytesIO(_bmp(255, 0, 0)))
+        _attach_bound_control(document, "bound")
         set_control_value(document, "new", tag="bound")
         assert get_control(document, tag="bound").value == "new"
         reopened = save_and_reopen(document, tmp_path / "out.docx")
@@ -255,44 +275,7 @@ class DescribeDataBoundControls:
 
     def it_refuses_a_locked_data_bound_control(self):
         document = _doc()
-        item = parse_xml(
-            '<ns0:root xmlns:ns0="http://example.com/form">'
-            "<ns0:name>old</ns0:name></ns0:root>"
-        )
-        item_part = XmlPart(
-            PackURI("/customXml/item2.xml"),
-            "application/xml",
-            item,
-            document.part.package,
-        )
-        props = parse_xml(
-            '<ds:datastoreItem xmlns:ds="http://schemas.openxmlformats.org/'
-            'officeDocument/2006/customXml"'
-            f' ds:itemID="{STORE_ID}"/>'
-        )
-        props_part = XmlPart(
-            PackURI("/customXml/itemProps2.xml"),
-            CT.OFC_CUSTOM_XML_PROPERTIES,
-            props,
-            document.part.package,
-        )
-        document.part.relate_to(item_part, RT.CUSTOM_XML)
-        item_part.relate_to(props_part, RT.CUSTOM_XML_PROPS)
-        body = document.element.body
-        body.insert(
-            len(body) - 1,
-            parse_xml(
-                '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-                "<w:sdt><w:sdtPr><w:tag w:val=\"bound-locked\"/>"
-                '<w:lock w:val="contentLocked"/>'
-                "<w:dataBinding"
-                " w:prefixMappings=\"xmlns:ns0='http://example.com/form'\""
-                ' w:xpath="/ns0:root/ns0:name"'
-                f' w:storeItemID="{STORE_ID}"/></w:sdtPr>'
-                "<w:sdtContent><w:r><w:t>old</w:t></w:r></w:sdtContent>"
-                "</w:sdt></w:p>"
-            ),
-        )
+        _attach_bound_control(document, "bound-locked", locked=True)
         with pytest.raises(UnsupportedStructureError, match="locked"):
             set_control_value(document, "new", tag="bound-locked")
         assert get_control(document, tag="bound-locked").value == "old"

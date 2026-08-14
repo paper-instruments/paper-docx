@@ -27,6 +27,7 @@ from docx.errors import (
     TargetNotFoundError,
     UnsupportedStructureError,
 )
+from docx.opc.constants import CONTENT_TYPE as CT
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
 from docx.protection import _refuse_if_protected
@@ -644,6 +645,8 @@ def _part_root(part):
     element = getattr(part, "_element", None)
     if element is not None:
         return element
+    if "xml" not in (part.content_type or "").lower():
+        return None
     blob = getattr(part, "blob", None)
     if not blob:
         return None
@@ -660,6 +663,8 @@ def _write_bound_store(document: "Document", binding: "_Element", value: str) ->
     nsmap = _prefix_map(binding.get(_PREFIX_MAPPINGS))
     props_part = None
     for part in document.part.package.iter_parts():
+        if part.content_type != CT.OFC_CUSTOM_XML_PROPERTIES:
+            continue
         root = _part_root(part)
         if root is None:
             continue
