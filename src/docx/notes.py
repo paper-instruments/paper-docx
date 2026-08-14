@@ -6,15 +6,17 @@ from typing import TYPE_CHECKING
 
 from docx._guard import check_install
 from docx._transaction import rollback_on_error
-from docx.errors import TargetNotFoundError
+from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.opc.constants import CONTENT_TYPE as CT
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.opc.packuri import PackURI
 from docx.oxml.ns import nsdecls, qn
-from docx.oxml.parser import parse_xml
+from docx.oxml.parser import OxmlElement, parse_xml
 from docx.parts.endnotes import EndnotesPart
 from docx.parts.footnotes import FootnotesPart
 from docx.protection import _refuse_if_protected
+from docx.search import _validate_writable_text
+from docx.story import _story_elements
 
 if TYPE_CHECKING:
     from lxml.etree import _Element
@@ -96,6 +98,17 @@ def _insert_note(
     _refuse_if_protected(document, operation)
     if not text:
         raise ValueError("note text must be non-empty")
+    _validate_writable_text(text, argument="text")
+    main_story = next(
+        story
+        for story, root in _story_elements(document)
+        if root is document.element
+    )
+    if span.story != main_story:
+        raise UnsupportedStructureError(
+            "footnotes and endnotes attach in the main document body"
+            f" (span is in {span.story})"
+        )
     with rollback_on_error(document, span):
         span._isolate_edge_runs()  # noqa: SLF001
         runs = []
@@ -110,17 +123,26 @@ def _insert_note(
         tag = _ENDNOTE if endnote else _FOOTNOTE
         note_id = _next_note_id(root, tag)
         kind = "endnote" if endnote else "footnote"
-        body = parse_xml(
-            f"<w:{kind} {_W_DECL} w:id=\"{note_id}\">"
-            f"<w:p><w:r><w:{kind}Ref/></w:r>"
-            f'<w:r><w:t xml:space="preserve"> {text}</w:t></w:r></w:p>'
-            f"</w:{kind}>"
-        )
-        root.append(body)
-        mark = parse_xml(
-            f"<w:r {_W_DECL}><w:rPr><w:vertAlign w:val=\"superscript\"/></w:rPr>"
-            f"<w:{kind}Reference w:id=\"{note_id}\"/></w:r>"
-        )
+        note = OxmlElement(f"w:{kind}")
+        note.set(_ID, str(note_id))
+        paragraph = OxmlElement("w:p")
+        ref_run = OxmlElement("w:r")
+        ref_run.append(OxmlElement(f"w:{kind}Ref"))
+        text_run = OxmlElement("w:r")
+        text_run.add_t(" " + text)
+        paragraph.append(ref_run)
+        paragraph.append(text_run)
+        note.append(paragraph)
+        root.append(note)
+        mark = OxmlElement("w:r")
+        r_pr = OxmlElement("w:rPr")
+        align = OxmlElement("w:vertAlign")
+        align.set(qn("w:val"), "superscript")
+        r_pr.append(align)
+        mark.append(r_pr)
+        reference = OxmlElement(f"w:{kind}Reference")
+        reference.set(_ID, str(note_id))
+        mark.append(reference)
         runs[-1].addnext(mark)
         return note_id
 

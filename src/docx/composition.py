@@ -232,6 +232,9 @@ def _copy_letterhead(
     dest_section.different_first_page_header_footer = (
         src_section.different_first_page_header_footer
     )
+    document.settings.odd_and_even_pages_header_footer = (
+        source.settings.odd_and_even_pages_header_footer
+    )
     pairs = (
         (src_section.header, dest_section.header),
         (src_section.footer, dest_section.footer),
@@ -244,16 +247,19 @@ def _copy_letterhead(
         if src_hf.is_linked_to_previous:
             continue
         dest_hf.is_linked_to_previous = False
+        source_children = list(src_hf._element)  # noqa: SLF001
+        _preflight_relationships(src_hf.part, source_children)
+        _refuse_unloadable_media(src_hf.part, source_children)
         dest_root = dest_hf._element  # noqa: SLF001
         for child in list(dest_root):
             dest_root.remove(child)
         clones = []
-        for child in src_hf._element:  # noqa: SLF001
+        for child in source_children:
             clone = copy.deepcopy(child)
             dest_root.append(clone)
             clones.append(clone)
-        _copy_media(document, source, clones, report)
-        _recreate_hyperlinks(document, source, clones, report)
+        _copy_media(dest_hf.part, src_hf.part, clones, report)
+        _recreate_hyperlinks(dest_hf.part, src_hf.part, clones, report)
 
 
 def _source_range(source: "Document", start_anchor, end_anchor, count: int) -> "List[_Element]":
@@ -356,10 +362,10 @@ def _compose(
         _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
     _refuse_malformed_numeric_ids(document, range_elements)
     _preflight_bookmark_references(source, range_elements)
-    _preflight_relationships(source, range_elements)
+    _preflight_relationships(source.part, range_elements)
     chained_definitions = _chained_source_definitions(source, range_elements)
     numbering_plan = _preflight_numbering(document, source, range_elements + chained_definitions)
-    _refuse_unloadable_media(source, range_elements)
+    _refuse_unloadable_media(source.part, range_elements)
 
     clones = [copy.deepcopy(element) for element in range_elements]
     imported_definitions = _reconcile_styles(document, source, clones, styles_mode, report)
@@ -371,8 +377,8 @@ def _compose(
         numbering_plan,
         report,
     )
-    _copy_media(document, source, clones, report)
-    _recreate_hyperlinks(document, source, clones, report)
+    _copy_media(document.part, source.part, clones, report)
+    _recreate_hyperlinks(document.part, source.part, clones, report)
     _reconcile_bookmarks(document, clones, report)
     _reallocate_sdt_ids(document, clones)
 
@@ -410,7 +416,7 @@ def _chained_source_definitions(source: "Document", elements: "List[_Element]") 
     ]
 
 
-def _preflight_relationships(source: "Document", range_elements: "List[_Element]") -> None:
+def _preflight_relationships(source_part, range_elements: "List[_Element]") -> None:
     """Refuse every relationship the composition pipeline cannot remap."""
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
@@ -422,7 +428,7 @@ def _preflight_relationships(source: "Document", range_elements: "List[_Element]
                     or attribute == _OFFICE_REL_ID
                 ):
                     continue
-                rel = source.part.rels.get(r_id)
+                rel = source_part.rels.get(r_id)
                 if node.tag == _BLIP and attribute == _R_EMBED:
                     if rel is not None and rel.reltype == RT.IMAGE and not rel.is_external:
                         continue
@@ -507,7 +513,7 @@ def _refuse_relationship(node, attribute, r_id, rel, expected=None) -> None:
     )
 
 
-def _refuse_unloadable_media(source: "Document", range_elements: "List[_Element]") -> None:
+def _refuse_unloadable_media(source_part, range_elements: "List[_Element]") -> None:
     """Pre-mutation check: every image in the range must be re-embeddable,
     or _copy_media would raise AFTER styles/numbering were already imported
     (refusal atomicity)."""
@@ -520,7 +526,7 @@ def _refuse_unloadable_media(source: "Document", range_elements: "List[_Element]
             r_id = node.get(attr)
             if not r_id:
                 continue
-            rel = source.part.rels.get(r_id)
+            rel = source_part.rels.get(r_id)
             if rel is None or rel.is_external:
                 raise UnsupportedStructureError(
                     f"image relationship {r_id!r} changed after composition"
@@ -1037,8 +1043,8 @@ def _remap_numbering(
 
 
 def _copy_media(
-    document: "Document",
-    source: "Document",
+    dest_part,
+    source_part,
     clones: "List[_Element]",
     report: CompositionReport,
 ) -> None:
@@ -1052,24 +1058,24 @@ def _copy_media(
             if not r_id:
                 continue
             if r_id not in rel_map:
-                rel = source.part.rels.get(r_id)
+                rel = source_part.rels.get(r_id)
                 if rel is None or rel.is_external or rel.reltype != RT.IMAGE:
                     raise UnsupportedStructureError(
                         f"image relationship {r_id!r} changed after composition"
                         " preflight. Nothing was changed"
                     )
                 blob = rel.target_part.blob
-                new_r_id, _image = document.part.get_or_add_image(io.BytesIO(blob))
+                new_r_id, _image = dest_part.get_or_add_image(io.BytesIO(blob))
                 rel_map[r_id] = new_r_id
                 report.media_copied.append(
-                    str(document.part.rels[new_r_id].target_part.partname).lstrip("/")
+                    str(dest_part.rels[new_r_id].target_part.partname).lstrip("/")
                 )
             node.set(attr, rel_map[r_id])
 
 
 def _recreate_hyperlinks(
-    document: "Document",
-    source: "Document",
+    dest_part,
+    source_part,
     clones: "List[_Element]",
     report: CompositionReport,
 ) -> None:
@@ -1080,13 +1086,13 @@ def _recreate_hyperlinks(
             r_id = hyperlink.get(_R_ID)
             if not r_id:
                 continue  # internal anchor link: carried as-is
-            rel = source.part.rels.get(r_id)
+            rel = source_part.rels.get(r_id)
             if rel is None or not rel.is_external or rel.reltype != RT.HYPERLINK:
                 raise UnsupportedStructureError(
                     f"hyperlink relationship {r_id!r} changed after composition"
                     " preflight. Nothing was changed"
                 )
-            new_r_id = document.part.relate_to(rel.target_ref, RT.HYPERLINK, is_external=True)
+            new_r_id = dest_part.relate_to(rel.target_ref, RT.HYPERLINK, is_external=True)
             hyperlink.set(_R_ID, new_r_id)
 
 

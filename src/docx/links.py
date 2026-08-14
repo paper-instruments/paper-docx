@@ -6,7 +6,7 @@ from typing import TYPE_CHECKING
 
 from docx._guard import check_install
 from docx._transaction import rollback_on_error
-from docx.errors import BoundaryViolationError
+from docx.errors import BoundaryViolationError, UnsupportedStructureError
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
@@ -24,6 +24,28 @@ _P = qn("w:p")
 _R = qn("w:r")
 _RPR = qn("w:rPr")
 _RSTYLE = qn("w:rStyle")
+
+
+class _PartHost:
+    """Parent whose `.part` is the story that owns the hyperlink XML."""
+
+    def __init__(self, part):
+        self.part = part
+
+
+def _part_for_span(document: "Document", span: "Span"):
+    wanted = span.story.lstrip("/").casefold()
+    package = document.part.package
+    if package is None:
+        raise UnsupportedStructureError(
+            f"cannot resolve story part for {span.story}; nothing was changed"
+        )
+    for part in package.iter_parts():
+        if str(part.partname).lstrip("/").casefold() == wanted:
+            return part
+    raise UnsupportedStructureError(
+        f"span story {span.story} has no package part; nothing was changed"
+    )
 
 
 def add_hyperlink(document: "Document", span: "Span", address: str) -> Hyperlink:
@@ -58,7 +80,8 @@ def add_hyperlink(document: "Document", span: "Span", address: str) -> Hyperlink
             raise BoundaryViolationError(
                 "hyperlink runs are not inside a paragraph; nothing was changed"
             )
-        r_id = document.part.relate_to(address, RT.HYPERLINK, is_external=True)
+        story_part = _part_for_span(document, span)
+        r_id = story_part.relate_to(address, RT.HYPERLINK, is_external=True)
         hyperlink = OxmlElement("w:hyperlink")
         hyperlink.set(qn("r:id"), r_id)
         hyperlink.set(qn("w:history"), "1")
@@ -75,5 +98,5 @@ def add_hyperlink(document: "Document", span: "Span", address: str) -> Hyperlink
                 style = OxmlElement("w:rStyle")
                 r_pr.insert(0, style)
             style.set(qn("w:val"), "Hyperlink")
-        paragraph = Paragraph(parent, document)
+        paragraph = Paragraph(parent, _PartHost(story_part))
         return Hyperlink(hyperlink, paragraph)

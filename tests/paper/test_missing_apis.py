@@ -13,7 +13,7 @@ from docx.commentops import delete_comment
 from docx.composition import append_document
 from docx.controls import get_control, set_control_value
 from docx.drawing import Drawing
-from docx.errors import DocumentProtectedError
+from docx.errors import DocumentProtectedError, UnsupportedStructureError
 from docx.fields import add_caption
 from docx.links import add_hyperlink
 from docx.notes import add_endnote, add_footnote
@@ -120,6 +120,26 @@ class DescribeHyperlinks:
         ]
         assert "https://example.com/b" in addresses
 
+    def it_puts_the_relationship_on_the_header_part(self, tmp_path: Path):
+        document = _doc()
+        header = document.sections[0].header
+        header.paragraphs[0].text = "HeaderLinkUnique"
+        span = find_one(document, "HeaderLinkUnique", story="word/header1.xml")
+        link = add_hyperlink(document, span, "https://example.com/header")
+        header_part = document.sections[0].header.part
+        r_id = link._hyperlink.get(qn("r:id"))
+        assert r_id in header_part.rels
+        assert header_part.rels[r_id].reltype == RT.HYPERLINK
+        assert header_part.rels[r_id].target_ref == "https://example.com/header"
+        assert link.address == "https://example.com/header"
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        addresses = [
+            hyperlink.address
+            for paragraph in reopened.sections[0].header.paragraphs
+            for hyperlink in paragraph.hyperlinks
+        ]
+        assert "https://example.com/header" in addresses
+
 
 class DescribeCaptions:
     def it_inserts_a_seq_field(self):
@@ -146,6 +166,22 @@ class DescribeNotes:
         assert str(endnote_id) in {
             note.get(qn("w:id")) for note in endnotes.findall(qn("w:endnote"))
         }
+
+    def it_keeps_ampersands_and_angles_as_text(self, tmp_path: Path):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        add_footnote(document, span, "A & B <C>")
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        footnotes = reopened.part.part_related_by(RT.FOOTNOTES)._element
+        texts = [node.text or "" for node in footnotes.findall(".//" + qn("w:t"))]
+        assert any("A & B <C>" in text for text in texts)
+
+    def it_refuses_a_note_outside_the_body(self):
+        document = _doc()
+        document.sections[0].header.paragraphs[0].text = "HeaderNoteUnique"
+        span = find_one(document, "HeaderNoteUnique", story="word/header1.xml")
+        with pytest.raises(UnsupportedStructureError, match="main document body"):
+            add_footnote(document, span, "nope")
 
 
 class DescribeDataBoundControls:
@@ -209,3 +245,50 @@ class DescribeSourceLetterhead:
         append_document(destination, source, headers="source")
         reopened = save_and_reopen(destination, tmp_path / "out.docx")
         assert "Source letterhead" in reopened.sections[-1].header.paragraphs[0].text
+
+    def it_copies_header_images_onto_the_header_part(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.sections[0].header.paragraphs[0].add_run().add_picture(io.BytesIO(_bmp(0, 128, 0)))
+        append_document(destination, source, headers="source")
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        header = reopened.sections[-1].header
+        blips = header._element.findall(".//" + qn("a:blip"))
+        assert blips
+        r_id = blips[0].get(qn("r:embed"))
+        assert r_id in header.part.rels
+        assert header.part.rels[r_id].reltype == RT.IMAGE
+
+    def it_copies_header_hyperlinks_onto_the_header_part(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.sections[0].header.paragraphs[0].text = "SourceHeaderLink"
+        span = find_one(source, "SourceHeaderLink", story="word/header1.xml")
+        add_hyperlink(source, span, "https://example.com/letterhead")
+        append_document(destination, source, headers="source")
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        header = reopened.sections[-1].header
+        addresses = [
+            hyperlink.address
+            for paragraph in header.paragraphs
+            for hyperlink in paragraph.hyperlinks
+        ]
+        assert "https://example.com/letterhead" in addresses
+        r_ids = [
+            node.get(qn("r:id"))
+            for node in header._element.findall(".//" + qn("w:hyperlink"))
+        ]
+        assert r_ids and r_ids[0]
+        assert r_ids[0] in header.part.rels
+        assert header.part.rels[r_ids[0]].reltype == RT.HYPERLINK
+        assert header.part.rels[r_ids[0]].target_ref == "https://example.com/letterhead"
+
+    def it_turns_on_even_page_headers_when_the_source_uses_them(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.settings.odd_and_even_pages_header_footer = True
+        source.sections[0].even_page_header.paragraphs[0].text = "Even letterhead"
+        append_document(destination, source, headers="source")
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert reopened.settings.odd_and_even_pages_header_footer
+        assert "Even letterhead" in reopened.sections[-1].even_page_header.paragraphs[0].text
