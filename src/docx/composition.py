@@ -232,9 +232,14 @@ def _copy_letterhead(
     dest_section.different_first_page_header_footer = (
         src_section.different_first_page_header_footer
     )
-    document.settings.odd_and_even_pages_header_footer = (
-        source.settings.odd_and_even_pages_header_footer
-    )
+    source_even = source.settings.odd_and_even_pages_header_footer
+    dest_even = document.settings.odd_and_even_pages_header_footer
+    if source_even != dest_even and len(document.sections) > 1:
+        raise UnsupportedStructureError(
+            "even/odd headers are a document-wide setting; destination has"
+            " more than one section. Nothing was changed"
+        )
+    document.settings.odd_and_even_pages_header_footer = source_even
     pairs = (
         (src_section.header, dest_section.header),
         (src_section.footer, dest_section.footer),
@@ -244,12 +249,13 @@ def _copy_letterhead(
         (src_section.even_page_footer, dest_section.even_page_footer),
     )
     for src_hf, dest_hf in pairs:
-        if src_hf.is_linked_to_previous:
+        src_defined = _defined_header_footer(src_hf)
+        if src_defined is None:
             continue
         dest_hf.is_linked_to_previous = False
-        source_children = list(src_hf._element)  # noqa: SLF001
-        _preflight_relationships(src_hf.part, source_children)
-        _refuse_unloadable_media(src_hf.part, source_children)
+        source_children = list(src_defined._element)  # noqa: SLF001
+        _preflight_relationships(src_defined.part, source_children)
+        _refuse_unloadable_media(src_defined.part, source_children)
         dest_root = dest_hf._element  # noqa: SLF001
         for child in list(dest_root):
             dest_root.remove(child)
@@ -258,8 +264,22 @@ def _copy_letterhead(
             clone = copy.deepcopy(child)
             dest_root.append(clone)
             clones.append(clone)
-        _copy_media(dest_hf.part, src_hf.part, clones, report)
-        _recreate_hyperlinks(dest_hf.part, src_hf.part, clones, report)
+        _copy_media(dest_hf.part, src_defined.part, clones, report)
+        _recreate_hyperlinks(dest_hf.part, src_defined.part, clones, report)
+
+
+def _defined_header_footer(hf):
+    """The header/footer that Word actually shows for this slot.
+
+    Walk `is_linked_to_previous` without touching `_element`, which would
+    create a part on the source document.
+    """
+    current = hf
+    while current is not None:
+        if not current.is_linked_to_previous:
+            return current
+        current = current._prior_headerfooter  # noqa: SLF001
+    return None
 
 
 def _source_range(source: "Document", start_anchor, end_anchor, count: int) -> "List[_Element]":

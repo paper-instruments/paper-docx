@@ -24,6 +24,7 @@ _P = qn("w:p")
 _R = qn("w:r")
 _RPR = qn("w:rPr")
 _RSTYLE = qn("w:rStyle")
+_HYPERLINK = qn("w:hyperlink")
 
 
 class _PartHost:
@@ -80,6 +81,15 @@ def add_hyperlink(document: "Document", span: "Span", address: str) -> Hyperlink
             raise BoundaryViolationError(
                 "hyperlink runs are not inside a paragraph; nothing was changed"
             )
+        for run in runs:
+            ancestor = run.getparent()
+            while ancestor is not None and ancestor.tag != _P:
+                if ancestor.tag == _HYPERLINK:
+                    raise UnsupportedStructureError(
+                        "span is already inside a hyperlink; retarget it"
+                        " with Hyperlink.address. Nothing was changed"
+                    )
+                ancestor = ancestor.getparent()
         story_part = _part_for_span(document, span)
         r_id = story_part.relate_to(address, RT.HYPERLINK, is_external=True)
         hyperlink = OxmlElement("w:hyperlink")

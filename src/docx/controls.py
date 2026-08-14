@@ -469,6 +469,7 @@ class Control:
             if not isinstance(value, str):
                 raise ValueError("data-bound controls take a string value")
             _validate_writable_text(value, argument="value")
+            _refuse_locked_control_content(self._sdt)
             binding = self._sdt_pr.find(_DATA_BINDING)
             with rollback_on_error(self._document):
                 _write_bound_store(self._document, binding, value)
@@ -703,15 +704,10 @@ def _write_bound_store(document: "Document", binding: "_Element", value: str) ->
         )
 
 
-def _refuse_control_write_restrictions(sdt: "_Element") -> None:
-    """Honor binding and content locks without rejecting typed controls."""
+def _refuse_locked_control_content(sdt: "_Element") -> None:
     sdt_pr = sdt.find(_SDT_PR)
     if sdt_pr is None:
         return
-    if sdt_pr.find(_DATA_BINDING) is not None:
-        raise UnsupportedStructureError(
-            "control is data-bound; edits could be discarded on sync"
-        )
     locks = sdt_pr.findall(_LOCK)
     if len(locks) > 1:
         raise UnsupportedStructureError(
@@ -721,6 +717,18 @@ def _refuse_control_write_restrictions(sdt: "_Element") -> None:
         raise UnsupportedStructureError(
             "control content is locked; nothing was changed"
         )
+
+
+def _refuse_control_write_restrictions(sdt: "_Element") -> None:
+    """Honor binding and content locks without rejecting typed controls."""
+    sdt_pr = sdt.find(_SDT_PR)
+    if sdt_pr is None:
+        return
+    if sdt_pr.find(_DATA_BINDING) is not None:
+        raise UnsupportedStructureError(
+            "control is data-bound; edits could be discarded on sync"
+        )
+    _refuse_locked_control_content(sdt)
 
 
 def _iter_sdts(element: "_Element") -> "Iterator[_Element]":

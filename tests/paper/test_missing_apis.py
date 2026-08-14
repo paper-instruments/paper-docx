@@ -10,7 +10,7 @@ import pytest
 
 import docx
 from docx.commentops import delete_comment
-from docx.composition import append_document
+from docx.composition import CompositionReport, _copy_letterhead, append_document
 from docx.controls import get_control, set_control_value
 from docx.drawing import Drawing
 from docx.errors import DocumentProtectedError, UnsupportedStructureError
@@ -140,6 +140,23 @@ class DescribeHyperlinks:
         ]
         assert "https://example.com/header" in addresses
 
+    def it_refuses_to_nest_a_hyperlink(self):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        add_hyperlink(document, span, "https://example.com/a")
+        again = find_one(document, "perfectly ordinary")
+        with pytest.raises(UnsupportedStructureError, match="already inside a hyperlink"):
+            add_hyperlink(document, again, "https://example.com/b")
+
+    def it_clears_a_stale_internal_anchor_when_retargeting(self):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        link = add_hyperlink(document, span, "https://example.com/a")
+        link._hyperlink.anchor = "_TocOld"
+        link.address = "https://example.com/b"
+        assert link._hyperlink.anchor is None
+        assert link.address == "https://example.com/b"
+
 
 class DescribeCaptions:
     def it_inserts_a_seq_field(self):
@@ -236,6 +253,50 @@ class DescribeDataBoundControls:
         ns = {"ns0": "http://example.com/form"}
         assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"
 
+    def it_refuses_a_locked_data_bound_control(self):
+        document = _doc()
+        item = parse_xml(
+            '<ns0:root xmlns:ns0="http://example.com/form">'
+            "<ns0:name>old</ns0:name></ns0:root>"
+        )
+        item_part = XmlPart(
+            PackURI("/customXml/item2.xml"),
+            "application/xml",
+            item,
+            document.part.package,
+        )
+        props = parse_xml(
+            '<ds:datastoreItem xmlns:ds="http://schemas.openxmlformats.org/'
+            'officeDocument/2006/customXml"'
+            f' ds:itemID="{STORE_ID}"/>'
+        )
+        props_part = XmlPart(
+            PackURI("/customXml/itemProps2.xml"),
+            CT.OFC_CUSTOM_XML_PROPERTIES,
+            props,
+            document.part.package,
+        )
+        document.part.relate_to(item_part, RT.CUSTOM_XML)
+        item_part.relate_to(props_part, RT.CUSTOM_XML_PROPS)
+        body = document.element.body
+        body.insert(
+            len(body) - 1,
+            parse_xml(
+                '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
+                "<w:sdt><w:sdtPr><w:tag w:val=\"bound-locked\"/>"
+                '<w:lock w:val="contentLocked"/>'
+                "<w:dataBinding"
+                " w:prefixMappings=\"xmlns:ns0='http://example.com/form'\""
+                ' w:xpath="/ns0:root/ns0:name"'
+                f' w:storeItemID="{STORE_ID}"/></w:sdtPr>'
+                "<w:sdtContent><w:r><w:t>old</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        with pytest.raises(UnsupportedStructureError, match="locked"):
+            set_control_value(document, "new", tag="bound-locked")
+        assert get_control(document, tag="bound-locked").value == "old"
+
 
 class DescribeSourceLetterhead:
     def it_copies_source_headers_when_requested(self, tmp_path: Path):
@@ -292,3 +353,23 @@ class DescribeSourceLetterhead:
         reopened = save_and_reopen(destination, tmp_path / "out.docx")
         assert reopened.settings.odd_and_even_pages_header_footer
         assert "Even letterhead" in reopened.sections[-1].even_page_header.paragraphs[0].text
+
+    def it_copies_an_even_header_the_last_source_section_inherits(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.settings.odd_and_even_pages_header_footer = True
+        source.sections[0].even_page_header.paragraphs[0].text = "Inherited even"
+        source.add_section()
+        assert source.sections[-1].even_page_header.is_linked_to_previous
+        _copy_letterhead(destination, source, CompositionReport())
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert "Inherited even" in reopened.sections[-1].even_page_header.paragraphs[0].text
+
+    def it_refuses_even_odd_when_the_destination_has_more_sections(self):
+        destination = _doc()
+        destination.add_section()
+        source = _doc()
+        source.settings.odd_and_even_pages_header_footer = True
+        source.sections[0].even_page_header.paragraphs[0].text = "Even letterhead"
+        with pytest.raises(UnsupportedStructureError, match="document-wide"):
+            append_document(destination, source, headers="source")
