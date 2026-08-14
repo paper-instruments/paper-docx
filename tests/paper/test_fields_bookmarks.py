@@ -27,7 +27,7 @@ from docx.fields import (
 )
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.search import find_one
+from docx.search import Span, find_one
 
 from .harness.contract import save_and_reopen
 from .harness.paths import fixture_path
@@ -90,6 +90,28 @@ class DescribeBookmarks:
             "First body paragraph with perfectly ordinary text."
             in [p.text for p in reopened.paragraphs]
         )
+
+    def it_restores_the_span_if_create_fails_after_isolation(self, monkeypatch):
+        document = _doc()
+        span = find_one(document, "ordinary")
+        start_before = span._start_offset
+        assert start_before > 0
+        atoms_before = list(span._atoms)
+        original = Span._isolate_edge_runs
+
+        def isolate_then_fail(self):
+            original(self)
+            raise RuntimeError("forced after isolation")
+
+        monkeypatch.setattr(Span, "_isolate_edge_runs", isolate_then_fail)
+
+        with pytest.raises(RuntimeError, match="forced after isolation"):
+            create_bookmark(document, span, "RestoredMark")
+
+        assert span._start_offset == start_before
+        assert span._atoms == atoms_before
+        span._validate_fresh()
+        assert all(bookmark.name != "RestoredMark" for bookmark in list_bookmarks(document))
 
     def it_refuses_a_current_view_span_crossing_deleted_content(self):
         document = docx.Document()
