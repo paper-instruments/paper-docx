@@ -6,17 +6,21 @@ them type-correctly: text controls get their runs replaced (placeholder
 state cleared), checkboxes flip `w14:checked` AND their
 glyph, dropdowns/combos validate against their `w:listItem` choices, dates
 set `w:fullDate` alongside the display text. Data-bound controls
-(`w:dataBinding`) refuse: their value lives in a custom XML part Word
-re-syncs on open, so editing the surface text would silently vanish.
+(`w:dataBinding`) write the custom XML store Word re-syncs on open, then
+update the visible surface.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterator, List, Optional, Tuple, Union
 
+from lxml import etree
+
 from docx._guard import check_install
+from docx._transaction import rollback_on_error
 from docx.errors import (
     AmbiguousTargetError,
     BoundaryViolationError,
@@ -61,6 +65,11 @@ _BLOCK_CONTROL_PARENTS = frozenset(
 )
 _SHOWING_PLC_HDR = qn("w:showingPlcHdr")
 _DATA_BINDING = qn("w:dataBinding")
+_STORE_ITEM_ID = qn("w:storeItemID")
+_XPATH = qn("w:xpath")
+_PREFIX_MAPPINGS = qn("w:prefixMappings")
+_DS_NS = "http://schemas.openxmlformats.org/officeDocument/2006/customXml"
+_DS_ITEM_ID = f"{{{_DS_NS}}}itemID"
 _LOCK = qn("w:lock")
 _DROPDOWN = qn("w:dropDownList")
 _COMBO = qn("w:comboBox")
@@ -457,11 +466,14 @@ class Control:
         self._validate_ownership()
         _refuse_if_protected(self._document, "set a control value")
         if self.is_data_bound:
-            raise UnsupportedStructureError(
-                "control is data-bound (w:dataBinding): its value lives in a"
-                " custom XML part Word re-syncs on open; editing the surface"
-                " text would silently vanish"
-            )
+            if not isinstance(value, str):
+                raise ValueError("data-bound controls take a string value")
+            _validate_writable_text(value, argument="value")
+            binding = self._sdt_pr.find(_DATA_BINDING)
+            with rollback_on_error(self._document):
+                _write_bound_store(self._document, binding, value)
+                self._set_text(value)
+            return
         _refuse_control_write_restrictions(self._sdt)
         control_type = self.control_type
         if control_type == "checkbox":
@@ -613,6 +625,81 @@ def _validate_span_surface_edit(sdt: "_Element") -> None:
         raise UnsupportedStructureError(
             f"span lies in a {control_type} control whose display text is tied"
             " to machine-readable control state; use Control.set_value()"
+        )
+
+
+def _prefix_map(raw: Optional[str]) -> dict:
+    if not raw:
+        return {}
+    return {
+        match.group(1): match.group(2)
+        for match in re.finditer(
+            r"xmlns:([A-Za-z0-9_]+)\s*=\s*['\"]([^'\"]+)['\"]", raw
+        )
+    }
+
+
+def _part_root(part):
+    element = getattr(part, "_element", None)
+    if element is not None:
+        return element
+    blob = getattr(part, "blob", None)
+    if not blob:
+        return None
+    return etree.fromstring(blob)
+
+
+def _write_bound_store(document: "Document", binding: "_Element", value: str) -> None:
+    store_id = binding.get(_STORE_ITEM_ID)
+    xpath = binding.get(_XPATH)
+    if not store_id or not xpath:
+        raise UnsupportedStructureError(
+            "data-bound control is missing storeItemID or xpath; nothing was changed"
+        )
+    nsmap = _prefix_map(binding.get(_PREFIX_MAPPINGS))
+    props_part = None
+    for part in document.part.package.iter_parts():
+        root = _part_root(part)
+        if root is None:
+            continue
+        if root.get(_DS_ITEM_ID) == store_id:
+            props_part = part
+            break
+    if props_part is None:
+        raise TargetNotFoundError(
+            f"no custom XML store with itemID {store_id!r}; nothing was changed"
+        )
+    item_part = None
+    for owner in document.part.package.iter_parts():
+        rels = getattr(owner, "rels", None)
+        if not rels:
+            continue
+        for rel in rels.values():
+            if rel.is_external:
+                continue
+            if rel.target_part is props_part:
+                item_part = owner
+                break
+        if item_part is not None:
+            break
+    if item_part is None or item_part is props_part:
+        raise TargetNotFoundError(
+            "custom XML properties have no item payload; nothing was changed"
+        )
+    item_root = _part_root(item_part)
+    if item_root is None:
+        raise UnsupportedStructureError(
+            "custom XML item is not writable XML; nothing was changed"
+        )
+    nodes = item_root.xpath(xpath, namespaces=nsmap or None)
+    if not nodes:
+        raise TargetNotFoundError(
+            f"xpath {xpath!r} matched no node in the custom XML store"
+        )
+    nodes[0].text = value
+    if getattr(item_part, "_element", None) is None:
+        item_part._blob = etree.tostring(
+            item_root, xml_declaration=True, encoding="UTF-8"
         )
 
 

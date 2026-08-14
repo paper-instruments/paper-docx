@@ -9,6 +9,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING
 
+from docx._transaction import rollback_on_error
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from docx.oxml.ns import qn
+from docx.protection import _refuse_if_protected
 from docx.shared import Parented
 from docx.text.run import Run
 
@@ -42,6 +46,20 @@ class Hyperlink(Parented):
         """
         rId = self._hyperlink.rId
         return self._parent.part.rels[rId].target_ref if rId else ""
+
+    @address.setter
+    def address(self, value: str) -> None:
+        """Point this hyperlink at a new external URL."""
+        document = self.part.package.main_document_part.document
+        _refuse_if_protected(document, "retarget a hyperlink")
+        if not value:
+            raise ValueError("address must be a non-empty URL")
+        with rollback_on_error(document):
+            old_r_id = self._hyperlink.rId
+            new_r_id = self.part.relate_to(value, RT.HYPERLINK, is_external=True)
+            self._hyperlink.set(qn("r:id"), new_r_id)
+            if old_r_id and old_r_id != new_r_id:
+                self.part.drop_rel(old_r_id)
 
     @property
     def contains_page_break(self) -> bool:

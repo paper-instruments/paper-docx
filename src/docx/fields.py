@@ -147,6 +147,37 @@ def add_reference_field(
         _set_update_fields_on_open(document)
 
 
+def add_caption(
+    paragraph: "Paragraph",
+    *,
+    label: str = "Figure",
+    description: str = "",
+) -> None:
+    """Append a SEQ caption (`Figure 1`, `Table 1`, …) to `paragraph`.
+
+    Word recomputes the number on open. This package writes the field, not
+    the displayed integer.
+    """
+    if not label:
+        raise ValueError("label must be a non-empty caption name")
+    document = _document_of_paragraph(paragraph)
+    _refuse_if_protected(document, "insert a caption")
+    seq_name = "".join(character for character in label if character.isalnum()) or "Figure"
+    with rollback_on_error(document):
+        paragraph._p.style = "Caption"
+        prefix = OxmlElement("w:r")
+        prefix.add_t(f"{label} ")
+        paragraph._p.append(prefix)
+        paragraph._p.append(
+            _simple_field(f" SEQ {seq_name} \\* ARABIC ", "1")
+        )
+        if description:
+            suffix = OxmlElement("w:r")
+            suffix.add_t(f": {description}")
+            paragraph._p.append(suffix)
+        _set_update_fields_on_open(document)
+
+
 def insert_toc_after(
     document: "Document", anchor, *, levels: Tuple[int, int] = (1, 3)
 ) -> None:

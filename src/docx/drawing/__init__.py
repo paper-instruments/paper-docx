@@ -2,14 +2,18 @@
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import IO, TYPE_CHECKING
 
+from docx._transaction import rollback_on_error
+from docx.image.image import Image
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml.drawing import CT_Drawing
+from docx.oxml.ns import qn
+from docx.protection import _refuse_if_protected
 from docx.shared import Parented
 
 if TYPE_CHECKING:
     import docx.types as t
-    from docx.image.image import Image
 
 
 class Drawing(Parented):
@@ -57,3 +61,20 @@ class Drawing(Parented):
         doc_part = self.part
         image_part = doc_part.related_parts[rId]
         return image_part.image
+
+    def replace_picture(self, image_descriptor: str | IO[bytes]) -> None:
+        """Swap this drawing's image bytes. Display size and position stay.
+
+        Always writes a new image part so other shapes that shared the old
+        part are unchanged.
+        """
+        if not self.has_picture:
+            raise ValueError("drawing does not contain a picture")
+        document = self.part.package.main_document_part.document
+        _refuse_if_protected(document, "replace a picture")
+        with rollback_on_error(document):
+            image = Image.from_file(image_descriptor)
+            image_part = self.part.package.image_parts._add_image_part(image)
+            r_id = self.part.relate_to(image_part, RT.IMAGE)
+            for blip in self._drawing.xpath(".//pic:blipFill/a:blip"):
+                blip.set(qn("r:embed"), r_id)
