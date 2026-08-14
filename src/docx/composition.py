@@ -176,17 +176,20 @@ def append_document(
     *,
     section: str = "new_page",
     styles: str = "match_by_name",
+    headers: str = "destination",
 ) -> CompositionReport:
     """Append `source`'s whole body to `document`.
 
-    Keeps the destination's headers/footers and authors no new
+    Keeps the destination's headers/footers by default and authors no new
     `w:sectPr`: `section="new_page"` prefixes the appended content with a
-    page break; `"continuous"` appends flush. (Keeping the source's headers
-    is a declared future mode.)
+    page break; `"continuous"` appends flush. Pass `headers="source"` to
+    copy the source letterhead onto the destination's last section.
     """
     _validate_styles_mode(styles)
     if section not in ("new_page", "continuous"):
         raise ValueError(f"section must be 'new_page' or 'continuous', got {section!r}")
+    if headers not in ("destination", "source"):
+        raise ValueError(f"headers must be 'destination' or 'source', got {headers!r}")
     _refuse_if_protected(document, "append a document")
     range_elements = [child for child in source.element.body if child.tag != _SECT_PR]
     if not range_elements:
@@ -211,12 +214,46 @@ def append_document(
             run.append(page_break)
             break_paragraph.append(run)
             destination_blocks[-1].addnext(break_paragraph)
+        if headers == "source":
+            _copy_letterhead(document, source, report)
         return report
 
 
 def _validate_styles_mode(styles: str) -> None:
     if styles not in ("match_by_name", "import_renamed"):
         raise ValueError(f"styles must be 'match_by_name' or 'import_renamed', got {styles!r}")
+
+
+def _copy_letterhead(
+    document: "Document", source: "Document", report: CompositionReport
+) -> None:
+    dest_section = document.sections[-1]
+    src_section = source.sections[-1]
+    dest_section.different_first_page_header_footer = (
+        src_section.different_first_page_header_footer
+    )
+    pairs = (
+        (src_section.header, dest_section.header),
+        (src_section.footer, dest_section.footer),
+        (src_section.first_page_header, dest_section.first_page_header),
+        (src_section.first_page_footer, dest_section.first_page_footer),
+        (src_section.even_page_header, dest_section.even_page_header),
+        (src_section.even_page_footer, dest_section.even_page_footer),
+    )
+    for src_hf, dest_hf in pairs:
+        if src_hf.is_linked_to_previous:
+            continue
+        dest_hf.is_linked_to_previous = False
+        dest_root = dest_hf._element  # noqa: SLF001
+        for child in list(dest_root):
+            dest_root.remove(child)
+        clones = []
+        for child in src_hf._element:  # noqa: SLF001
+            clone = copy.deepcopy(child)
+            dest_root.append(clone)
+            clones.append(clone)
+        _copy_media(document, source, clones, report)
+        _recreate_hyperlinks(document, source, clones, report)
 
 
 def _source_range(source: "Document", start_anchor, end_anchor, count: int) -> "List[_Element]":

@@ -80,7 +80,7 @@ Read **What it does** first. The API column is only the name in the library.
 
 ## Missing
 
-Jobs the agent still cannot do through the package, so it would unzip and patch XML. This PR does not add these APIs. **Plans** is vs `paper-original-plans-and-specs-2026-08-13/paper-docx`. **Found in** is where an agent skill still does the job by hand.
+Jobs the agent still could not do through the package before this follow-up. This branch adds public APIs for each row.
 
 | What the agent needs to do | Use case | Why the package does not cover it | Found in | Plans |
 | --- | --- | --- | --- | --- |

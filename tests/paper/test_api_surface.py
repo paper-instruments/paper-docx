@@ -170,11 +170,13 @@ APPROVED_SIGNATURES = [
     ("docx.commentops", "anchored_text", "(document, comment)"),
     ("docx.commentops", "comment_thread", "(document)"),
     ("docx.commentops", "parent_of", "(document, comment)"),
+    ("docx.commentops", "delete_comment", "(document, comment)"),
     ("docx.controls", "iter_controls", "(document)"),
     ("docx.revision", "Revisions.remaining_unsupported", "(self)"),
     # -- composition, bookmarks, fields, formatting --------------------------
     ("docx.protection", "protection_status", "(document)"),
     ("docx.protection", "acknowledge_protection", "(document)"),
+    ("docx.protection", "set_protection", "(document, *, edit)"),
     (
         "docx.package",
         "compare",
@@ -190,7 +192,8 @@ APPROVED_SIGNATURES = [
     (
         "docx.composition",
         "append_document",
-        "(document, source, *, section='new_page', styles='match_by_name')",
+        "(document, source, *, section='new_page', styles='match_by_name',"
+        " headers='destination')",
     ),
     ("docx.bookmarks", "list_bookmarks", "(document)"),
     ("docx.bookmarks", "create_bookmark", "(document, span, name)"),
@@ -204,6 +207,15 @@ APPROVED_SIGNATURES = [
         "(paragraph, *, bookmark, kind='text')",
     ),
     ("docx.fields", "insert_toc_after", "(document, anchor, *, levels=(1, 3))"),
+    (
+        "docx.fields",
+        "add_caption",
+        "(paragraph, *, label='Figure', description='')",
+    ),
+    ("docx.links", "add_hyperlink", "(document, span, address)"),
+    ("docx.notes", "add_footnote", "(document, span, text)"),
+    ("docx.notes", "add_endnote", "(document, span, text)"),
+    ("docx.drawing", "Drawing.replace_picture", "(self, image_descriptor)"),
     ("docx.formatting", "format_of", "(target)"),
     ("docx.formatting", "surrounding_format", "(document, anchor)"),
 ]
