@@ -13,8 +13,10 @@ import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
+from docx._guard import check_install
 from docx._ownership import require_span_owner
 from docx._textatoms import DEL_TEXT, INSTR_TEXT, is_direct_run_child, project_run_child
+from docx._transaction import rollback_on_error
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
@@ -26,6 +28,8 @@ if TYPE_CHECKING:
 
     from docx.document import Document
     from docx.search import Span
+
+check_install()
 
 _BOOKMARK_START = qn("w:bookmarkStart")
 _BOOKMARK_END = qn("w:bookmarkEnd")
@@ -220,12 +224,13 @@ def create_bookmark(document: "Document", span: "Span", name: str) -> BookmarkIn
     start_marker.set(_NAME, name)
     end_marker = OxmlElement("w:bookmarkEnd")
     end_marker.set(_ID, str(bookmark_id))
-    span._isolate_edge_runs()  # noqa: SLF001
-    first_run = span._atoms[0].run  # noqa: SLF001
-    last_run = span._atoms[-1].run  # noqa: SLF001
-    first_run.addprevious(start_marker)
-    last_run.addnext(end_marker)
-    return BookmarkInfo(name=name, bookmark_id=bookmark_id, story=span.story, text=span.text)
+    with rollback_on_error(document):
+        span._isolate_edge_runs()  # noqa: SLF001
+        first_run = span._atoms[0].run  # noqa: SLF001
+        last_run = span._atoms[-1].run  # noqa: SLF001
+        first_run.addprevious(start_marker)
+        last_run.addnext(end_marker)
+        return BookmarkInfo(name=name, bookmark_id=bookmark_id, story=span.story, text=span.text)
 
 
 def delete_bookmark(document: "Document", name: str) -> None:
@@ -288,9 +293,10 @@ def delete_bookmark(document: "Document", name: str) -> None:
         )
 
     # -- validated; mutate --
-    for start, end in pairs:
-        end.getparent().remove(end)
-        start.getparent().remove(start)
+    with rollback_on_error(document):
+        for start, end in pairs:
+            end.getparent().remove(end)
+            start.getparent().remove(start)
 
 
 _FLD_CHAR = qn("w:fldChar")

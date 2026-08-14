@@ -25,12 +25,15 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+from docx._guard import check_install
 from docx.oxml.ns import qn
 
 if TYPE_CHECKING:
     from lxml.etree import _Element
 
     from docx.document import Document
+
+check_install()
 
 _VAL = qn("w:val")
 _RPR = qn("w:rPr")

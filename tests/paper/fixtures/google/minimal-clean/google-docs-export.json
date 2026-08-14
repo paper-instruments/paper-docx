@@ -1,0 +1,39 @@
+{
+  "fixture": "google-docs-export.docx",
+  "provenance": {
+    "app": "Google Docs",
+    "version": "unknown — File → Download → Microsoft Word (.docx)",
+    "notes": "User-exported 2026-08-14. Google's zip has no docProps/core.xml or app.xml. Every run carries w:rtl. Title and Heading 1–3, one body sentence, bold/italic/underline paragraphs, blue text, a bullet list, and a numbered list."
+  },
+  "features": [
+    "google-docs-export",
+    "heading",
+    "direct-bold",
+    "direct-italic",
+    "direct-underline",
+    "direct-color",
+    "bullet-list",
+    "numbered-list"
+  ],
+  "ground_truth": {
+    "paragraphs": [
+      {"text": "Title", "style": "Title"},
+      {"text": "Heading 1", "style": "Heading 1"},
+      {"text": "Heading 2", "style": "Heading 2"},
+      {"text": "Heading 3", "style": "Heading 3"},
+      {"text": "This is a document created in Google Docs, and exported to Microsoft Word."},
+      {"text": "Bold", "bold": true},
+      {"text": "Italic", "italic": true},
+      {"text": "Underlined", "underline": "single"},
+      {"text": "Bullet point 1", "list": "bullet"},
+      {"text": "Bullet point 2", "list": "bullet"},
+      {"text": "Bullet point 3", "list": "bullet"},
+      {"text": "Blue text", "color_rgb": "0000ff"},
+      {"text": "Numbered list 1", "list": "decimal"},
+      {"text": "Numbered list 2", "list": "decimal"},
+      {"text": "Numbered list 3", "list": "decimal"}
+    ]
+  },
+  "verified_by": "Malthe provided the export; sidecar machine-cross-checked against the file",
+  "date": "2026-08-14"
+}

@@ -7,6 +7,7 @@ from __future__ import annotations
 import datetime as dt
 from typing import TYPE_CHECKING, Callable, Iterator, Optional, cast
 
+from docx._transaction import rollback_on_error, rollback_xml_on_error
 from docx.blkcntnr import BlockItemContainer
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 
@@ -131,12 +132,8 @@ class Comments:
             return comment
 
         if document is not None:
-            from docx._transaction import rollback_on_error
-
             with rollback_on_error(document, self):
                 return add()
-        from docx._transaction import rollback_xml_on_error
-
         with rollback_xml_on_error(self._comments_elm):
             return add()
 
@@ -211,12 +208,8 @@ class Comment(BlockItemContainer):
             return paragraph
 
         if document is not None:
-            from docx._transaction import rollback_on_error
-
             with rollback_on_error(document, self):
                 return add()
-        from docx._transaction import rollback_xml_on_error
-
         with rollback_xml_on_error(self._comment_elm):
             return add()
 
@@ -247,12 +240,8 @@ class Comment(BlockItemContainer):
             return table
 
         if document is not None:
-            from docx._transaction import rollback_on_error
-
             with rollback_on_error(document, self):
                 return add()
-        from docx._transaction import rollback_xml_on_error
-
         with rollback_xml_on_error(self._comment_elm):
             return add()
 
@@ -267,7 +256,8 @@ class Comment(BlockItemContainer):
     @author.setter
     def author(self, value: str):
         self._validate_live("edit a comment")
-        self._comment_elm.author = value
+        with rollback_xml_on_error(self._comment_elm):
+            self._comment_elm.author = value
 
     @property
     def comment_id(self) -> int:
@@ -286,7 +276,8 @@ class Comment(BlockItemContainer):
     @initials.setter
     def initials(self, value: str | None):
         self._validate_live("edit a comment")
-        self._comment_elm.initials = value
+        with rollback_xml_on_error(self._comment_elm):
+            self._comment_elm.initials = value
 
     @property
     def text(self) -> str:

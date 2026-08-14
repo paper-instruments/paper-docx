@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import io
+import os
 import shutil
 import stat
 import struct
@@ -14,8 +15,7 @@ from pathlib import Path
 import pytest
 
 import docx
-from docx import _zipguard
-from docx._zipguard import GuardedZipReader, enforce_compressed_size
+from docx._zipguard import GuardedZipReader
 from docx.errors import PackageLimitError, PaperRefusal
 from docx.package import diagnose, diff_package, patch_save
 
@@ -36,7 +36,6 @@ def _write_archive(
 
 
 def _guarded_read(path: Path) -> dict[str, bytes]:
-    enforce_compressed_size(path)
     with zipfile.ZipFile(path) as archive:
         parts, _ = GuardedZipReader(archive).read_all()
     return parts
@@ -116,65 +115,8 @@ class DescribeZipStructureGuard:
             _guarded_read(path)
 
 
-class DescribeZipResourceBounds:
-    def it_limits_the_actual_compressed_file_size(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
-    ):
-        path = tmp_path / "compressed.docx"
-        _write_archive(path, (("word/document.xml", b"<document/>"),))
-        monkeypatch.setattr(_zipguard, "MAX_COMPRESSED_BYTES", path.stat().st_size - 1)
-        with pytest.raises(PackageLimitError, match="compressed size"):
-            _guarded_read(path)
-
-    def it_limits_member_count(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        path = tmp_path / "members.docx"
-        _write_archive(path, (("one.bin", b"1"), ("two.bin", b"2")))
-        monkeypatch.setattr(_zipguard, "MAX_MEMBER_COUNT", 1)
-        with pytest.raises(PackageLimitError, match="member count"):
-            _guarded_read(path)
-
-    @pytest.mark.parametrize(
-        ("name", "limit_name"),
-        [
-            ("word/document.xml", "MAX_XML_MEMBER_BYTES"),
-            ("word/media/a.png", "MAX_BINARY_MEMBER_BYTES"),
-        ],
-    )
-    def it_applies_separate_xml_and_binary_member_limits(
-        self,
-        name: str,
-        limit_name: str,
-        tmp_path: Path,
-        monkeypatch: pytest.MonkeyPatch,
-    ):
-        path = tmp_path / "member.docx"
-        _write_archive(path, ((name, b"12345"),))
-        monkeypatch.setattr(_zipguard, limit_name, 4)
-        with pytest.raises(PackageLimitError, match="expanded size"):
-            _guarded_read(path)
-
-    def it_limits_total_expanded_bytes(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        path = tmp_path / "total.docx"
-        _write_archive(path, (("one.bin", b"12345"), ("two.bin", b"67890")))
-        monkeypatch.setattr(_zipguard, "MAX_TOTAL_EXPANDED_BYTES", 9)
-        with pytest.raises(PackageLimitError, match="total expanded size"):
-            _guarded_read(path)
-
-    def it_limits_compression_ratio(self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
-        path = tmp_path / "ratio.docx"
-        _write_archive(
-            path,
-            (("word/document.xml", b"A" * 4_096),),
-            compression=zipfile.ZIP_DEFLATED,
-        )
-        monkeypatch.setattr(_zipguard, "MAX_COMPRESSION_RATIO", 2)
-        monkeypatch.setattr(_zipguard, "RATIO_ENFORCEMENT_FLOOR_BYTES", 1_024)
-        with pytest.raises(PackageLimitError, match="compression ratio"):
-            _guarded_read(path)
-
-    def and_it_exempts_members_at_or_below_the_ratio_floor(self, tmp_path: Path):
-        """Repetitive WordprocessingML legitimately exceeds 100:1; below the
-        floor the absolute limits alone bound it, so save->open round-trips."""
+class DescribeZipInflationHonesty:
+    def it_opens_a_highly_compressible_member(self, tmp_path: Path):
         path = tmp_path / "repetitive.docx"
         repetitive = b"<w:p><w:r><w:t>same line</w:t></w:r></w:p>" * 8_192
         _write_archive(
@@ -184,23 +126,11 @@ class DescribeZipResourceBounds:
         )
         with zipfile.ZipFile(path) as archive:
             info = archive.getinfo("word/document.xml")
-            assert info.file_size > info.compress_size * 100  # genuinely >100:1
+            assert info.file_size > info.compress_size * 100
         assert _guarded_read(path)["word/document.xml"] == repetitive
 
-    def and_it_still_refuses_extreme_amplification_above_the_floor(
-        self, tmp_path: Path
-    ):
-        path = tmp_path / "amplified.docx"
-        _write_archive(
-            path,
-            (("word/media/blob.bin", b"\0" * (20 * 1024 * 1024)),),
-            compression=zipfile.ZIP_DEFLATED,
-        )
-        with pytest.raises(PackageLimitError, match="compression ratio"):
-            _guarded_read(path)
-
     def it_enforces_actual_inflated_bytes_when_metadata_understates_them(
-        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+        self, tmp_path: Path
     ):
         path = tmp_path / "forged-size.docx"
         _write_archive(
@@ -209,9 +139,8 @@ class DescribeZipResourceBounds:
             compression=zipfile.ZIP_DEFLATED,
         )
         _understate_expanded_size(path, declared_size=32)
-        monkeypatch.setattr(_zipguard, "MAX_XML_MEMBER_BYTES", 64)
 
-        with pytest.raises(PackageLimitError, match="actual expanded size"):
+        with pytest.raises(PackageLimitError, match="declared size"):
             _guarded_read(path)
 
     def it_rejects_undeclared_stored_bytes_even_with_matching_forged_crc(self, tmp_path: Path):
@@ -284,6 +213,63 @@ class DescribePatchSavePermissions:
         assert result.verbatim_copy
         assert out.read_bytes() == source.read_bytes()
         assert stat.S_IMODE(out.stat().st_mode) == 0o604
+
+    def it_refuses_if_the_destination_symlink_changes_during_save(
+        self, tmp_path: Path, monkeypatch
+    ):
+        source = fixture_path(MINIMAL)
+        document = docx.Document(str(source))
+        document.add_paragraph("must not land")
+        old_target = tmp_path / "old.docx"
+        new_target = tmp_path / "new.docx"
+        old_target.write_bytes(b"old target")
+        new_target.write_bytes(b"new target")
+        link = tmp_path / "link.docx"
+        link.symlink_to(old_target.name)
+        original_lstat = os.lstat
+        original_fsync = os.fsync
+        staged = {"done": False}
+
+        def fsync(fd):
+            staged["done"] = True
+            return original_fsync(fd)
+
+        def lstat(path):
+            path_s = os.path.abspath(os.fspath(path))
+            if (
+                staged["done"]
+                and path_s == os.path.abspath(link)
+                and os.path.basename(os.readlink(link)) == old_target.name
+            ):
+                link.unlink()
+                link.symlink_to(new_target.name)
+            return original_lstat(path)
+
+        monkeypatch.setattr(os, "fsync", fsync)
+        monkeypatch.setattr(os, "lstat", lstat)
+
+        with pytest.raises(OSError, match="symlink changed"):
+            patch_save(source, document, link)
+
+        assert old_target.read_bytes() == b"old target"
+        assert new_target.read_bytes() == b"new target"
+        assert not list(tmp_path.glob("*.partial"))
+
+    def it_follows_a_destination_symlink_and_keeps_the_link(self, tmp_path: Path):
+        source = fixture_path(MINIMAL)
+        document = docx.Document(str(source))
+        document.add_paragraph("saved through link")
+        target = tmp_path / "target.docx"
+        target.write_bytes(b"old")
+        target.chmod(0o640)
+        link = tmp_path / "link.docx"
+        link.symlink_to(target.name)
+
+        patch_save(source, document, link)
+
+        assert link.is_symlink()
+        assert stat.S_IMODE(target.stat().st_mode) == 0o640
+        assert docx.Document(str(target)).paragraphs[-1].text == "saved through link"
 
 
 class DescribeGuardedStreamReads:

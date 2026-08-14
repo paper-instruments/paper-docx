@@ -25,7 +25,9 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, List, Optional, Sequence, Tuple, Union
 
 from docx import _clock
+from docx._guard import check_install
 from docx._ownership import require_anchor_owner
+from docx._transaction import rollback_on_error
 from docx.errors import (
     BoundaryViolationError,
     TargetNotFoundError,
@@ -47,6 +49,8 @@ if TYPE_CHECKING:
     from lxml.etree import _Element
 
     from docx.document import Document
+
+check_install()
 
 AnchorLike = Union[str, Block, Span, Anchor]
 
@@ -491,26 +495,26 @@ def insert_section_after(
     root = dict(_story_elements(document))[story]
     _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
 
-    # -- validated; build and mutate --
-    stamp = date if date is not None else _clock.now()
-    nodes = [_new_paragraph(heading, heading_style_id)]
-    nodes.extend(_new_paragraph(text, body_style_id) for text in paragraphs)
-    revision_ids: List[int] = []
-    if tracked:
-        next_id = _next_revision_id(document)
-        for node in nodes:
-            _wrap_paragraph_content_as_insertion(node, next_id, author, stamp)
-            _stamp_paragraph_mark(node, "w:ins", next_id, author, stamp)
-            revision_ids.append(next_id)
-            next_id += 1
-    _insert_after(anchor_p, nodes)
-    return BlockEditResult(
-        story=story,
-        inserted_blocks=len(nodes),
-        deleted_blocks=0,
-        deleted_text=(),
-        revision_ids=tuple(revision_ids),
-    )
+    with rollback_on_error(document):
+        stamp = date if date is not None else _clock.now()
+        nodes = [_new_paragraph(heading, heading_style_id)]
+        nodes.extend(_new_paragraph(text, body_style_id) for text in paragraphs)
+        revision_ids: List[int] = []
+        if tracked:
+            next_id = _next_revision_id(document)
+            for node in nodes:
+                _wrap_paragraph_content_as_insertion(node, next_id, author, stamp)
+                _stamp_paragraph_mark(node, "w:ins", next_id, author, stamp)
+                revision_ids.append(next_id)
+                next_id += 1
+        _insert_after(anchor_p, nodes)
+        return BlockEditResult(
+            story=story,
+            inserted_blocks=len(nodes),
+            deleted_blocks=0,
+            deleted_text=(),
+            revision_ids=tuple(revision_ids),
+        )
 
 
 def tracked_delete_paragraphs(
@@ -535,22 +539,22 @@ def tracked_delete_paragraphs(
     for paragraph in selected:
         _validate_deletable_paragraph(paragraph)
 
-    # -- validated; mutate --
-    stamp = date if date is not None else _clock.now()
-    next_id = _next_revision_id(document)
-    deleted_text: List[str] = []
-    revision_ids: List[int] = []
-    for paragraph in selected:
-        deleted_text.append(_mark_paragraph_deleted(paragraph, next_id, author, stamp))
-        revision_ids.append(next_id)
-        next_id += 1
-    return BlockEditResult(
-        story=story,
-        inserted_blocks=0,
-        deleted_blocks=len(selected),
-        deleted_text=tuple(deleted_text),
-        revision_ids=tuple(revision_ids),
-    )
+    with rollback_on_error(document):
+        stamp = date if date is not None else _clock.now()
+        next_id = _next_revision_id(document)
+        deleted_text: List[str] = []
+        revision_ids: List[int] = []
+        for paragraph in selected:
+            deleted_text.append(_mark_paragraph_deleted(paragraph, next_id, author, stamp))
+            revision_ids.append(next_id)
+            next_id += 1
+        return BlockEditResult(
+            story=story,
+            inserted_blocks=0,
+            deleted_blocks=len(selected),
+            deleted_text=tuple(deleted_text),
+            revision_ids=tuple(revision_ids),
+        )
 
 
 def tracked_replace_paragraphs(
@@ -575,29 +579,29 @@ def tracked_replace_paragraphs(
     for paragraph in selected:
         _validate_deletable_paragraph(paragraph)
 
-    # -- validated; mutate --
-    stamp = date if date is not None else _clock.now()
-    next_id = _next_revision_id(document)
-    deleted_text: List[str] = []
-    revision_ids: List[int] = []
-    for paragraph in selected:
-        deleted_text.append(_mark_paragraph_deleted(paragraph, next_id, author, stamp))
-        revision_ids.append(next_id)
-        next_id += 1
-    inserted = [_new_paragraph(text, body_style_id) for text in replacement_paragraphs]
-    for node in inserted:
-        _wrap_paragraph_content_as_insertion(node, next_id, author, stamp)
-        _stamp_paragraph_mark(node, "w:ins", next_id, author, stamp)
-        revision_ids.append(next_id)
-        next_id += 1
-    _insert_after(selected[-1], inserted)
-    return BlockEditResult(
-        story=story,
-        inserted_blocks=len(inserted),
-        deleted_blocks=len(selected),
-        deleted_text=tuple(deleted_text),
-        revision_ids=tuple(revision_ids),
-    )
+    with rollback_on_error(document):
+        stamp = date if date is not None else _clock.now()
+        next_id = _next_revision_id(document)
+        deleted_text: List[str] = []
+        revision_ids: List[int] = []
+        for paragraph in selected:
+            deleted_text.append(_mark_paragraph_deleted(paragraph, next_id, author, stamp))
+            revision_ids.append(next_id)
+            next_id += 1
+        inserted = [_new_paragraph(text, body_style_id) for text in replacement_paragraphs]
+        for node in inserted:
+            _wrap_paragraph_content_as_insertion(node, next_id, author, stamp)
+            _stamp_paragraph_mark(node, "w:ins", next_id, author, stamp)
+            revision_ids.append(next_id)
+            next_id += 1
+        _insert_after(selected[-1], inserted)
+        return BlockEditResult(
+            story=story,
+            inserted_blocks=len(inserted),
+            deleted_blocks=len(selected),
+            deleted_text=tuple(deleted_text),
+            revision_ids=tuple(revision_ids),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -772,52 +776,52 @@ def insert_blocks_after(
     root = dict(_story_elements(document))[story]
     _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
 
-    # -- validated; build and mutate --
-    stamp = date if date is not None else _clock.now()
-    nodes: "List[_Element]" = []
-    paragraph_nodes: "List[_Element]" = []
-    for block in blocks:
-        if isinstance(block, RichParagraph):
-            style_id = _validated_style_id(
-                document, block.style, argument="RichParagraph.style"
-            )
-            node = _new_rich_paragraph(block, style_id)
-            nodes.append(node)
-            paragraph_nodes.append(node)
-        elif isinstance(block, ListBlock):
-            for node in _new_list_paragraphs(document, block):
+    with rollback_on_error(document):
+        stamp = date if date is not None else _clock.now()
+        nodes: "List[_Element]" = []
+        paragraph_nodes: "List[_Element]" = []
+        for block in blocks:
+            if isinstance(block, RichParagraph):
+                style_id = _validated_style_id(
+                    document, block.style, argument="RichParagraph.style"
+                )
+                node = _new_rich_paragraph(block, style_id)
                 nodes.append(node)
                 paragraph_nodes.append(node)
-        else:
-            nodes.append(_new_table(document, block))
-    # Word fuses adjacent sibling tables and refuses a cell/body ending in
-    # w:tbl: pad tables with an empty paragraph where needed
-    padded: "List[_Element]" = []
-    for position, node in enumerate(nodes):
-        padded.append(node)
-        if node.tag != qn("w:tbl"):
-            continue
-        next_in_batch = nodes[position + 1] if position + 1 < len(nodes) else None
-        if next_in_batch is not None and next_in_batch.tag == qn("w:tbl"):
-            padded.append(OxmlElement("w:p"))
-        elif next_in_batch is None:
-            following = anchor_p.getnext()
-            if following is None or following.tag == qn("w:tbl"):
+            elif isinstance(block, ListBlock):
+                for node in _new_list_paragraphs(document, block):
+                    nodes.append(node)
+                    paragraph_nodes.append(node)
+            else:
+                nodes.append(_new_table(document, block))
+        # Word fuses adjacent sibling tables and refuses a cell/body ending in
+        # w:tbl: pad tables with an empty paragraph where needed
+        padded: "List[_Element]" = []
+        for position, node in enumerate(nodes):
+            padded.append(node)
+            if node.tag != qn("w:tbl"):
+                continue
+            next_in_batch = nodes[position + 1] if position + 1 < len(nodes) else None
+            if next_in_batch is not None and next_in_batch.tag == qn("w:tbl"):
                 padded.append(OxmlElement("w:p"))
-    nodes = padded
-    revision_ids: "List[int]" = []
-    if tracked:
-        next_id = _next_revision_id(document)
-        for node in paragraph_nodes:
-            _wrap_paragraph_content_as_insertion(node, next_id, author, stamp)
-            _stamp_paragraph_mark(node, "w:ins", next_id, author, stamp)
-            revision_ids.append(next_id)
-            next_id += 1
-    _insert_after(anchor_p, nodes)
-    return BlockEditResult(
-        story=story,
-        inserted_blocks=len(nodes),
-        deleted_blocks=0,
-        deleted_text=(),
-        revision_ids=tuple(revision_ids),
-    )
+            elif next_in_batch is None:
+                following = anchor_p.getnext()
+                if following is None or following.tag == qn("w:tbl"):
+                    padded.append(OxmlElement("w:p"))
+        nodes = padded
+        revision_ids: "List[int]" = []
+        if tracked:
+            next_id = _next_revision_id(document)
+            for node in paragraph_nodes:
+                _wrap_paragraph_content_as_insertion(node, next_id, author, stamp)
+                _stamp_paragraph_mark(node, "w:ins", next_id, author, stamp)
+                revision_ids.append(next_id)
+                next_id += 1
+        _insert_after(anchor_p, nodes)
+        return BlockEditResult(
+            story=story,
+            inserted_blocks=len(nodes),
+            deleted_blocks=0,
+            deleted_text=(),
+            revision_ids=tuple(revision_ids),
+        )

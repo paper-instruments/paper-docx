@@ -12,16 +12,25 @@ This section is the work list. **Place Yes** means keep. **Missing** is not a bu
 
 **Drop**
 
-- Every zip-bomb size/count/ratio cap. Names: `MAX_COMPRESSED_BYTES`, `MAX_MEMBER_COUNT`, `MAX_CENTRAL_DIRECTORY_BYTES`, `MAX_XML_MEMBER_BYTES`, `MAX_BINARY_MEMBER_BYTES`, `MAX_TOTAL_EXPANDED_BYTES`, `MAX_COMPRESSION_RATIO`, `RATIO_ENFORCEMENT_FLOOR_BYTES`. After this, a large but valid `.docx` must open.
-- Stop raising `PackageLimitError` for those caps.
+- ~~Every zip-bomb size/count/ratio cap.~~ **Done.** Names gone: `MAX_COMPRESSED_BYTES`, `MAX_MEMBER_COUNT`, `MAX_CENTRAL_DIRECTORY_BYTES`, `MAX_XML_MEMBER_BYTES`, `MAX_BINARY_MEMBER_BYTES`, `MAX_TOTAL_EXPANDED_BYTES`, `MAX_COMPRESSION_RATIO`, `RATIO_ENFORCEMENT_FLOOR_BYTES`. A large but valid `.docx` opens.
+- ~~Stop raising `PackageLimitError` for those caps.~~ **Done.** That class still means corrupt, encrypted, or malformed zip.
 
 **Keep (do not prune, do not confuse with the caps)**
 
 - `PackageLimitError` when the file is not a usable Word zip: corrupt, encrypted, or malformed.
 - Typed refuse on that broken zip, atomic save, roll back a failed edit.
-- `Document.finalize`, `Document.scrub`, `docx.package.compare`, and every other **Place Yes** row.
+- `Document.finalize`, `Document.scrub`, `docx.package.compare`, `paper-docx-doctor`, and every other **Place Yes** row.
 
-**Fix** (holes in what we already keep): the Defects table. Same zip decision lives there so it is not forgotten: drop the caps, keep the broken-file error.
+**Fix** (holes in what we already keep): the Defects table.
+
+- ~~`patch_save` writer (symlink + `fsync`)~~ **Done.**
+- ~~Rollback on `blocks` / `fields` / bookmarks / `Comment.author` / `initials`~~ **Done.** Author/initials use cheap XML rollback.
+- ~~Composition `assert ... or True`~~ **Done.**
+- ~~Mixed-install identity check on Paper-only modules, plus a transitive-clobber CI install~~ **Done.** Locally verified. After upstream overwrites `docx/__init__.py`, `from docx import Document` still loads stock python-docx; run the doctor for that path.
+
+**Parked (not this change)**
+
+- Sample files authored in desktop Microsoft Word. Tests today use generated files, LibreOffice files, and one Google Docs export. Real Word markup is unproven until someone who has Word adds those files.
 
 ## Every Paper addition: does it have a place?
 
@@ -42,14 +51,14 @@ Read **What it does** first. The API column is only the name in the library.
 | Insert a page number, date, cross-reference, or table of contents. The displayed value is computed when Word opens the file, not here. | `docx.fields` | Structured | Yes | Stock is weak; agents otherwise hand-edit field XML. Page numbers, dates, cross-references, and TOC were asked for. Auto-number captions (Figure 1, 2, …) were not (see Missing). |
 | Copy a range, or a whole document, into another file, keeping styles, lists, and images. | `docx.composition` | Combine | Yes | Cross-file copy is where styles and relationships corrupt. Headers stay those of the destination file; keeping the source letterhead was left for later. Will not copy comments, pending revisions, or footnotes. |
 | Save an edited file without rewriting ZIP parts that did not change. | `docx.package.patch_save` | Package | Yes | Stock save rewrites the whole ZIP, which noisily diffs and can break unrelated parts. |
-| On open and save: refuse a broken ZIP with a typed error, write atomically, and roll back a failed edit instead of leaving a half-written file. | zipguard, atomic `save`, transactions, `PaperRefusal` | Package | Yes | Load/save plumbing. Keep. The zip-bomb *size caps* are a different thing: **Drop** (see What we will change). |
+| On open and save: refuse a broken ZIP with a typed error, write atomically, and roll back a failed edit instead of leaving a half-written file. | zipguard, atomic `save`, transactions, `PaperRefusal` | Package | Yes | Load/save plumbing. Keep. The zip-bomb *size caps* are gone (see What we will change). A member that inflates past the size it declared still refuses. |
 | Say why a file will not open: encrypted, template, macros, not Word, damaged ZIP. | `docx.package.diagnose` | Package | Yes | Stock raises untyped errors on bad input. |
 | Show which ZIP parts or visible text changed between two files, or what pending revisions would change if accepted. | `diff_package`, `text_diff`, `pending_changes` | Package | Yes | Proof of what an edit did. Library belongs; not a ritual after every call. |
 | Strip comments and author metadata for a clean outgoing copy. Optional: RSIDs and hidden text. Does not remove Restrict Editing. | `Document.scrub` | Deliver | Yes | Send-clean step, not an everyday edit: strip comments and author names before the file leaves. Keep; already shipped. |
 | Accept or reject every tracked change, then check that none remain, or refuse and undo. | `Document.finalize` | Deliver | Yes | Accept All (or Reject All), then prove the file is not still redlined. If leftover markup remains, refuse and roll back. That check is not something you can do after `accept_all`. Comments and author names are `scrub`, a separate call. |
 | See whether Restrict Editing is on, and refuse Paper edits until you override in memory for this session. Cannot turn protection on or strip it from the file. | `docx.protection` | Deliver | Yes | The original plan asked to notice a lock and refuse, never to strip it. A setter to lock a file for a recipient was not asked for (see Missing). |
 | Point at text and ask what Word is actually showing: bold, italic, font, size, color, highlight, alignment, paragraph style. Those can live on the text, on a style, or on the document default; this walks all three and says which one won. If a phrase is half bold and half not, it says mixed. It does not answer spacing, indent, borders, table coloring, or list-number look; those come back as “we did not compute this” instead of a guess. | `docx.formatting` | Edit existing | Yes | The original plan asked for this inspect, and asked it to name what it cannot resolve rather than guess. The short list plus “not computed” is what was asked for, not a half-built inspect. A helper to match nearby formatting when inserting exists, but copy/insert do not call it yet. |
-| Check that `import docx` is this fork, not a mixed install with python-docx. | `paper-docx-doctor` | Package | Weak | Plans asked only for `__paper_version__` and a frozen `docx` import, not a doctor CLI or `DoctorError`. The shared import name is real; the doctor is extra machinery, and mixed-install detection is still incomplete (see Defects). |
+| Check that `import docx` is this fork, not a mixed install with python-docx. | `paper-docx-doctor` | Package | Yes | Both packages own the import name `docx`. Keep the doctor. Paper-only modules also refuse a mixed install. CI covers both install orders, leftover uninstall, and a dummy package that pulls `python-docx` as a dependency. |
 
 
 ---
@@ -81,12 +90,12 @@ These are not new Word jobs. They are holes in APIs that already exist. Source: 
 
 | Defect                                                                    | Why it matters                                                                                                                                                                                                                                                                                    | Found in                                                                                         |
 | ------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------ |
-| `patch_save` does not use the same path writer as `Document.save`         | Saving through a symlink replaces the shortcut instead of updating the real file. No `fsync`. Same function name, weaker durability. Confirmed: `OpcPackage.save` uses `_atomic_package_write` (follow symlink, fsync); `patch_save` uses `_write_bytes_atomically` (replace the path, no fsync). | [#12](https://github.com/paper-instruments/paper-docx/pull/12) P0-1                              |
-| Refusal/rollback is not a closed contract for every public mutator        | Docs say unsafe edits change nothing. `search` / `commentops` / `revision` wrap `rollback_on_error`. `blocks.py` public mutators and `fields.py` inserts validate then mutate with no rollback wrapper. `Comment.author` / `initials` setters validate then assign.                               | [#12](https://github.com/paper-instruments/paper-docx/pull/12) P0-2; confirmed in those files    |
-| Mixed `paper-docx` / `python-docx` install can leave a broken `docx` tree | Shared import name. Plans asked for `__paper_version__`, not a doctor. Doctor and import-time `assert_distribution_identity` catch a lot; `import docx` alone cannot detect every overwrite.                                                                                                                                                         | [#12](https://github.com/paper-instruments/paper-docx/pull/12) P0-3                              |
-| No desktop-Word or Google-exported fixtures                               | Review/compare/accept-reject are tested on generated + LibreOffice files. Word-authored redlines are unproven. The original plan asked for real Word files as a test gate.                                                                                                                             | [#12](https://github.com/paper-instruments/paper-docx/pull/12); `tests/paper/fixtures/README.md` |
-| Composition test always passes                                            | `tests/paper/test_composition.py` has `assert ... or True`. Combine use case is untested at that assertion.                                                                                                                                                                                       | [#12](https://github.com/paper-instruments/paper-docx/pull/12); confirmed in code                |
-| Zip size/count/ratio caps refuse large but valid files                    | **Drop the caps.** Do not drop `PackageLimitError`. After the change: a huge but valid file opens; a corrupt, encrypted, or malformed zip still raises `PackageLimitError`. Not in python-docx. Not in the original plans. | `src/docx/_zipguard.py`                                                                          |
+| ~~`patch_save` does not use the same path writer as `Document.save`~~ **Done.** | Follows a destination symlink, `fsync`s the file and directory, refuses if the link changes during save. Same idea as `Document.save`. | [#12](https://github.com/paper-instruments/paper-docx/pull/12) P0-1                              |
+| ~~Refusal/rollback is not a closed contract for every public mutator~~ **Done.** | `blocks.py` public mutators, `fields.py` inserts, and `create_bookmark` / `delete_bookmark` wrap `rollback_on_error`. `Comment.author` / `initials` wrap `rollback_xml_on_error` (one attribute set; a full-package snapshot was thousands of times slower and bought nothing). | [#12](https://github.com/paper-instruments/paper-docx/pull/12) P0-2                              |
+| ~~Mixed `paper-docx` / `python-docx` install can leave a broken `docx` tree~~ **Done for Paper-only modules and CI.** | Doctor kept. Paper-only modules call `docx._guard.check_install`. CI covers both install orders, leftover uninstall, and a dummy package that pulls `python-docx`. After upstream overwrites `docx/__init__.py`, `from docx import Document` still succeeds as stock python-docx; the doctor is the check for that path. | [#12](https://github.com/paper-instruments/paper-docx/pull/12) P0-3                              |
+| No desktop-Word sample files (parked) | Tests use generated files, LibreOffice files, and one Google Docs export. Word-authored tracked changes are still unproven. Needs someone with desktop Word; not this change. | [#12](https://github.com/paper-instruments/paper-docx/pull/12); `tests/paper/fixtures/README.md` |
+| ~~Composition test always passes~~ **Done.**                              | `assert "Heading2" not in report.imported_styles` is a real assertion.                                                                                                                                                                                       | [#12](https://github.com/paper-instruments/paper-docx/pull/12)                |
+| ~~Zip size/count/ratio caps refuse large but valid files~~ **Done.**      | Caps removed. `PackageLimitError` remains for corrupt, encrypted, or malformed zip. A member that inflates past the size it declared is refused while inflating, not after the whole blob is in memory. | `src/docx/_zipguard.py`                                                                          |
 
 
 Left in [#12](https://github.com/paper-instruments/paper-docx/pull/12) and not copied here: README claim matrix, Ruff/Pyright CI, ZIP fuzzing, determinism hashes, upstream-sync process. Those are docs/process, not package capability.
@@ -97,14 +106,14 @@ Left in [#12](https://github.com/paper-instruments/paper-docx/pull/12) and not c
 
 Not functions. Stock `WD_*` / `MSO_*` enums and stock error classes (`PythonDocxError`, `InvalidSpanError`, OPC and image errors) are unchanged. Nothing was removed. No new Enum types were added; callers get string lists instead.
 
-**Change** is the decision for the work list: **Keep** or **Drop**. Drop rows still exist in the code today; deleting them is part of the change.
+**Change** is the decision for the work list: **Keep** or **Drop**. Dropped zip-bomb constants are gone from the code.
 
 Provenance is `paper-original-plans-and-specs-2026-08-13/paper-docx` (plans + reference harness). **Asked for** = named there. **Supported** = follows a plan rule, but the name or extra values were not written down. **No support** = not in that folder.
 
 | Name | Kind | Change | What it is | Why | Plans |
 | --- | --- | --- | --- | --- | --- |
 | `PaperRefusal` | Error | Keep | Base. Edit was refused; file and memory unchanged. | Agents catch “safe no” separately from a bug. | **Asked for.** `CONVENTIONS.md` pins this name. |
-| `PackageLimitError` | Error | Keep | Typed error when the file is not a usable Word zip: corrupt, encrypted, or malformed. | Agents catch a broken package as a safe no. Today the size caps also raise this class. After Drop, they must not. This class stays. | **Supported, not named.** Plans asked for typed refuse on a corrupt or encrypted zip, not this class name, and not size caps. |
+| `PackageLimitError` | Error | Keep | Typed error when the file is not a usable Word zip: corrupt, encrypted, or malformed. | Agents catch a broken package as a safe no. Size caps used to raise this class; they are gone. A member that inflates past the size it declared still raises this class. | **Supported, not named.** Plans asked for typed refuse on a corrupt or encrypted zip, not this class name, and not size caps. |
 | `AmbiguousTargetError` | Error | Keep | Search matched more than one place. | Do not guess which hit to edit. | **Asked for.** `CONVENTIONS.md`; `PLAN-paper-docx.md`. |
 | `TargetNotFoundError` | Error | Keep | Nothing matched, or the span went stale. | Do not invent a target. | **Asked for.** `CONVENTIONS.md`; `PLAN-v0.1.md` H7. |
 | `UnsupportedStructureError` | Error | Keep | This edit is not supported on that Word structure. | Refuse instead of a quietly wrong file. | **Asked for.** `CONVENTIONS.md`; `PLAN-v0.1.md` H3/H4/H8. |
@@ -112,16 +121,16 @@ Provenance is `paper-original-plans-and-specs-2026-08-13/paper-docx` (plans + re
 | `RelationshipPolicyError` | Error | Keep | The edit would create an unsafe package relationship. | Pinned in the error list for copy/rel work. Code defines it; nothing raises it yet. | **Asked for.** `CONVENTIONS.md` taxonomy. No docx plan names a call site. |
 | `DocumentProtectedError` | Error | Keep | Restrict Editing is on. Acknowledge in memory to proceed. | Editing a locked template by accident looks successful and is wrong. | **Asked for.** `PLAN-v0.11` Phase 3 names this class. |
 | `UnsupportedXmlError` | Error | Keep | XML we will not compare (for example a DOCTYPE). A `ValueError`, not a `PaperRefusal`. In `docx._paperpkg`. | Compare must not treat two parts as equal when a DTD could change the text. | **No support.** Not in the docx plans. |
-| `DoctorError` | Error | Keep | Install is mixed or not paper-docx. A `RuntimeError`. In `paper_docx_doctor`. | Shared import name `docx` can hide a mixed install. | **No support.** Plans asked only for `__paper_version__`, not a doctor exception. |
+| `DoctorError` | Error | Keep | Install is mixed or not paper-docx. A `RuntimeError`. In `paper_docx_doctor`. | Shared import name `docx` can hide a mixed install. Keep the doctor. | **No support** in the original plans (they asked for `__paper_version__`). **Keep anyway.** |
 | `__paper_version__` | Constant | Keep | `"0.1.2"`. Stock still has `__version__ = "1.2.0"`. | Tell this fork apart from stock python-docx in the same import. | **Asked for.** `CONVENTIONS.md`; `SUMMARY-paper-docx-v0.11.md`. |
-| `MAX_COMPRESSED_BYTES` | Constant | Drop | 256 MiB zip-bomb cap. | Size limit on open. Refuses large but valid files. Not a broken-zip check. | **No support.** Plans asked for typed errors on a *corrupt* zip, not a size cap. |
-| `MAX_MEMBER_COUNT` | Constant | Drop | 4096-member zip-bomb cap. | Same as above. | **No support.** |
-| `MAX_CENTRAL_DIRECTORY_BYTES` | Constant | Drop | 16 MiB zip-bomb cap. | Same as above. | **No support.** |
-| `MAX_XML_MEMBER_BYTES` | Constant | Drop | 64 MiB zip-bomb cap. | Same as above. | **No support.** |
-| `MAX_BINARY_MEMBER_BYTES` | Constant | Drop | 256 MiB zip-bomb cap. | Same as above. | **No support.** |
-| `MAX_TOTAL_EXPANDED_BYTES` | Constant | Drop | 512 MiB zip-bomb cap. | Same as above. | **No support.** |
-| `MAX_COMPRESSION_RATIO` | Constant | Drop | 100:1 zip-bomb cap. | Same as above. | **No support.** |
-| `RATIO_ENFORCEMENT_FLOOR_BYTES` | Constant | Drop | 16 MiB floor for the ratio cap. | Same as above. | **No support.** |
+| `MAX_COMPRESSED_BYTES` | Constant | Dropped | Was 256 MiB zip-bomb cap. Gone. | Size limit on open. Refused large but valid files. | **No support.** Plans asked for typed errors on a *corrupt* zip, not a size cap. |
+| `MAX_MEMBER_COUNT` | Constant | Dropped | Was 4096-member zip-bomb cap. Gone. | Same as above. | **No support.** |
+| `MAX_CENTRAL_DIRECTORY_BYTES` | Constant | Dropped | Was 16 MiB zip-bomb cap. Gone. | Same as above. | **No support.** |
+| `MAX_XML_MEMBER_BYTES` | Constant | Dropped | Was 64 MiB zip-bomb cap. Gone. | Same as above. | **No support.** |
+| `MAX_BINARY_MEMBER_BYTES` | Constant | Dropped | Was 256 MiB zip-bomb cap. Gone. | Same as above. | **No support.** |
+| `MAX_TOTAL_EXPANDED_BYTES` | Constant | Dropped | Was 512 MiB zip-bomb cap. Gone. | Same as above. | **No support.** |
+| `MAX_COMPRESSION_RATIO` | Constant | Dropped | Was 100:1 zip-bomb cap. Gone. | Same as above. | **No support.** |
+| `RATIO_ENFORCEMENT_FLOOR_BYTES` | Constant | Dropped | Was 16 MiB floor for the ratio cap. Gone. | Same as above. | **No support.** |
 | `VIEWS` | Constant | Keep | `("current", "original", "all")`. Story read modes. | Search/replace must see what Word shows, what was deleted, or both. | **Asked for** `current` and `original` (`PLAN-v0.1.md` H1). **`all` not named.** |
 | `RESOLVABLE_TYPES` | Constant | Keep | Revision types `accept`/`reject` can resolve. | H3: refuse the whole set if any selected type cannot be resolved. | **Asked for** as that rule (`PLAN-v0.1.md` H3). Constant name not written down. |
 | `BLIND_REGION_KEYS` | Constant | Keep | Inspection keys for content story cannot fully read. | Do not claim “we saw the whole file” when math/OLE/hidden text is present. | **Asked for.** `PLAN-v0.1.md` H9; harness `BLIND_REGION_TAGS`. |

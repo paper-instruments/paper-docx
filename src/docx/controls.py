@@ -16,6 +16,7 @@ import datetime as dt
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterator, List, Optional, Tuple, Union
 
+from docx._guard import check_install
 from docx.errors import (
     AmbiguousTargetError,
     BoundaryViolationError,
@@ -32,6 +33,8 @@ if TYPE_CHECKING:
     from lxml.etree import _Element
 
     from docx.document import Document
+
+check_install()
 
 _SDT = qn("w:sdt")
 _SDT_PR = qn("w:sdtPr")
