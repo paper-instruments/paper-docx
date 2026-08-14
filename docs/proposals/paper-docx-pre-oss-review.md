@@ -6,29 +6,41 @@ Stock python-docx is the create/edit baseline. This fork is for **agent Word wor
 
 Provenance for “was this asked for” is `paper-original-plans-and-specs-2026-08-13/paper-docx` (plans + reference harness). **Place?** is whether it belongs in the package, not whether that folder named it.
 
-## What we will change
+## Change order
 
-This section is the work list. **Place Yes** means keep. **Missing** is not a build list.
+Drop the zip-bomb caps. Keep `PackageLimitError` for a broken zip, and the rest of Place Yes. Fix the Defects table. Then the Missing table. Word fixtures stay parked.
 
 **Drop**
 
 - ~~Every zip-bomb size/count/ratio cap.~~ **Done.** Names gone: `MAX_COMPRESSED_BYTES`, `MAX_MEMBER_COUNT`, `MAX_CENTRAL_DIRECTORY_BYTES`, `MAX_XML_MEMBER_BYTES`, `MAX_BINARY_MEMBER_BYTES`, `MAX_TOTAL_EXPANDED_BYTES`, `MAX_COMPRESSION_RATIO`, `RATIO_ENFORCEMENT_FLOOR_BYTES`. A large but valid `.docx` opens.
 - ~~Stop raising `PackageLimitError` for those caps.~~ **Done.** That class still means corrupt, encrypted, or malformed zip.
 
-**Keep (do not prune, do not confuse with the caps)**
+**Keep**
 
 - `PackageLimitError` when the file is not a usable Word zip: corrupt, encrypted, or malformed.
 - Typed refuse on that broken zip, atomic save, roll back a failed edit.
-- `Document.finalize`, `Document.scrub`, `docx.package.compare`, `paper-docx-doctor`, and every other **Place Yes** row.
+- Every **Place Yes** row.
 
-**Fix** (holes in what we already keep): the Defects table.
+**Fix**
 
 - ~~`patch_save` writer (symlink + `fsync`)~~ **Done.**
 - ~~Rollback on `blocks` / `fields` / bookmarks / `Comment.author` / `initials`~~ **Done.** Author/initials use cheap XML rollback.
 - ~~Composition `assert ... or True`~~ **Done.**
-- ~~Mixed-install identity check on Paper-only modules, plus a transitive-clobber CI install~~ **Done.** Locally verified. After upstream overwrites `docx/__init__.py`, `from docx import Document` still loads stock python-docx; run the doctor for that path.
+- ~~Mixed-install identity check on Paper-only modules, plus a transitive-clobber CI install~~ **Done.** After upstream overwrites `docx/__init__.py`, `from docx import Document` still loads stock python-docx; run the doctor for that path.
 
-**Parked (not this change)**
+**Missing**
+
+- Delete one comment
+- Modern comment identity parts (`commentsIds.xml`, `commentsExtensible.xml`)
+- Lock a file for the recipient
+- Replace one existing picture
+- Create or retarget a hyperlink
+- Auto-number caption field
+- Add a footnote or endnote
+- Fill a data-bound form control
+- Append and keep the source letterhead
+
+**Parked**
 
 - Sample files authored in desktop Microsoft Word. Tests today use generated files, LibreOffice files, and one Google Docs export. Real Word markup is unproven until someone who has Word adds those files.
 
@@ -51,7 +63,7 @@ Read **What it does** first. The API column is only the name in the library.
 | Insert a page number, date, cross-reference, or table of contents. The displayed value is computed when Word opens the file, not here. | `docx.fields` | Structured | Yes | Stock is weak; agents otherwise hand-edit field XML. Page numbers, dates, cross-references, and TOC were asked for. Auto-number captions (Figure 1, 2, …) were not (see Missing). |
 | Copy a range, or a whole document, into another file, keeping styles, lists, and images. | `docx.composition` | Combine | Yes | Cross-file copy is where styles and relationships corrupt. Headers stay those of the destination file; keeping the source letterhead was left for later. Will not copy comments, pending revisions, or footnotes. |
 | Save an edited file without rewriting ZIP parts that did not change. | `docx.package.patch_save` | Package | Yes | Stock save rewrites the whole ZIP, which noisily diffs and can break unrelated parts. |
-| On open and save: refuse a broken ZIP with a typed error, write atomically, and roll back a failed edit instead of leaving a half-written file. | zipguard, atomic `save`, transactions, `PaperRefusal` | Package | Yes | Load/save plumbing. Keep. The zip-bomb *size caps* are gone (see What we will change). A member that inflates past the size it declared still refuses. |
+| On open and save: refuse a broken ZIP with a typed error, write atomically, and roll back a failed edit instead of leaving a half-written file. | zipguard, atomic `save`, transactions, `PaperRefusal` | Package | Yes | Load/save plumbing. Keep. The zip-bomb *size caps* are gone (see Change order). A member that inflates past the size it declared still refuses. |
 | Say why a file will not open: encrypted, template, macros, not Word, damaged ZIP. | `docx.package.diagnose` | Package | Yes | Stock raises untyped errors on bad input. |
 | Show which ZIP parts or visible text changed between two files, or what pending revisions would change if accepted. | `diff_package`, `text_diff`, `pending_changes` | Package | Yes | Proof of what an edit did. Library belongs; not a ritual after every call. |
 | Strip comments and author metadata for a clean outgoing copy. Optional: RSIDs and hidden text. Does not remove Restrict Editing. | `Document.scrub` | Deliver | Yes | Send-clean step, not an everyday edit: strip comments and author names before the file leaves. Keep; already shipped. |
@@ -65,7 +77,7 @@ Read **What it does** first. The API column is only the name in the library.
 
 ## Missing
 
-Jobs the agent still cannot do through the package, so it would unzip and patch XML (or call another tool). That is not the same as “the original plan asked for this and we failed to ship it.” **Plans** is vs `paper-original-plans-and-specs-2026-08-13/paper-docx`. **Found in** is where an agent skill still does the job by hand.
+Jobs the agent still cannot do through the package, so it would unzip and patch XML. This PR does not add these APIs. **Plans** is vs `paper-original-plans-and-specs-2026-08-13/paper-docx`. **Found in** is where an agent skill still does the job by hand.
 
 | What the agent needs to do | Use case | Why the package does not cover it | Found in | Plans |
 | --- | --- | --- | --- | --- |
