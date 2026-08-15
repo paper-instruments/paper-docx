@@ -176,6 +176,7 @@ APPROVED_SIGNATURES = [
     # -- composition, bookmarks, fields, formatting --------------------------
     ("docx.protection", "protection_status", "(document)"),
     ("docx.protection", "acknowledge_protection", "(document)"),
+    ("docx.protection", "set_protection", "(document, *, edit)"),
     (
         "docx.package",
         "compare",
