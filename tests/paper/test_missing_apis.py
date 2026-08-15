@@ -17,6 +17,7 @@ from docx.errors import (
     TargetNotFoundError,
     UnsupportedStructureError,
 )
+from docx.fields import add_caption
 from docx.links import add_hyperlink
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml.ns import nsdecls, qn
@@ -327,3 +328,13 @@ class DescribeHyperlinks:
             add_hyperlink(
                 document, find_one(document, "PlainTextLink"), "https://example.com/a"
             )
+
+
+class DescribeCaptions:
+    def it_inserts_a_seq_field(self):
+        document = _doc()
+        paragraph = document.add_paragraph()
+        add_caption(paragraph, label="Figure", description="Diagram")
+        xml = paragraph._p.xml
+        assert "SEQ Figure" in xml
+        assert paragraph._p.style == "Caption"
