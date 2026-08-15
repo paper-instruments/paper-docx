@@ -744,6 +744,9 @@ def _reconcile_styles(
     to_import: "List[Tuple[str, _Element]]" = []
     taken_ids = set(destination_by_id)  # incl. ids allocated THIS batch
     for style_id in wanted:
+        if style_id in report.style_map:
+            style_map[style_id] = report.style_map[style_id]
+            continue
         definition = source_by_id[style_id]
         name_element = definition.find(qn("w:name"))
         name = name_element.get(_VAL) if name_element is not None else style_id
@@ -1216,9 +1219,9 @@ def _reconcile_bookmarks(
                         ),
                     )
                 )
-    if renames:
-        _remap_field_refs(clones, renames)
     report.bookmarks_renamed.update(renames)
+    if report.bookmarks_renamed:
+        _remap_field_refs(clones, report.bookmarks_renamed)
 
 
 def _fresh_bookmark_name(existing_folded: set, base: str) -> str:

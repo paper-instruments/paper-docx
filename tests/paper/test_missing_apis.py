@@ -902,3 +902,54 @@ class DescribeSourceLetterhead:
         )
         report = append_document(destination, source, headers="source")
         assert report.bookmarks_renamed["SharedMark"] != "SharedMark"
+
+    def it_reuses_a_body_style_remap_in_the_header(self, tmp_path: Path):
+        destination = _doc()
+        dest_style = destination.styles.add_style("HouseTerm", WD_STYLE_TYPE.PARAGRAPH)
+        dest_style.font.bold = True
+        source = _doc()
+        source_style = source.styles.add_style("HouseTerm", WD_STYLE_TYPE.PARAGRAPH)
+        source_style.font.italic = True
+        source.add_paragraph("Body branded", style="HouseTerm")
+        header = source.sections[0].header.paragraphs[0]
+        header.style = source_style
+        header.text = "Header branded"
+        report = append_document(
+            destination, source, headers="source", styles="import_renamed"
+        )
+        assert report.renamed_styles == {"HouseTerm": "HouseTerm (imported)"}
+        assert [style.name for style in destination.styles].count(
+            "HouseTerm (imported)"
+        ) == 1
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        body = next(p for p in reopened.paragraphs if "Body branded" in p.text)
+        copied_header = reopened.sections[-1].header.paragraphs[0]
+        assert body.style.name == copied_header.style.name == "HouseTerm (imported)"
+
+    def it_remaps_header_refs_to_body_bookmark_renames(self):
+        destination = _doc()
+        create_bookmark(
+            destination, find_one(destination, "perfectly ordinary"), "SharedMark"
+        )
+        source = _doc()
+        source.add_paragraph("Source body mark")
+        create_bookmark(source, find_one(source, "Source body mark"), "SharedMark")
+        header = source.sections[0].header.paragraphs[0]
+        header._p.append(
+            parse_xml(
+                f'<w:fldSimple {nsdecls("w")} w:instr=" REF SharedMark \\h ">'
+                "<w:r><w:t>see mark</w:t></w:r></w:fldSimple>"
+            )
+        )
+        header._p.append(
+            parse_xml(
+                f'<w:hyperlink {nsdecls("w")} w:anchor="SharedMark">'
+                "<w:r><w:t>jump</w:t></w:r></w:hyperlink>"
+            )
+        )
+        report = append_document(destination, source, headers="source")
+        renamed = report.bookmarks_renamed["SharedMark"]
+        assert renamed != "SharedMark"
+        header_xml = destination.sections[-1].header._element.xml
+        assert f" REF {renamed} " in header_xml
+        assert f'w:anchor="{renamed}"' in header_xml
