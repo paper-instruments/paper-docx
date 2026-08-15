@@ -19,6 +19,7 @@ from docx.errors import (
 )
 from docx.fields import add_caption
 from docx.links import add_hyperlink
+from docx.notes import add_endnote, add_footnote
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml.ns import nsdecls, qn
 from docx.oxml.parser import OxmlElement, parse_xml
@@ -338,3 +339,36 @@ class DescribeCaptions:
         xml = paragraph._p.xml
         assert "SEQ Figure" in xml
         assert paragraph._p.style == "Caption"
+
+
+class DescribeNotes:
+    def it_adds_a_footnote_and_endnote(self, tmp_path: Path):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        footnote_id = add_footnote(document, span, "A footnote.")
+        endnote_id = add_endnote(document, span, "An endnote.")
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        footnotes = reopened.part.part_related_by(RT.FOOTNOTES)._element
+        endnotes = reopened.part.part_related_by(RT.ENDNOTES)._element
+        assert str(footnote_id) in {
+            note.get(qn("w:id")) for note in footnotes.findall(qn("w:footnote"))
+        }
+        assert str(endnote_id) in {
+            note.get(qn("w:id")) for note in endnotes.findall(qn("w:endnote"))
+        }
+
+    def it_keeps_ampersands_and_angles_as_text(self, tmp_path: Path):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        add_footnote(document, span, "A & B <C>")
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        footnotes = reopened.part.part_related_by(RT.FOOTNOTES)._element
+        texts = [node.text or "" for node in footnotes.findall(".//" + qn("w:t"))]
+        assert any("A & B <C>" in text for text in texts)
+
+    def it_refuses_a_note_outside_the_body(self):
+        document = _doc()
+        document.sections[0].header.paragraphs[0].text = "HeaderNoteUnique"
+        span = find_one(document, "HeaderNoteUnique", story="word/header1.xml")
+        with pytest.raises(UnsupportedStructureError, match="main document body"):
+            add_footnote(document, span, "nope")

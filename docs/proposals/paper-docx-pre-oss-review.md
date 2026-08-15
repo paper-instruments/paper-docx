@@ -39,7 +39,7 @@ Drop the zip-bomb caps and the two bundled deliver verbs. Keep `PackageLimitErro
 - ~~Replace one existing picture~~ **Done.** `Drawing.replace_picture`. Picture form controls still refuse.
 - ~~Create or retarget a hyperlink~~ **Done.** `add_hyperlink`, `Hyperlink.address`.
 - ~~Auto-number caption field~~ **Done.** `add_caption`.
-- Add a footnote or endnote
+- ~~Add a footnote or endnote~~ **Done.** `add_footnote`, `add_endnote`.
 - Fill a data-bound form control
 - Append and keep the source letterhead
 
@@ -53,7 +53,7 @@ Read **What it does** first. The API column is only the name in the library.
 
 | What it does | API | Use case | Place? | Why |
 | --- | --- | --- | --- | --- |
-| Read the whole file (body, headers, footers, footnotes, comments), including text that is still a tracked insertion or deletion. | `docx.story` | Edit existing, review | Yes | Stock only sees the main body and ignores pending revisions. Notes can be read, not created (see Missing). |
+| Read the whole file (body, headers, footers, footnotes, comments), including text that is still a tracked insertion or deletion. | `docx.story` | Edit existing, review | Yes | Stock only sees the main body and ignores pending revisions. Notes can be read; create with `add_footnote` / `add_endnote`. |
 | Find a quoted phrase even when Word split it across bold/italic runs, and replace it without wiping that formatting. Can stamp the edit as a tracked change. | `docx.search`, `Span.replace` | Edit existing, review | Yes | Stock `paragraph.text` wipes run formatting. Agents otherwise splice XML. |
 | Insert a heading and paragraphs, a real list, or a simple table after a known place. Mark whole paragraphs deleted or replaced as Word track-changes. | `docx.blocks` | Edit existing, review | Yes | Stock has no safe paragraph-level tracked edit. |
 | List every tracked change and accept or reject it (inserts, deletes, moves, some formatting). | `Document.revisions` | Review | Yes | Stock cannot list or resolve tracked changes. Rare types (table-property, cell, section, numbering, custom XML) can be listed but not resolved. |
@@ -90,7 +90,7 @@ Jobs the agent could not do through the package. Stacked follow-ups add these AP
 | ~~Replace one existing picture, keep size and position~~ **Done.** | Edit existing | Insert (stock) or copy on combine. No in-place swap that avoids sharing the image part. Picture form controls still refuse. | `Drawing.replace_picture` | **Later, if someone asks.** Image swap was parked until a real demand. |
 | ~~Turn a phrase into a hyperlink, or change where an existing link goes~~ **Done.** | Edit existing, review | URL was read-only. Create/retarget was XML. | `add_hyperlink`, `Hyperlink.address` | **Later, if someone asks.** The plan asked to edit text *inside* an existing link, not to create or retarget one. |
 | ~~Caption a figure or table so numbers update (Figure 1, Figure 2, …)~~ **Done.** | Structured | Bookmark plus REF is not a SEQ caption field. | `add_caption` | **Not asked.** Fields in the plan are page numbers, date, cross-references, and TOC. |
-| Add a footnote or endnote | Edit existing | Existing notes could be read and edited. New notes were not created. | | **Explicitly out.** Read is in. Creating notes was deferred until a legal or academic customer asked. |
+| ~~Add a footnote or endnote~~ **Done.** | Edit existing | Existing notes could be read and edited. New notes were not created. | `add_footnote`, `add_endnote` | **Explicitly out.** Read is in. Creating notes was deferred until a legal or academic customer asked. |
 | Fill a form field whose value lives in Word's hidden custom XML | Structured | Surface fill would vanish on Word open. The package used to refuse. | | **Asked as refuse.** Intentional no in the original plan. |
 | Append another document and keep *its* letterhead | Combine | Default append keeps destination headers. | | **Asked as future.** Destination headers on purpose; keeping the source letterhead was left for later. |
 
