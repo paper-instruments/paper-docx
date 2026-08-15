@@ -7,7 +7,11 @@ from typing import TYPE_CHECKING
 from docx._guard import check_install
 from docx._ownership import require_span_owner
 from docx._transaction import rollback_on_error
-from docx.controls import _refuse_control_write_restrictions, _validate_span_surface_edit
+from docx.controls import (
+    _control_type,
+    _refuse_control_write_restrictions,
+    _validate_span_surface_edit,
+)
 from docx.enum.style import WD_STYLE_TYPE
 from docx.errors import BoundaryViolationError, UnsupportedStructureError
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
@@ -29,6 +33,7 @@ _RPR = qn("w:rPr")
 _RSTYLE = qn("w:rStyle")
 _HYPERLINK = qn("w:hyperlink")
 _SDT = qn("w:sdt")
+_SDT_PR = qn("w:sdtPr")
 
 
 def _refuse_intervening_markup(runs) -> None:
@@ -58,6 +63,11 @@ def _refuse_control_surface(span: "Span") -> None:
     for control in controls:
         _validate_span_surface_edit(control)
         _refuse_control_write_restrictions(control)
+        if _control_type(control.find(_SDT_PR)) == "text":
+            raise UnsupportedStructureError(
+                "span lies in a plain-text content control; a hyperlink would"
+                " break the control's content model. Nothing was changed"
+            )
 
 
 class _PartHost:

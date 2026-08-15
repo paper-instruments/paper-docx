@@ -311,3 +311,19 @@ class DescribeHyperlinks:
             document, find_one(document, "PlainLink"), "https://example.com/a"
         )
         assert link.address == "https://example.com/a"
+
+    def it_refuses_a_plain_text_control_span(self):
+        document = _doc()
+        document.element.body.insert(
+            len(document.element.body) - 1,
+            parse_xml(
+                f'<w:p {nsdecls("w")}>'
+                '<w:sdt><w:sdtPr><w:tag w:val="plain-text"/><w:text/></w:sdtPr>'
+                "<w:sdtContent><w:r><w:t>PlainTextLink</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        with pytest.raises(UnsupportedStructureError, match="plain-text"):
+            add_hyperlink(
+                document, find_one(document, "PlainTextLink"), "https://example.com/a"
+            )
