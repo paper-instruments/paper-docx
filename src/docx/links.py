@@ -27,6 +27,22 @@ _RSTYLE = qn("w:rStyle")
 _HYPERLINK = qn("w:hyperlink")
 
 
+def _refuse_intervening_markup(runs) -> None:
+    first = runs[0]
+    last = runs[-1]
+    if first is last:
+        return
+    allowed = {id(run) for run in runs}
+    sibling = first.getnext()
+    while sibling is not last:
+        if sibling is None or id(sibling) not in allowed:
+            raise UnsupportedStructureError(
+                "cannot wrap a hyperlink around intervening markup;"
+                " nothing was changed"
+            )
+        sibling = sibling.getnext()
+
+
 class _PartHost:
     """Parent whose `.part` is the story that owns the hyperlink XML."""
 
@@ -90,6 +106,7 @@ def add_hyperlink(document: "Document", span: "Span", address: str) -> Hyperlink
                         " with Hyperlink.address. Nothing was changed"
                     )
                 ancestor = ancestor.getparent()
+        _refuse_intervening_markup(runs)
         story_part = _part_for_span(document, span)
         r_id = story_part.relate_to(address, RT.HYPERLINK, is_external=True)
         hyperlink = OxmlElement("w:hyperlink")

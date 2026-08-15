@@ -155,6 +155,7 @@ def set_protection(document: "Document", *, edit: str) -> ProtectionStatus:
             settings.insert_element_before(element, *_DOCUMENT_PROTECTION_SUCCESSORS)
         element.set(qn("w:edit"), edit)
         element.set(qn("w:enforcement"), "1")
+    setattr(_package_of(document), _ACK_ATTR, False)
     return protection_status(document)
 
 

@@ -21,9 +21,9 @@ from docx.opc.constants import CONTENT_TYPE as CT
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.opc.packuri import PackURI
 from docx.opc.part import XmlPart
-from docx.oxml.ns import qn
+from docx.oxml.ns import nsdecls, qn
 from docx.oxml.parser import parse_xml
-from docx.protection import set_protection
+from docx.protection import acknowledge_protection, set_protection
 from docx.search import find_one
 
 from .harness.contract import save_and_reopen
@@ -120,6 +120,15 @@ class DescribeProtectionSetter:
         with pytest.raises(DocumentProtectedError):
             find_one(document, "perfectly ordinary").replace("nope")
 
+    def it_clears_an_in_memory_ack_when_locking_again(self):
+        document = _doc()
+        set_protection(document, edit="readOnly")
+        acknowledge_protection(document)
+        find_one(document, "perfectly ordinary").replace("ok")
+        set_protection(document, edit="comments")
+        with pytest.raises(DocumentProtectedError):
+            find_one(document, "ok").replace("nope")
+
 
 class DescribePictureReplace:
     def it_swaps_bytes_without_sharing_the_part(self):
@@ -187,6 +196,20 @@ class DescribeHyperlinks:
         again = find_one(document, "perfectly ordinary")
         with pytest.raises(UnsupportedStructureError, match="already inside a hyperlink"):
             add_hyperlink(document, again, "https://example.com/b")
+
+    def it_refuses_intervening_markup_between_runs(self):
+        document = _doc()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("hello ")
+        second = paragraph.add_run("world")
+        first._r.addnext(
+            parse_xml(f'<w:bookmarkStart {nsdecls("w")} w:id="1" w:name="Term"/>')
+        )
+        second._r.addnext(parse_xml(f'<w:bookmarkEnd {nsdecls("w")} w:id="1"/>'))
+        before = paragraph._p.xml
+        with pytest.raises(UnsupportedStructureError, match="intervening markup"):
+            add_hyperlink(document, find_one(document, "hello world"), "https://example.com/a")
+        assert paragraph._p.xml == before
 
     def it_clears_a_stale_internal_anchor_when_retargeting(self):
         document = _doc()
