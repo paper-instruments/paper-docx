@@ -10,6 +10,7 @@ import docx
 from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
 from docx.errors import DocumentProtectedError
 from docx.oxml.ns import qn
+from docx.oxml.parser import OxmlElement
 from docx.protection import acknowledge_protection, set_protection
 from docx.search import find_one
 
@@ -83,3 +84,19 @@ class DescribeProtectionSetter:
         set_protection(document, edit="comments")
         with pytest.raises(DocumentProtectedError):
             find_one(document, "ok").replace("nope")
+
+    def it_inserts_protection_before_later_settings_children(self):
+        document = _doc()
+        settings = document.settings.element
+        for child in list(settings):
+            if child.tag == qn("w:defaultTabStop"):
+                settings.remove(child)
+        footnote_pr = OxmlElement("w:footnotePr")
+        compat = settings.find(qn("w:compat"))
+        if compat is not None:
+            compat.addprevious(footnote_pr)
+        else:
+            settings.append(footnote_pr)
+        set_protection(document, edit="readOnly")
+        tags = [child.tag for child in settings]
+        assert tags.index(qn("w:documentProtection")) < tags.index(qn("w:footnotePr"))
