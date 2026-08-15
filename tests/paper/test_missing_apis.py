@@ -9,10 +9,9 @@ from pathlib import Path
 import pytest
 
 import docx
-<<<<<<< HEAD
 from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
 from docx.drawing import Drawing
-from docx.errors import DocumentProtectedError
+from docx.errors import DocumentProtectedError, UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
 from docx.protection import acknowledge_protection, set_protection
@@ -140,3 +139,15 @@ class DescribePictureReplace:
         assert _blip_embed(other_drawing) == shared
         assert extent.get("cx") == cx
         assert extent.get("cy") == cy
+
+    def it_refuses_a_linked_picture(self):
+        document = _doc()
+        run = document.add_paragraph().add_run()
+        run.add_picture(io.BytesIO(_bmp(255, 0, 0)))
+        drawing = next(
+            item for item in run.iter_inner_content() if isinstance(item, Drawing)
+        )
+        blip = drawing._drawing.xpath(".//pic:blipFill/a:blip")[0]
+        blip.set(qn("r:link"), "rId99")
+        with pytest.raises(UnsupportedStructureError, match="linked picture"):
+            drawing.replace_picture(io.BytesIO(_bmp(0, 0, 255)))

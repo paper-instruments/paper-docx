@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import IO, TYPE_CHECKING
 
 from docx._transaction import rollback_on_error
+from docx.errors import UnsupportedStructureError
 from docx.image.image import Image
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml.drawing import CT_Drawing
@@ -70,6 +71,10 @@ class Drawing(Parented):
         """
         if not self.has_picture:
             raise ValueError("drawing does not contain a picture")
+        if self._drawing.xpath(".//pic:blipFill/a:blip/@r:link"):
+            raise UnsupportedStructureError(
+                "drawing is a linked picture; nothing was changed"
+            )
         document = self.part.package.main_document_part.document
         _refuse_if_protected(document, "replace a picture")
         with rollback_on_error(document):
