@@ -57,10 +57,10 @@ class Hyperlink(Parented):
         with rollback_on_error(document):
             old_r_id = self._hyperlink.rId
             new_r_id = self.part.relate_to(value, RT.HYPERLINK, is_external=True)
-            self._hyperlink.set(qn("r:id"), new_r_id)
-            self._hyperlink.anchor = None
             if old_r_id and old_r_id != new_r_id:
                 self.part.drop_rel(old_r_id)
+            self._hyperlink.set(qn("r:id"), new_r_id)
+            self._hyperlink.anchor = None
 
     @property
     def contains_page_break(self) -> bool:

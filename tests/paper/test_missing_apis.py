@@ -238,3 +238,23 @@ class DescribeHyperlinks:
         find_one(document, "perfectly ordinary").replace("changed")
         with pytest.raises(TargetNotFoundError, match="stale"):
             add_hyperlink(document, span, "https://example.com/a")
+
+    def it_keeps_a_shared_relationship_when_retargeting_one(self):
+        document = _doc()
+        first = add_hyperlink(
+            document, find_one(document, "perfectly ordinary"), "https://example.com/a"
+        )
+        second = add_hyperlink(
+            document, find_one(document, "First body paragraph"), "https://example.com/a"
+        )
+        assert first._hyperlink.get(qn("r:id")) == second._hyperlink.get(qn("r:id"))
+        first.address = "https://example.com/b"
+        assert first.address == "https://example.com/b"
+        assert second.address == "https://example.com/a"
+
+    def it_refuses_a_field_result_span(self):
+        document = _doc("generated/feature-isolated/fields.docx")
+        span = find_one(document, "June 1, 2026")
+        assert span.in_field
+        with pytest.raises(UnsupportedStructureError, match="field result"):
+            add_hyperlink(document, span, "https://example.com/a")

@@ -77,6 +77,11 @@ def add_hyperlink(document: "Document", span: "Span", address: str) -> Hyperlink
     require_span_owner(document, span)
     _refuse_if_protected(document, "add a hyperlink")
     span._validate_fresh()  # noqa: SLF001
+    if span.in_field:
+        raise UnsupportedStructureError(
+            "the span lies inside a field result; Word regenerates field"
+            " results on update, so the hyperlink would silently vanish"
+        )
     with rollback_on_error(document, span):
         span._isolate_edge_runs()  # noqa: SLF001
         runs = []
