@@ -385,3 +385,53 @@ class DescribeNotes:
         find_one(document, "perfectly ordinary").replace("changed")
         with pytest.raises(TargetNotFoundError, match="stale"):
             add_footnote(document, span, "nope")
+
+    def it_refuses_a_note_inside_a_text_box(self):
+        document = _doc("generated/feature-isolated/textbox.docx")
+        span = find_one(document, "living inside the text box")
+        assert span.in_text_box
+        with pytest.raises(UnsupportedStructureError, match="text box"):
+            add_footnote(document, span, "nope")
+
+    def it_refuses_a_note_inside_a_field_result(self):
+        document = _doc("generated/feature-isolated/fields.docx")
+        span = find_one(document, "June 1, 2026")
+        assert span.in_field
+        with pytest.raises(UnsupportedStructureError, match="field result"):
+            add_footnote(document, span, "nope")
+
+    def it_keeps_stacked_note_marks_in_insertion_order(self):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        first = add_footnote(document, span, "First")
+        second = add_footnote(document, span, "Second")
+        refs = [
+            node.get(qn("w:id"))
+            for node in document.element.iter(qn("w:footnoteReference"))
+        ]
+        assert refs == [str(first), str(second)]
+
+    def it_refuses_a_note_inside_a_text_box(self):
+        document = _doc("generated/feature-isolated/textbox.docx")
+        span = find_one(document, "living inside the text box")
+        assert span.in_text_box
+        with pytest.raises(UnsupportedStructureError, match="text box"):
+            add_footnote(document, span, "nope")
+
+    def it_refuses_a_note_inside_a_field_result(self):
+        document = _doc("generated/feature-isolated/fields.docx")
+        span = find_one(document, "June 1, 2026")
+        assert span.in_field
+        with pytest.raises(UnsupportedStructureError, match="field result"):
+            add_footnote(document, span, "nope")
+
+    def it_keeps_stacked_note_marks_in_insertion_order(self):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        first = add_footnote(document, span, "First")
+        second = add_footnote(document, span, "Second")
+        refs = [
+            node.get(qn("w:id"))
+            for node in document.element.iter(qn("w:footnoteReference"))
+        ]
+        assert refs == [str(first), str(second)]

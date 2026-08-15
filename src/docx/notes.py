@@ -33,6 +33,9 @@ _TYPE = qn("w:type")
 _FOOTNOTE = qn("w:footnote")
 _ENDNOTE = qn("w:endnote")
 _P = qn("w:p")
+_R = qn("w:r")
+_FOOTNOTE_REFERENCE = qn("w:footnoteReference")
+_ENDNOTE_REFERENCE = qn("w:endnoteReference")
 
 _FOOTNOTES_TEMPLATE = (
     f"<w:footnotes {_W_DECL}>"
@@ -112,6 +115,15 @@ def _insert_note(
             "footnotes and endnotes attach in the main document body"
             f" (span is in {span.story})"
         )
+    if span.in_text_box:
+        raise UnsupportedStructureError(
+            "footnotes and endnotes cannot attach inside a text box"
+        )
+    if span.in_field:
+        raise UnsupportedStructureError(
+            "the span lies inside a field result; a note planted there"
+            " is destroyed the next time the field updates"
+        )
     with rollback_on_error(document, span):
         span._isolate_edge_runs()  # noqa: SLF001
         runs = []
@@ -146,8 +158,25 @@ def _insert_note(
         reference = OxmlElement(f"w:{kind}Reference")
         reference.set(_ID, str(note_id))
         mark.append(reference)
-        runs[-1].addnext(mark)
+        _insert_after_span(runs, mark)
         return note_id
+
+
+def _is_note_mark(element: "_Element") -> bool:
+    if element.tag != _R:
+        return False
+    return any(
+        child.tag in (_FOOTNOTE_REFERENCE, _ENDNOTE_REFERENCE) for child in element
+    )
+
+
+def _insert_after_span(runs, mark: "_Element") -> None:
+    anchor = runs[-1]
+    sibling = anchor.getnext()
+    while sibling is not None and _is_note_mark(sibling):
+        anchor = sibling
+        sibling = sibling.getnext()
+    anchor.addnext(mark)
 
 
 def add_footnote(document: "Document", span: "Span", text: str) -> int:
