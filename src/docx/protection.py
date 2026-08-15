@@ -12,7 +12,7 @@ remove. The sanctioned override is one explicit, document-level
 acknowledgment — `acknowledge_protection(document)` — after which this
 package's APIs treat the document as unlocked for the life of the open
 package. There is deliberately NO protection-stripping verb: the setting is
-reported (see `Document.scrub` reports) and never removed.
+reported by `protection_status` and never removed.
 """
 
 from __future__ import annotations

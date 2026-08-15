@@ -8,7 +8,7 @@ Release v\ |version| (:ref:`Installation <install>`)
 safely inspecting, editing, reviewing, and composing existing Word documents.
 The distribution is renamed; the import name stays ``docx``, so existing code
 keeps working unchanged. It adds complete document traversal, normalized
-find-and-replace, native tracked changes and their resolution, compare, scrub,
+find-and-replace, native tracked changes and their resolution, compare,
 and cross-document composition. Every added operation either does exactly what
 it claims or refuses atomically instead of risking silent corruption. See
 :ref:`Paper additions <paper_additions>` for the added APIs.
@@ -134,7 +134,6 @@ Reference pages for the APIs the fork adds. See
    api/paper-controls
    api/paper-commentops
    api/paper-package
-   api/paper-scrubbing
    api/paper-protection
    api/paper-composition
    api/paper-bookmarks

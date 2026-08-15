@@ -211,9 +211,10 @@ def compare(
                     " materialize='accept' or 'reject' to resolve working"
                     " copies first (the input files are not modified)"
                 )
-            from docx.scrubbing import finalize
-
-            finalize(doc, revisions=materialize)
+            if materialize == "accept":
+                doc.revisions.accept_all()
+            else:
+                doc.revisions.reject_all()
     original_reference = _serialize_document(document)
     revised_reference = _serialize_document(revised_doc)
     from docx.protection import acknowledge_protection, protection_status
