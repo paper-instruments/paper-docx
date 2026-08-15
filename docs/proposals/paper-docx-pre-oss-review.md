@@ -37,7 +37,7 @@ Drop the zip-bomb caps and the two bundled deliver verbs. Keep `PackageLimitErro
 - ~~Modern comment identity parts~~ **Done.** New comments write `commentsIds.xml` and `commentsExtensible.xml`.
 - ~~Lock a file for the recipient~~ **Done.** `set_protection`.
 - ~~Replace one existing picture~~ **Done.** `Drawing.replace_picture`. Picture form controls still refuse.
-- Create or retarget a hyperlink
+- ~~Create or retarget a hyperlink~~ **Done.** `add_hyperlink`, `Hyperlink.address`.
 - Auto-number caption field
 - Add a footnote or endnote
 - Fill a data-bound form control
@@ -88,7 +88,7 @@ Jobs the agent could not do through the package. Stacked follow-ups add these AP
 | ~~Add a comment that current Word will show and round-trip~~ **Done.** | Review | Only `comments.xml` and `commentsExtended.xml`. Current Word also wants `commentsIds.xml` and `commentsExtensible.xml`. | New comments write those two parts. | **Not asked.** Original plan is the older extra comments part only. |
 | ~~Lock a file for the recipient (read-only, comments only, or forms only)~~ **Done.** | Deliver | Could report Restrict Editing and refuse edits. Could not turn it on. | `set_protection` | **Not asked.** Plan: report it, never strip it, refuse edits while it is on. No setter. |
 | ~~Replace one existing picture, keep size and position~~ **Done.** | Edit existing | Insert (stock) or copy on combine. No in-place swap that avoids sharing the image part. Picture form controls still refuse. | `Drawing.replace_picture` | **Later, if someone asks.** Image swap was parked until a real demand. |
-| Turn a phrase into a hyperlink, or change where an existing link goes | Edit existing, review | URL was read-only. Create/retarget was XML. | | **Later, if someone asks.** The plan asked to edit text *inside* an existing link, not to create or retarget one. |
+| ~~Turn a phrase into a hyperlink, or change where an existing link goes~~ **Done.** | Edit existing, review | URL was read-only. Create/retarget was XML. | `add_hyperlink`, `Hyperlink.address` | **Later, if someone asks.** The plan asked to edit text *inside* an existing link, not to create or retarget one. |
 | Caption a figure or table so numbers update (Figure 1, Figure 2, …) | Structured | Bookmark plus REF is not a SEQ caption field. | | **Not asked.** Fields in the plan are page numbers, date, cross-references, and TOC. |
 | Add a footnote or endnote | Edit existing | Existing notes could be read and edited. New notes were not created. | | **Explicitly out.** Read is in. Creating notes was deferred until a legal or academic customer asked. |
 | Fill a form field whose value lives in Word's hidden custom XML | Structured | Surface fill would vanish on Word open. The package used to refuse. | | **Asked as refuse.** Intentional no in the original plan. |
