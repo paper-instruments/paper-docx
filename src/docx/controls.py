@@ -71,6 +71,7 @@ _XPATH = qn("w:xpath")
 _PREFIX_MAPPINGS = qn("w:prefixMappings")
 _DS_NS = "http://schemas.openxmlformats.org/officeDocument/2006/customXml"
 _DS_ITEM_ID = f"{{{_DS_NS}}}itemID"
+_XSI_NIL = "{http://www.w3.org/2001/XMLSchema-instance}nil"
 _LOCK = qn("w:lock")
 _DROPDOWN = qn("w:dropDownList")
 _COMBO = qn("w:comboBox")
@@ -702,7 +703,10 @@ def _write_bound_store(document: "Document", binding: "_Element", value: str) ->
         raise TargetNotFoundError(
             f"xpath {xpath!r} matched no node in the custom XML store"
         )
-    nodes[0].text = value
+    node = nodes[0]
+    if _XSI_NIL in node.attrib:
+        del node.attrib[_XSI_NIL]
+    node.text = value
     if getattr(item_part, "_element", None) is None:
         item_part._blob = etree.tostring(
             item_root, xml_declaration=True, encoding="UTF-8"

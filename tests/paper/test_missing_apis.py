@@ -558,3 +558,17 @@ class DescribeDataBoundControls:
         with pytest.raises(UnsupportedStructureError, match="locked"):
             set_control_value(document, "new", tag="bound-locked")
         assert get_control(document, tag="bound-locked").value == "old"
+
+    def it_clears_xsi_nil_when_writing_the_store(self):
+        document = _doc()
+        _attach_bound_control(document, "bound")
+        store = None
+        for part in document.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                store = part._element
+        ns = {"ns0": "http://example.com/form"}
+        node = store.xpath("/ns0:root/ns0:name", namespaces=ns)[0]
+        node.set("{http://www.w3.org/2001/XMLSchema-instance}nil", "true")
+        set_control_value(document, "new", tag="bound")
+        assert node.get("{http://www.w3.org/2001/XMLSchema-instance}nil") is None
+        assert node.text == "new"
