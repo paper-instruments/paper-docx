@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from docx._guard import check_install
 from docx._ownership import require_span_owner
 from docx._transaction import rollback_on_error
+from docx.controls import _refuse_control_write_restrictions, _validate_span_surface_edit
 from docx.enum.style import WD_STYLE_TYPE
 from docx.errors import BoundaryViolationError, UnsupportedStructureError
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
@@ -27,6 +28,7 @@ _R = qn("w:r")
 _RPR = qn("w:rPr")
 _RSTYLE = qn("w:rStyle")
 _HYPERLINK = qn("w:hyperlink")
+_SDT = qn("w:sdt")
 
 
 def _refuse_intervening_markup(runs) -> None:
@@ -43,6 +45,19 @@ def _refuse_intervening_markup(runs) -> None:
                 " nothing was changed"
             )
         sibling = sibling.getnext()
+
+
+def _refuse_control_surface(span: "Span") -> None:
+    controls = []
+    for atom in span._atoms:  # noqa: SLF001
+        current = atom.element.getparent()
+        while current is not None:
+            if current.tag == _SDT and not any(current is item for item in controls):
+                controls.append(current)
+            current = current.getparent()
+    for control in controls:
+        _validate_span_surface_edit(control)
+        _refuse_control_write_restrictions(control)
 
 
 class _PartHost:
@@ -83,6 +98,7 @@ def add_hyperlink(document: "Document", span: "Span", address: str) -> Hyperlink
             "the span lies inside a field result; Word regenerates field"
             " results on update, so the hyperlink would silently vanish"
         )
+    _refuse_control_surface(span)
     with rollback_on_error(document, span):
         if "Hyperlink" not in document.styles:
             document.styles.add_style("Hyperlink", WD_STYLE_TYPE.CHARACTER, builtin=True)

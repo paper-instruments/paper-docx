@@ -264,3 +264,50 @@ class DescribeHyperlinks:
         assert "Hyperlink" not in document.styles
         add_hyperlink(document, find_one(document, "perfectly ordinary"), "https://example.com/a")
         assert "Hyperlink" in document.styles
+
+    def it_refuses_a_data_bound_span(self):
+        document = _doc()
+        document.element.body.insert(
+            len(document.element.body) - 1,
+            parse_xml(
+                f'<w:p {nsdecls("w")}>'
+                '<w:sdt><w:sdtPr><w:tag w:val="bound"/>'
+                '<w:dataBinding w:xpath="/x" w:storeItemID="{11111111-1111-1111-1111-111111111111}"/>'
+                "</w:sdtPr>"
+                "<w:sdtContent><w:r><w:t>BoundLink</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        with pytest.raises(UnsupportedStructureError, match="data-bound"):
+            add_hyperlink(document, find_one(document, "BoundLink"), "https://example.com/a")
+
+    def it_refuses_a_locked_control_span(self):
+        document = _doc()
+        document.element.body.insert(
+            len(document.element.body) - 1,
+            parse_xml(
+                f'<w:p {nsdecls("w")}>'
+                '<w:sdt><w:sdtPr><w:tag w:val="locked"/>'
+                '<w:lock w:val="contentLocked"/></w:sdtPr>'
+                "<w:sdtContent><w:r><w:t>LockedLink</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        with pytest.raises(UnsupportedStructureError, match="locked"):
+            add_hyperlink(document, find_one(document, "LockedLink"), "https://example.com/a")
+
+    def it_wraps_text_inside_an_unlocked_control(self):
+        document = _doc()
+        document.element.body.insert(
+            len(document.element.body) - 1,
+            parse_xml(
+                f'<w:p {nsdecls("w")}>'
+                '<w:sdt><w:sdtPr><w:tag w:val="plain"/></w:sdtPr>'
+                "<w:sdtContent><w:r><w:t>PlainLink</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        link = add_hyperlink(
+            document, find_one(document, "PlainLink"), "https://example.com/a"
+        )
+        assert link.address == "https://example.com/a"
