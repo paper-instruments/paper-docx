@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 
 import docx
-from docx.commentops import delete_comment
+from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
+from docx.oxml.ns import qn
 from docx.search import find_one
 
 from .harness.contract import save_and_reopen
@@ -38,3 +39,24 @@ class DescribeCommentDeleteAndIdentity:
         assert "keep" in texts
         assert "drop" not in texts
         assert first.comment_id in {comment.comment_id for comment in reopened.comments}
+
+    def it_retargets_identity_when_the_last_paragraph_moves(self):
+        document = _doc()
+        comment = find_one(document, "perfectly ordinary").comment(
+            text="note", author="Ada"
+        )
+        old_para = comment.paragraphs[-1]._p.get(qn("w14:paraId"))
+        comment.add_paragraph("more")
+        new_para = comment.paragraphs[-1]._p.get(qn("w14:paraId"))
+        assert new_para and new_para != old_para
+        ids_root = document.part.part_related_by(COMMENTS_IDS_RELATIONSHIP_TYPE)._element
+        para_ids = [
+            entry.get(
+                "{http://schemas.microsoft.com/office/word/2016/wordml/cid}paraId"
+            )
+            for entry in ids_root
+        ]
+        assert new_para in para_ids
+        assert old_para not in para_ids
+        delete_comment(document, comment)
+        assert list(ids_root) == []

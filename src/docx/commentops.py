@@ -422,6 +422,65 @@ def _preflight_comments_extended_write(document: "Document") -> None:
         )
 
 
+def _retarget_comment_identity(
+    document: "Document", previous_id: str, current_id: str
+) -> None:
+    ids_root = _xml_part_root(
+        document,
+        relationship_type=COMMENTS_IDS_RELATIONSHIP_TYPE,
+        partname=_COMMENTS_IDS_PARTNAME,
+        content_type=COMMENTS_IDS_CONTENT_TYPE,
+        template=_COMMENTS_IDS_TEMPLATE,
+        expected_tag=f"{{{_W16CID_NS}}}commentsIds",
+        create=False,
+    )
+    if ids_root is None:
+        return
+    wanted = previous_id.upper()
+    for entry in ids_root.findall(_COMMENT_ID):
+        if (entry.get(_PARA_ID_CID) or "").upper() == wanted:
+            entry.set(_PARA_ID_CID, current_id)
+            return
+
+
+def _remove_comment_identity_rows(document: "Document", para_ids) -> None:
+    wanted = {value.upper() for value in para_ids if value}
+    if not wanted:
+        return
+    ids_root = _xml_part_root(
+        document,
+        relationship_type=COMMENTS_IDS_RELATIONSHIP_TYPE,
+        partname=_COMMENTS_IDS_PARTNAME,
+        content_type=COMMENTS_IDS_CONTENT_TYPE,
+        template=_COMMENTS_IDS_TEMPLATE,
+        expected_tag=f"{{{_W16CID_NS}}}commentsIds",
+        create=False,
+    )
+    durable_ids = set()
+    if ids_root is not None:
+        for entry in list(ids_root.findall(_COMMENT_ID)):
+            para_id = (entry.get(_PARA_ID_CID) or "").upper()
+            if para_id in wanted:
+                durable = (entry.get(_DURABLE_ID) or "").upper()
+                if durable:
+                    durable_ids.add(durable)
+                ids_root.remove(entry)
+    cex_root = _xml_part_root(
+        document,
+        relationship_type=COMMENTS_EXTENSIBLE_RELATIONSHIP_TYPE,
+        partname=_COMMENTS_EXTENSIBLE_PARTNAME,
+        content_type=COMMENTS_EXTENSIBLE_CONTENT_TYPE,
+        template=_COMMENTS_EXTENSIBLE_TEMPLATE,
+        expected_tag=f"{{{_W16CEX_NS}}}commentsExtensible",
+        create=False,
+    )
+    if cex_root is None or not durable_ids:
+        return
+    for entry in list(cex_root.findall(_COMMENT_EXTENSIBLE)):
+        if (entry.get(_DURABLE_ID_CEX) or "").upper() in durable_ids:
+            cex_root.remove(entry)
+
+
 def _migrate_comment_extension(
     document: "Document",
     comment_elm: "_Element",
@@ -435,6 +494,8 @@ def _migrate_comment_extension(
     if previous_raw is None:
         return
     previous_id = _validate_para_id(previous_raw, attribute="w14:paraId")
+    current_id = _ensure_para_id(document, current_last)
+    _retarget_comment_identity(document, previous_id, current_id)
     root = _comments_extended_root(document, create=False)
     if root is None:
         return
@@ -450,7 +511,6 @@ def _migrate_comment_extension(
     ]
     if own_entry is None and not child_entries:
         return
-    current_id = _ensure_para_id(document, current_last)
     if own_entry is not None:
         own_entry.set(_PARA_ID, current_id)
     for entry in child_entries:
@@ -780,35 +840,4 @@ def delete_comment(document: "Document", comment: "Comment") -> None:
                     parent_id and parent_id.upper() in wanted
                 ):
                     extended.remove(entry)
-        ids_root = _xml_part_root(
-            document,
-            relationship_type=COMMENTS_IDS_RELATIONSHIP_TYPE,
-            partname=_COMMENTS_IDS_PARTNAME,
-            content_type=COMMENTS_IDS_CONTENT_TYPE,
-            template=_COMMENTS_IDS_TEMPLATE,
-            expected_tag=f"{{{_W16CID_NS}}}commentsIds",
-            create=False,
-        )
-        durable_ids = set()
-        if ids_root is not None:
-            wanted = {value.upper() for value in para_ids}
-            for entry in list(ids_root.findall(_COMMENT_ID)):
-                para_id = (entry.get(_PARA_ID_CID) or "").upper()
-                if para_id in wanted:
-                    durable = (entry.get(_DURABLE_ID) or "").upper()
-                    if durable:
-                        durable_ids.add(durable)
-                    ids_root.remove(entry)
-        cex_root = _xml_part_root(
-            document,
-            relationship_type=COMMENTS_EXTENSIBLE_RELATIONSHIP_TYPE,
-            partname=_COMMENTS_EXTENSIBLE_PARTNAME,
-            content_type=COMMENTS_EXTENSIBLE_CONTENT_TYPE,
-            template=_COMMENTS_EXTENSIBLE_TEMPLATE,
-            expected_tag=f"{{{_W16CEX_NS}}}commentsExtensible",
-            create=False,
-        )
-        if cex_root is not None and durable_ids:
-            for entry in list(cex_root.findall(_COMMENT_EXTENSIBLE)):
-                if (entry.get(_DURABLE_ID_CEX) or "").upper() in durable_ids:
-                    cex_root.remove(entry)
+        _remove_comment_identity_rows(document, para_ids)

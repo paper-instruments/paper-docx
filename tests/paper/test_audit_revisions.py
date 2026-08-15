@@ -12,6 +12,7 @@ import pytest
 import docx
 from docx.commentops import (
     COMMENTS_EXTENDED_RELATIONSHIP_TYPE,
+    COMMENTS_IDS_RELATIONSHIP_TYPE,
     reply,
     resolve,
 )
@@ -327,6 +328,17 @@ class DescribeDiscardCleanup:
         }
         assert first_para_id not in remaining_para_ids
         assert second_para_id in remaining_para_ids
+        ids_root = document.part.part_related_by(
+            COMMENTS_IDS_RELATIONSHIP_TYPE
+        )._element  # noqa: SLF001
+        remaining_identity = {
+            entry.get(
+                "{http://schemas.microsoft.com/office/word/2016/wordml/cid}paraId"
+            )
+            for entry in ids_root
+        }
+        assert first_para_id not in remaining_identity
+        assert second_para_id in remaining_identity
 
         output = tmp_path / "comments.docx"
         document.save(str(output))

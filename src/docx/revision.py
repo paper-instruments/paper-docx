@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Iterator, List, Optional, Sequence, Tuple
 
 from docx._guard import check_install
 from docx._transaction import rollback_on_error
+from docx.commentops import _remove_comment_identity_rows
 from docx.errors import UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.protection import _refuse_if_protected
@@ -1395,6 +1396,7 @@ def _cleanup_comment_anchors(document: "Optional[Document]", comment_ids) -> Non
                 paragraph_ids.add(para_id)
         _discard_element(comment, document)
     _cleanup_comments_extended(document, paragraph_ids)
+    _remove_comment_identity_rows(document, paragraph_ids)
 
 
 def _discard_element(
