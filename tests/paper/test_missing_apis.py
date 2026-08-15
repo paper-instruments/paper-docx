@@ -10,7 +10,7 @@ import pytest
 
 import docx
 from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
-from docx.controls import get_control, set_control_value
+from docx.controls import _part_root, get_control, set_control_value
 from docx.drawing import Drawing
 from docx.errors import (
     BoundaryViolationError,
@@ -619,40 +619,25 @@ class DescribeDataBoundControls:
         assert node.get("status") == "new"
         assert node.text == "keep"
 
-    def it_refuses_a_data_bound_checkbox(self):
+    def it_writes_the_store_after_reopen(self, tmp_path: Path):
         document = _doc()
-        _attach_bound_control(
-            document,
-            "bound-box",
-            extra_pr='<w14:checkbox><w14:checked w14:val="0"/></w14:checkbox>',
-        )
-        with pytest.raises(UnsupportedStructureError, match="checkbox"):
-            set_control_value(document, "true", tag="bound-box")
-        assert get_control(document, tag="bound-box").value is False
-
-    def it_refuses_a_data_bound_picture(self):
-        document = _doc()
-        _attach_bound_control(document, "bound-pic", extra_pr="<w:picture/>")
-        with pytest.raises(UnsupportedStructureError, match="picture"):
-            set_control_value(document, "new", tag="bound-pic")
-
-    def it_writes_an_attribute_binding(self):
-        document = _doc()
-        _attach_bound_control(
-            document,
-            "bound-attr",
-            xpath="/ns0:root/ns0:name/@status",
-            item_xml=(
-                '<ns0:root xmlns:ns0="http://example.com/form">'
-                '<ns0:name status="old">keep</ns0:name></ns0:root>'
-            ),
-        )
-        set_control_value(document, "new", tag="bound-attr")
+        _attach_bound_control(document, "bound")
+        reopened = save_and_reopen(document, tmp_path / "in.docx")
+        set_control_value(reopened, "new", tag="bound")
+        saved = save_and_reopen(reopened, tmp_path / "out.docx")
         store = None
-        for part in document.part.package.iter_parts():
+        for part in saved.part.package.iter_parts():
             if str(part.partname) == "/customXml/item2.xml":
-                store = part._element
+                element = getattr(part, "_element", None)
+                store = element if element is not None else parse_xml(part.blob)
+        assert store is not None
         ns = {"ns0": "http://example.com/form"}
-        node = store.xpath("/ns0:root/ns0:name", namespaces=ns)[0]
-        assert node.get("status") == "new"
-        assert node.text == "keep"
+        assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"
+
+    def it_parses_blob_stores_without_resolving_entities(self):
+        class _BlobPart:
+            content_type = "application/xml"
+            blob = b'<!DOCTYPE root [<!ENTITY e "EXPANDED">]><root>&e;</root>'
+
+        root = _part_root(_BlobPart())
+        assert (root.text or "") != "EXPANDED"

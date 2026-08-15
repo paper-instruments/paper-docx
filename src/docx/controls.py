@@ -29,7 +29,7 @@ from docx.errors import (
 )
 from docx.opc.constants import CONTENT_TYPE as CT
 from docx.oxml.ns import qn
-from docx.oxml.parser import OxmlElement
+from docx.oxml.parser import OxmlElement, parse_xml
 from docx.protection import _refuse_if_protected
 from docx.search import _validate_writable_text
 from docx.story import _first_choice_children, _story_elements
@@ -657,7 +657,7 @@ def _part_root(part):
     blob = getattr(part, "blob", None)
     if not blob:
         return None
-    return etree.fromstring(blob)
+    return parse_xml(blob)
 
 
 def _write_bound_node(node, value: str) -> None:
