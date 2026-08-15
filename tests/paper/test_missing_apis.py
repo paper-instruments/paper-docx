@@ -21,8 +21,10 @@ from docx.errors import (
     UnsupportedStructureError,
 )
 from docx.fields import add_caption
+from docx.enum.style import WD_STYLE_TYPE
 from docx.links import add_hyperlink
 from docx.notes import add_endnote, add_footnote
+from docx.numbering import apply_numbering, ensure_decimal_definition, list_numbering
 from docx.opc.constants import CONTENT_TYPE as CT
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.opc.packuri import PackURI
@@ -827,3 +829,35 @@ class DescribeSourceLetterhead:
         append_document(destination, source, headers="source")
         reopened = save_and_reopen(destination, tmp_path / "out.docx")
         assert reopened.settings.odd_and_even_pages_header_footer
+
+    def it_imports_a_custom_header_style(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        style = source.styles.add_style("LetterheadBrand", WD_STYLE_TYPE.PARAGRAPH)
+        style.font.italic = True
+        header = source.sections[0].header.paragraphs[0]
+        header.style = style
+        header.text = "Source letterhead"
+        report = append_document(destination, source, headers="source")
+        assert "LetterheadBrand" in report.imported_styles
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert reopened.sections[-1].header.paragraphs[0].style.name == "LetterheadBrand"
+
+    def it_remaps_header_numbering(self, tmp_path: Path):
+        destination = _doc()
+        ensure_decimal_definition(destination)
+        source = _doc()
+        source_num_id = ensure_decimal_definition(source)
+        header = source.sections[0].header.paragraphs[0]
+        header.text = "Header item"
+        apply_numbering(header, num_id=source_num_id)
+        report = append_document(destination, source, headers="source")
+        assert source_num_id in report.numbering_map
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        copied = [
+            item
+            for item in list_numbering(reopened).numbered_paragraphs
+            if item.text == "Header item"
+        ]
+        assert copied
+        assert copied[0].num_id == report.numbering_map[source_num_id]

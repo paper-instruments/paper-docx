@@ -216,7 +216,7 @@ def append_document(
             break_paragraph.append(run)
             destination_blocks[-1].addnext(break_paragraph)
         if headers == "source":
-            _copy_letterhead(document, source, report, dest_section_count)
+            _copy_letterhead(document, source, report, dest_section_count, styles)
         return report
 
 
@@ -230,6 +230,7 @@ def _copy_letterhead(
     source: "Document",
     report: CompositionReport,
     dest_section_count: int,
+    styles_mode: str = "match_by_name",
 ) -> None:
     dest_section = document.sections[-1]
     src_section = source.sections[-1]
@@ -260,6 +261,10 @@ def _copy_letterhead(
         source_children = list(src_defined._element)  # noqa: SLF001
         _preflight_relationships(src_defined.part, source_children)
         _refuse_unloadable_media(src_defined.part, source_children)
+        chained = _chained_source_definitions(source, source_children)
+        numbering_plan = _preflight_numbering(
+            document, source, source_children + chained
+        )
         dest_root = dest_hf._element  # noqa: SLF001
         for child in list(dest_root):
             dest_root.remove(child)
@@ -268,6 +273,12 @@ def _copy_letterhead(
             clone = copy.deepcopy(child)
             dest_root.append(clone)
             clones.append(clone)
+        imported_definitions = _reconcile_styles(
+            document, source, clones, styles_mode, report
+        )
+        _remap_numbering(
+            document, clones + imported_definitions, numbering_plan, report
+        )
         _copy_media(dest_hf.part, src_defined.part, clones, report)
         _recreate_hyperlinks(dest_hf.part, src_defined.part, clones, report)
 
@@ -772,7 +783,7 @@ def _reconcile_styles(
                 value = node.get(_VAL)
                 if value in style_map and style_map[value] != value:
                     node.set(_VAL, style_map[value])
-    report.style_map = style_map
+    report.style_map.update(style_map)
     if report.renamed_styles:
         _remap_styleref_fields(clones, report.renamed_styles)
     return [definition for _new_id, definition in to_import]
@@ -1058,7 +1069,7 @@ def _remap_numbering(
             value = num_id_element.get(_VAL)
             if value and int(value) in numbering_map:
                 num_id_element.set(_VAL, str(numbering_map[int(value)]))
-    report.numbering_map = numbering_map
+    report.numbering_map.update(numbering_map)
 
 
 # ---------------------------------------------------------------------------
