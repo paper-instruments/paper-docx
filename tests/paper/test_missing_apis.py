@@ -10,6 +10,7 @@ import pytest
 from lxml import etree
 
 import docx
+from docx.bookmarks import create_bookmark
 from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
 from docx.composition import CompositionReport, _copy_letterhead, append_document
 from docx.controls import _part_root, get_control, set_control_value
@@ -861,3 +862,43 @@ class DescribeSourceLetterhead:
         ]
         assert copied
         assert copied[0].num_id == report.numbering_map[source_num_id]
+
+    def it_reuses_a_body_numbering_remap_in_the_header(self, tmp_path: Path):
+        destination = _doc()
+        ensure_decimal_definition(destination)
+        source = _doc()
+        source_num_id = ensure_decimal_definition(source)
+        apply_numbering(source.add_paragraph("Body item"), num_id=source_num_id)
+        header = source.sections[0].header.paragraphs[0]
+        header.text = "Header item"
+        apply_numbering(header, num_id=source_num_id)
+        report = append_document(destination, source, headers="source")
+        new_id = report.numbering_map[source_num_id]
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        numbered = list_numbering(reopened).numbered_paragraphs
+        body_item = next(item for item in numbered if "Body item" in item.text)
+        header_item = next(item for item in numbered if item.text == "Header item")
+        assert body_item.num_id == header_item.num_id == new_id
+
+    def it_refuses_a_note_mark_in_the_source_letterhead(self):
+        destination = _doc()
+        source = _doc()
+        source.sections[0].header.paragraphs[0].text = "Source letterhead"
+        source.sections[0].header.paragraphs[0].add_run()._r.append(
+            parse_xml(f'<w:footnoteReference {nsdecls("w")} w:id="1"/>')
+        )
+        with pytest.raises(UnsupportedStructureError, match="footnote"):
+            append_document(destination, source, headers="source")
+
+    def it_renames_a_header_bookmark_that_collides_with_the_destination(self):
+        destination = _doc()
+        create_bookmark(destination, find_one(destination, "perfectly ordinary"), "SharedMark")
+        source = _doc()
+        source.sections[0].header.paragraphs[0].text = "HeaderMark"
+        create_bookmark(
+            source,
+            find_one(source, "HeaderMark", story="word/header1.xml"),
+            "SharedMark",
+        )
+        report = append_document(destination, source, headers="source")
+        assert report.bookmarks_renamed["SharedMark"] != "SharedMark"

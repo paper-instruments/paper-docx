@@ -259,6 +259,8 @@ def _copy_letterhead(
             continue
         dest_hf.is_linked_to_previous = False
         source_children = list(src_defined._element)  # noqa: SLF001
+        _refuse_unsupported_content(source_children)
+        _refuse_malformed_numeric_ids(document, source_children)
         _preflight_relationships(src_defined.part, source_children)
         _refuse_unloadable_media(src_defined.part, source_children)
         chained = _chained_source_definitions(source, source_children)
@@ -268,11 +270,7 @@ def _copy_letterhead(
         dest_root = dest_hf._element  # noqa: SLF001
         for child in list(dest_root):
             dest_root.remove(child)
-        clones = []
-        for child in source_children:
-            clone = copy.deepcopy(child)
-            dest_root.append(clone)
-            clones.append(clone)
+        clones = [copy.deepcopy(child) for child in source_children]
         imported_definitions = _reconcile_styles(
             document, source, clones, styles_mode, report
         )
@@ -281,6 +279,10 @@ def _copy_letterhead(
         )
         _copy_media(dest_hf.part, src_defined.part, clones, report)
         _recreate_hyperlinks(dest_hf.part, src_defined.part, clones, report)
+        _reconcile_bookmarks(document, clones, report)
+        _reallocate_sdt_ids(document, clones)
+        for clone in clones:
+            dest_root.append(clone)
 
 
 def _defined_header_footer(hf):
@@ -1046,6 +1048,11 @@ def _remap_numbering(
     for remap in plan.remaps:
         if remap.source_num_id not in referenced:
             continue
+        if remap.source_num_id in report.numbering_map:
+            numbering_map[remap.source_num_id] = report.numbering_map[
+                remap.source_num_id
+            ]
+            continue
         abstract_clone = copy.deepcopy(remap.source_abstract)
         abstract_clone.set(qn("w:abstractNumId"), str(remap.destination_abstract_id))
         # nsid/tmpl uniqueness is advisory; leaving them is Word-tolerated
@@ -1211,7 +1218,7 @@ def _reconcile_bookmarks(
                 )
     if renames:
         _remap_field_refs(clones, renames)
-    report.bookmarks_renamed = renames
+    report.bookmarks_renamed.update(renames)
 
 
 def _fresh_bookmark_name(existing_folded: set, base: str) -> str:
