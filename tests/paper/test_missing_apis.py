@@ -258,3 +258,9 @@ class DescribeHyperlinks:
         assert span.in_field
         with pytest.raises(UnsupportedStructureError, match="field result"):
             add_hyperlink(document, span, "https://example.com/a")
+
+    def it_defines_the_hyperlink_character_style(self):
+        document = _doc()
+        assert "Hyperlink" not in document.styles
+        add_hyperlink(document, find_one(document, "perfectly ordinary"), "https://example.com/a")
+        assert "Hyperlink" in document.styles

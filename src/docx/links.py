@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING
 from docx._guard import check_install
 from docx._ownership import require_span_owner
 from docx._transaction import rollback_on_error
+from docx.enum.style import WD_STYLE_TYPE
 from docx.errors import BoundaryViolationError, UnsupportedStructureError
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml.ns import qn
@@ -83,6 +84,8 @@ def add_hyperlink(document: "Document", span: "Span", address: str) -> Hyperlink
             " results on update, so the hyperlink would silently vanish"
         )
     with rollback_on_error(document, span):
+        if "Hyperlink" not in document.styles:
+            document.styles.add_style("Hyperlink", WD_STYLE_TYPE.CHARACTER, builtin=True)
         span._isolate_edge_runs()  # noqa: SLF001
         runs = []
         for atom in span._atoms:  # noqa: SLF001
