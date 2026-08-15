@@ -7,6 +7,11 @@ from typing import TYPE_CHECKING
 from docx._guard import check_install
 from docx._ownership import require_span_owner
 from docx._transaction import rollback_on_error
+from docx.controls import (
+    _control_type,
+    _refuse_control_write_restrictions,
+    _validate_span_surface_edit,
+)
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.opc.constants import CONTENT_TYPE as CT
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
@@ -36,6 +41,8 @@ _P = qn("w:p")
 _R = qn("w:r")
 _FOOTNOTE_REFERENCE = qn("w:footnoteReference")
 _ENDNOTE_REFERENCE = qn("w:endnoteReference")
+_SDT = qn("w:sdt")
+_SDT_PR = qn("w:sdtPr")
 
 _FOOTNOTES_TEMPLATE = (
     f"<w:footnotes {_W_DECL}>"
@@ -124,6 +131,7 @@ def _insert_note(
             "the span lies inside a field result; a note planted there"
             " is destroyed the next time the field updates"
         )
+    _refuse_control_surface(span)
     with rollback_on_error(document, span):
         span._isolate_edge_runs()  # noqa: SLF001
         runs = []
@@ -160,6 +168,24 @@ def _insert_note(
         mark.append(reference)
         _insert_after_span(runs, mark)
         return note_id
+
+
+def _refuse_control_surface(span: "Span") -> None:
+    controls = []
+    for atom in span._atoms:  # noqa: SLF001
+        current = atom.element.getparent()
+        while current is not None:
+            if current.tag == _SDT and not any(current is item for item in controls):
+                controls.append(current)
+            current = current.getparent()
+    for control in controls:
+        _validate_span_surface_edit(control)
+        _refuse_control_write_restrictions(control)
+        if _control_type(control.find(_SDT_PR)) == "text":
+            raise UnsupportedStructureError(
+                "span lies in a plain-text content control; a note mark would"
+                " break the control's content model. Nothing was changed"
+            )
 
 
 def _is_note_mark(element: "_Element") -> bool:

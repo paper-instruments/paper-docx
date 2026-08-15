@@ -411,27 +411,65 @@ class DescribeNotes:
         ]
         assert refs == [str(first), str(second)]
 
-    def it_refuses_a_note_inside_a_text_box(self):
-        document = _doc("generated/feature-isolated/textbox.docx")
-        span = find_one(document, "living inside the text box")
-        assert span.in_text_box
-        with pytest.raises(UnsupportedStructureError, match="text box"):
-            add_footnote(document, span, "nope")
-
-    def it_refuses_a_note_inside_a_field_result(self):
-        document = _doc("generated/feature-isolated/fields.docx")
-        span = find_one(document, "June 1, 2026")
-        assert span.in_field
-        with pytest.raises(UnsupportedStructureError, match="field result"):
-            add_footnote(document, span, "nope")
-
-    def it_keeps_stacked_note_marks_in_insertion_order(self):
+    def it_refuses_a_data_bound_span(self):
         document = _doc()
-        span = find_one(document, "perfectly ordinary")
-        first = add_footnote(document, span, "First")
-        second = add_footnote(document, span, "Second")
+        document.element.body.insert(
+            len(document.element.body) - 1,
+            parse_xml(
+                f'<w:p {nsdecls("w")}>'
+                '<w:sdt><w:sdtPr><w:tag w:val="bound"/>'
+                '<w:dataBinding w:xpath="/x" w:storeItemID="{11111111-1111-1111-1111-111111111111}"/>'
+                "</w:sdtPr>"
+                "<w:sdtContent><w:r><w:t>BoundNote</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        with pytest.raises(UnsupportedStructureError, match="data-bound"):
+            add_footnote(document, find_one(document, "BoundNote"), "nope")
+
+    def it_refuses_a_locked_control_span(self):
+        document = _doc()
+        document.element.body.insert(
+            len(document.element.body) - 1,
+            parse_xml(
+                f'<w:p {nsdecls("w")}>'
+                '<w:sdt><w:sdtPr><w:tag w:val="locked"/>'
+                '<w:lock w:val="contentLocked"/></w:sdtPr>'
+                "<w:sdtContent><w:r><w:t>LockedNote</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        with pytest.raises(UnsupportedStructureError, match="locked"):
+            add_footnote(document, find_one(document, "LockedNote"), "nope")
+
+    def it_adds_a_note_inside_an_unlocked_control(self):
+        document = _doc()
+        document.element.body.insert(
+            len(document.element.body) - 1,
+            parse_xml(
+                f'<w:p {nsdecls("w")}>'
+                '<w:sdt><w:sdtPr><w:tag w:val="rich"/></w:sdtPr>'
+                "<w:sdtContent><w:r><w:t>RichNote</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        note_id = add_footnote(document, find_one(document, "RichNote"), "ok")
         refs = [
             node.get(qn("w:id"))
             for node in document.element.iter(qn("w:footnoteReference"))
         ]
-        assert refs == [str(first), str(second)]
+        assert refs == [str(note_id)]
+
+    def it_refuses_a_plain_text_control_span(self):
+        document = _doc()
+        document.element.body.insert(
+            len(document.element.body) - 1,
+            parse_xml(
+                f'<w:p {nsdecls("w")}>'
+                '<w:sdt><w:sdtPr><w:tag w:val="plain-text"/><w:text/></w:sdtPr>'
+                "<w:sdtContent><w:r><w:t>PlainTextNote</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        with pytest.raises(UnsupportedStructureError, match="plain-text"):
+            add_footnote(document, find_one(document, "PlainTextNote"), "nope")
