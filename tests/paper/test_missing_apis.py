@@ -800,7 +800,9 @@ class DescribeSourceLetterhead:
         source.sections[0].even_page_header.paragraphs[0].text = "Inherited even"
         source.add_section()
         assert source.sections[-1].even_page_header.is_linked_to_previous
-        _copy_letterhead(destination, source, CompositionReport())
+        _copy_letterhead(
+            destination, source, CompositionReport(), len(destination.sections)
+        )
         reopened = save_and_reopen(destination, tmp_path / "out.docx")
         assert "Inherited even" in reopened.sections[-1].even_page_header.paragraphs[0].text
 
@@ -812,3 +814,16 @@ class DescribeSourceLetterhead:
         source.sections[0].even_page_header.paragraphs[0].text = "Even letterhead"
         with pytest.raises(UnsupportedStructureError, match="document-wide"):
             append_document(destination, source, headers="source")
+
+    def it_allows_even_odd_when_only_the_source_gained_sections(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.settings.odd_and_even_pages_header_footer = True
+        source.sections[0].even_page_header.paragraphs[0].text = "Even letterhead"
+        source.add_section()
+        for child in list(source.sections[0]._sectPr):
+            if child.tag in (qn("w:headerReference"), qn("w:footerReference")):
+                source.sections[0]._sectPr.remove(child)
+        append_document(destination, source, headers="source")
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert reopened.settings.odd_and_even_pages_header_footer

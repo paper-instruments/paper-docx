@@ -197,6 +197,7 @@ def append_document(
     destination_blocks = [child for child in document.element.body if child.tag in _BODY_BLOCK_TAGS]
     if not destination_blocks:
         raise TargetNotFoundError("the destination document body has no blocks")
+    dest_section_count = len(document.sections)
     with rollback_on_error(document):
         report = _compose(
             document,
@@ -215,7 +216,7 @@ def append_document(
             break_paragraph.append(run)
             destination_blocks[-1].addnext(break_paragraph)
         if headers == "source":
-            _copy_letterhead(document, source, report)
+            _copy_letterhead(document, source, report, dest_section_count)
         return report
 
 
@@ -225,7 +226,10 @@ def _validate_styles_mode(styles: str) -> None:
 
 
 def _copy_letterhead(
-    document: "Document", source: "Document", report: CompositionReport
+    document: "Document",
+    source: "Document",
+    report: CompositionReport,
+    dest_section_count: int,
 ) -> None:
     dest_section = document.sections[-1]
     src_section = source.sections[-1]
@@ -234,7 +238,7 @@ def _copy_letterhead(
     )
     source_even = source.settings.odd_and_even_pages_header_footer
     dest_even = document.settings.odd_and_even_pages_header_footer
-    if source_even != dest_even and len(document.sections) > 1:
+    if source_even != dest_even and dest_section_count > 1:
         raise UnsupportedStructureError(
             "even/odd headers are a document-wide setting; destination has"
             " more than one section. Nothing was changed"
