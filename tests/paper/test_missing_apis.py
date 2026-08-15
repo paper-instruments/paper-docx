@@ -11,7 +11,12 @@ import pytest
 import docx
 from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
 from docx.drawing import Drawing
-from docx.errors import DocumentProtectedError, UnsupportedStructureError
+from docx.errors import (
+    BoundaryViolationError,
+    DocumentProtectedError,
+    TargetNotFoundError,
+    UnsupportedStructureError,
+)
 from docx.links import add_hyperlink
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml.ns import nsdecls, qn
@@ -220,3 +225,16 @@ class DescribeHyperlinks:
         link.address = "https://example.com/b"
         assert link._hyperlink.anchor is None
         assert link.address == "https://example.com/b"
+
+    def it_refuses_a_span_from_another_document(self):
+        document = _doc()
+        foreign = find_one(_doc(), "perfectly ordinary")
+        with pytest.raises(BoundaryViolationError, match="different document"):
+            add_hyperlink(document, foreign, "https://example.com/a")
+
+    def it_refuses_a_stale_span(self):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        find_one(document, "perfectly ordinary").replace("changed")
+        with pytest.raises(TargetNotFoundError, match="stale"):
+            add_hyperlink(document, span, "https://example.com/a")

@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from docx._guard import check_install
+from docx._ownership import require_span_owner
 from docx._transaction import rollback_on_error
 from docx.errors import BoundaryViolationError, UnsupportedStructureError
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
@@ -73,7 +74,9 @@ def add_hyperlink(document: "Document", span: "Span", address: str) -> Hyperlink
     """
     if not address:
         raise ValueError("address must be a non-empty URL")
+    require_span_owner(document, span)
     _refuse_if_protected(document, "add a hyperlink")
+    span._validate_fresh()  # noqa: SLF001
     with rollback_on_error(document, span):
         span._isolate_edge_runs()  # noqa: SLF001
         runs = []
