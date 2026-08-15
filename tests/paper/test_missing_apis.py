@@ -11,6 +11,7 @@ from lxml import etree
 
 import docx
 from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
+from docx.composition import CompositionReport, _copy_letterhead, append_document
 from docx.controls import _part_root, get_control, set_control_value
 from docx.drawing import Drawing
 from docx.errors import (
@@ -734,3 +735,80 @@ class DescribeDataBoundControls:
                 store = part._element
         ns = {"ns0": "http://example.com/form"}
         assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"
+
+
+class DescribeSourceLetterhead:
+    def it_copies_source_headers_when_requested(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.sections[0].header.paragraphs[0].text = "Source letterhead"
+        append_document(destination, source, headers="source")
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert "Source letterhead" in reopened.sections[-1].header.paragraphs[0].text
+
+    def it_copies_header_images_onto_the_header_part(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.sections[0].header.paragraphs[0].add_run().add_picture(io.BytesIO(_bmp(0, 128, 0)))
+        append_document(destination, source, headers="source")
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        header = reopened.sections[-1].header
+        blips = header._element.findall(".//" + qn("a:blip"))
+        assert blips
+        r_id = blips[0].get(qn("r:embed"))
+        assert r_id in header.part.rels
+        assert header.part.rels[r_id].reltype == RT.IMAGE
+
+    def it_copies_header_hyperlinks_onto_the_header_part(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.sections[0].header.paragraphs[0].text = "SourceHeaderLink"
+        span = find_one(source, "SourceHeaderLink", story="word/header1.xml")
+        add_hyperlink(source, span, "https://example.com/letterhead")
+        append_document(destination, source, headers="source")
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        header = reopened.sections[-1].header
+        addresses = [
+            hyperlink.address
+            for paragraph in header.paragraphs
+            for hyperlink in paragraph.hyperlinks
+        ]
+        assert "https://example.com/letterhead" in addresses
+        r_ids = [
+            node.get(qn("r:id"))
+            for node in header._element.findall(".//" + qn("w:hyperlink"))
+        ]
+        assert r_ids and r_ids[0]
+        assert r_ids[0] in header.part.rels
+        assert header.part.rels[r_ids[0]].reltype == RT.HYPERLINK
+        assert header.part.rels[r_ids[0]].target_ref == "https://example.com/letterhead"
+
+    def it_turns_on_even_page_headers_when_the_source_uses_them(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.settings.odd_and_even_pages_header_footer = True
+        source.sections[0].even_page_header.paragraphs[0].text = "Even letterhead"
+        append_document(destination, source, headers="source")
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert reopened.settings.odd_and_even_pages_header_footer
+        assert "Even letterhead" in reopened.sections[-1].even_page_header.paragraphs[0].text
+
+    def it_copies_an_even_header_the_last_source_section_inherits(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.settings.odd_and_even_pages_header_footer = True
+        source.sections[0].even_page_header.paragraphs[0].text = "Inherited even"
+        source.add_section()
+        assert source.sections[-1].even_page_header.is_linked_to_previous
+        _copy_letterhead(destination, source, CompositionReport())
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert "Inherited even" in reopened.sections[-1].even_page_header.paragraphs[0].text
+
+    def it_refuses_even_odd_when_the_destination_has_more_sections(self):
+        destination = _doc()
+        destination.add_section()
+        source = _doc()
+        source.settings.odd_and_even_pages_header_footer = True
+        source.sections[0].even_page_header.paragraphs[0].text = "Even letterhead"
+        with pytest.raises(UnsupportedStructureError, match="document-wide"):
+            append_document(destination, source, headers="source")
