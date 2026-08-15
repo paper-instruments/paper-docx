@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING
 
 from docx._guard import check_install
+from docx._ownership import require_span_owner
 from docx._transaction import rollback_on_error
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.opc.constants import CONTENT_TYPE as CT
@@ -95,10 +96,12 @@ def _insert_note(
     endnote: bool,
 ) -> int:
     operation = "add an endnote" if endnote else "add a footnote"
+    require_span_owner(document, span)
     _refuse_if_protected(document, operation)
     if not text:
         raise ValueError("note text must be non-empty")
     _validate_writable_text(text, argument="text")
+    span._validate_fresh()  # noqa: SLF001
     main_story = next(
         story
         for story, root in _story_elements(document)

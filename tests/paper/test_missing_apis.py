@@ -372,3 +372,16 @@ class DescribeNotes:
         span = find_one(document, "HeaderNoteUnique", story="word/header1.xml")
         with pytest.raises(UnsupportedStructureError, match="main document body"):
             add_footnote(document, span, "nope")
+
+    def it_refuses_a_span_from_another_document(self):
+        document = _doc()
+        foreign = find_one(_doc(), "perfectly ordinary")
+        with pytest.raises(BoundaryViolationError, match="different document"):
+            add_footnote(document, foreign, "nope")
+
+    def it_refuses_a_stale_span(self):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        find_one(document, "perfectly ordinary").replace("changed")
+        with pytest.raises(TargetNotFoundError, match="stale"):
+            add_footnote(document, span, "nope")
