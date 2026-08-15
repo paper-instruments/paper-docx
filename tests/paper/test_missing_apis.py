@@ -53,11 +53,19 @@ def _blip_embed(drawing: Drawing) -> str:
     return drawing._drawing.xpath(".//pic:blipFill/a:blip/@r:embed")[0]
 
 
-def _attach_bound_control(document, tag: str, *, locked: bool = False) -> None:
-    item = parse_xml(
+def _attach_bound_control(
+    document,
+    tag: str,
+    *,
+    locked: bool = False,
+    extra_pr: str = "",
+    xpath: str = "/ns0:root/ns0:name",
+    item_xml: str = (
         '<ns0:root xmlns:ns0="http://example.com/form">'
         "<ns0:name>old</ns0:name></ns0:root>"
-    )
+    ),
+) -> None:
+    item = parse_xml(item_xml)
     item_part = XmlPart(
         PackURI("/customXml/item2.xml"),
         "application/xml",
@@ -81,11 +89,11 @@ def _attach_bound_control(document, tag: str, *, locked: bool = False) -> None:
     document.element.body.insert(
         len(document.element.body) - 1,
         parse_xml(
-            '<w:p xmlns:w="http://schemas.openxmlformats.org/wordprocessingml/2006/main">'
-            f'<w:sdt><w:sdtPr><w:tag w:val="{tag}"/>{lock}'
+            f'<w:p {nsdecls("w", "w14")}>'
+            f'<w:sdt><w:sdtPr><w:tag w:val="{tag}"/>{lock}{extra_pr}'
             "<w:dataBinding"
             " w:prefixMappings=\"xmlns:ns0='http://example.com/form'\""
-            ' w:xpath="/ns0:root/ns0:name"'
+            f' w:xpath="{xpath}"'
             f' w:storeItemID="{STORE_ID}"/></w:sdtPr>'
             "<w:sdtContent><w:r><w:t>old</w:t></w:r></w:sdtContent>"
             "</w:sdt></w:p>"
@@ -572,3 +580,79 @@ class DescribeDataBoundControls:
         set_control_value(document, "new", tag="bound")
         assert node.get("{http://www.w3.org/2001/XMLSchema-instance}nil") is None
         assert node.text == "new"
+
+    def it_refuses_a_data_bound_checkbox(self):
+        document = _doc()
+        _attach_bound_control(
+            document,
+            "bound-box",
+            extra_pr='<w14:checkbox><w14:checked w14:val="0"/></w14:checkbox>',
+        )
+        with pytest.raises(UnsupportedStructureError, match="checkbox"):
+            set_control_value(document, "true", tag="bound-box")
+        assert get_control(document, tag="bound-box").value is False
+
+    def it_refuses_a_data_bound_picture(self):
+        document = _doc()
+        _attach_bound_control(document, "bound-pic", extra_pr="<w:picture/>")
+        with pytest.raises(UnsupportedStructureError, match="picture"):
+            set_control_value(document, "new", tag="bound-pic")
+
+    def it_writes_an_attribute_binding(self):
+        document = _doc()
+        _attach_bound_control(
+            document,
+            "bound-attr",
+            xpath="/ns0:root/ns0:name/@status",
+            item_xml=(
+                '<ns0:root xmlns:ns0="http://example.com/form">'
+                '<ns0:name status="old">keep</ns0:name></ns0:root>'
+            ),
+        )
+        set_control_value(document, "new", tag="bound-attr")
+        store = None
+        for part in document.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                store = part._element
+        ns = {"ns0": "http://example.com/form"}
+        node = store.xpath("/ns0:root/ns0:name", namespaces=ns)[0]
+        assert node.get("status") == "new"
+        assert node.text == "keep"
+
+    def it_refuses_a_data_bound_checkbox(self):
+        document = _doc()
+        _attach_bound_control(
+            document,
+            "bound-box",
+            extra_pr='<w14:checkbox><w14:checked w14:val="0"/></w14:checkbox>',
+        )
+        with pytest.raises(UnsupportedStructureError, match="checkbox"):
+            set_control_value(document, "true", tag="bound-box")
+        assert get_control(document, tag="bound-box").value is False
+
+    def it_refuses_a_data_bound_picture(self):
+        document = _doc()
+        _attach_bound_control(document, "bound-pic", extra_pr="<w:picture/>")
+        with pytest.raises(UnsupportedStructureError, match="picture"):
+            set_control_value(document, "new", tag="bound-pic")
+
+    def it_writes_an_attribute_binding(self):
+        document = _doc()
+        _attach_bound_control(
+            document,
+            "bound-attr",
+            xpath="/ns0:root/ns0:name/@status",
+            item_xml=(
+                '<ns0:root xmlns:ns0="http://example.com/form">'
+                '<ns0:name status="old">keep</ns0:name></ns0:root>'
+            ),
+        )
+        set_control_value(document, "new", tag="bound-attr")
+        store = None
+        for part in document.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                store = part._element
+        ns = {"ns0": "http://example.com/form"}
+        node = store.xpath("/ns0:root/ns0:name", namespaces=ns)[0]
+        assert node.get("status") == "new"
+        assert node.text == "keep"

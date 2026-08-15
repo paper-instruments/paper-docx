@@ -468,6 +468,12 @@ class Control:
         self._validate_ownership()
         _refuse_if_protected(self._document, "set a control value")
         if self.is_data_bound:
+            control_type = self.control_type
+            if control_type not in ("text", "rich_text"):
+                raise UnsupportedStructureError(
+                    f"data-bound {control_type} controls are not settable;"
+                    " nothing was changed"
+                )
             if not isinstance(value, str):
                 raise ValueError("data-bound controls take a string value")
             _validate_writable_text(value, argument="value")
@@ -654,6 +660,22 @@ def _part_root(part):
     return etree.fromstring(blob)
 
 
+def _write_bound_node(node, value: str) -> None:
+    if isinstance(node, etree._Element):
+        if _XSI_NIL in node.attrib:
+            del node.attrib[_XSI_NIL]
+        node.text = value
+        return
+    parent = node.getparent() if hasattr(node, "getparent") else None
+    attrname = getattr(node, "attrname", None)
+    if parent is not None and attrname and getattr(node, "is_attribute", False):
+        parent.set(attrname, value)
+        return
+    raise UnsupportedStructureError(
+        "xpath matched a non-element store target; nothing was changed"
+    )
+
+
 def _write_bound_store(document: "Document", binding: "_Element", value: str) -> None:
     store_id = binding.get(_STORE_ITEM_ID)
     xpath = binding.get(_XPATH)
@@ -703,10 +725,7 @@ def _write_bound_store(document: "Document", binding: "_Element", value: str) ->
         raise TargetNotFoundError(
             f"xpath {xpath!r} matched no node in the custom XML store"
         )
-    node = nodes[0]
-    if _XSI_NIL in node.attrib:
-        del node.attrib[_XSI_NIL]
-    node.text = value
+    _write_bound_node(nodes[0], value)
     if getattr(item_part, "_element", None) is None:
         item_part._blob = etree.tostring(
             item_root, xml_declaration=True, encoding="UTF-8"
