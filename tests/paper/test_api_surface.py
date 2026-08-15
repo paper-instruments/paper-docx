@@ -206,6 +206,7 @@ APPROVED_SIGNATURES = [
         "(paragraph, *, bookmark, kind='text')",
     ),
     ("docx.fields", "insert_toc_after", "(document, anchor, *, levels=(1, 3))"),
+    ("docx.drawing", "Drawing.replace_picture", "(self, image_descriptor)"),
     ("docx.formatting", "format_of", "(target)"),
     ("docx.formatting", "surrounding_format", "(document, anchor)"),
 ]

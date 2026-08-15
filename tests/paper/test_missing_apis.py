@@ -2,12 +2,16 @@
 
 from __future__ import annotations
 
+import io
+import struct
 from pathlib import Path
 
 import pytest
 
 import docx
+<<<<<<< HEAD
 from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
+from docx.drawing import Drawing
 from docx.errors import DocumentProtectedError
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
@@ -22,6 +26,18 @@ MINIMAL = "generated/minimal-clean/minimal.docx"
 
 def _doc(relpath: str = MINIMAL):
     return docx.Document(str(fixture_path(relpath)))
+
+
+def _bmp(red: int, green: int, blue: int) -> bytes:
+    return (
+        struct.pack("<2sIHHI", b"BM", 58, 0, 0, 54)
+        + struct.pack("<IiiHHIIiiII", 40, 1, 1, 1, 24, 0, 4, 2835, 2835, 0, 0)
+        + bytes((blue, green, red, 0))
+    )
+
+
+def _blip_embed(drawing: Drawing) -> str:
+    return drawing._drawing.xpath(".//pic:blipFill/a:blip/@r:embed")[0]
 
 
 class DescribeCommentDeleteAndIdentity:
@@ -100,3 +116,27 @@ class DescribeProtectionSetter:
         set_protection(document, edit="readOnly")
         tags = [child.tag for child in settings]
         assert tags.index(qn("w:documentProtection")) < tags.index(qn("w:footnotePr"))
+
+
+class DescribePictureReplace:
+    def it_swaps_bytes_without_sharing_the_part(self):
+        document = _doc()
+        run = document.add_paragraph().add_run()
+        run.add_picture(io.BytesIO(_bmp(255, 0, 0)))
+        other = document.add_paragraph().add_run()
+        other.add_picture(io.BytesIO(_bmp(255, 0, 0)))
+        drawing = next(
+            item for item in run.iter_inner_content() if isinstance(item, Drawing)
+        )
+        other_drawing = next(
+            item for item in other.iter_inner_content() if isinstance(item, Drawing)
+        )
+        shared = _blip_embed(drawing)
+        assert _blip_embed(other_drawing) == shared
+        extent = drawing._drawing.xpath(".//wp:extent")[0]
+        cx, cy = extent.get("cx"), extent.get("cy")
+        drawing.replace_picture(io.BytesIO(_bmp(0, 0, 255)))
+        assert _blip_embed(drawing) != shared
+        assert _blip_embed(other_drawing) == shared
+        assert extent.get("cx") == cx
+        assert extent.get("cy") == cy
