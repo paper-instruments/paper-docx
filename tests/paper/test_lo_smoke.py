@@ -48,17 +48,3 @@ class DescribeLibreOfficeSmoke:
         out = tmp_path / "redline.docx"
         result.document.save(str(out))
         assert_libreoffice_opens(out)
-
-    def it_opens_the_finalized_and_scrubbed_gauntlet(self, tmp_path):
-        """The compliance output must survive an independent loader, not just
-        our own reopen."""
-        import docx
-
-        document = docx.Document(
-            str(fixture_path("generated/gauntlet/gauntlet.docx"))
-        )
-        document.finalize()
-        document.scrub(rsids=True)
-        out = tmp_path / "gauntlet-scrubbed.docx"
-        document.save(str(out))
-        assert_libreoffice_opens(out)

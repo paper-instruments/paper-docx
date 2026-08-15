@@ -10,7 +10,7 @@ from lxml import etree
 
 import docx
 import docx.revision as revision_module
-from docx import commentops, composition, scrubbing
+from docx import commentops, composition
 from docx._transaction import rollback_on_error
 from docx.enum.style import WD_STYLE_TYPE
 from docx.errors import UnsupportedStructureError
@@ -228,102 +228,6 @@ class DescribeCompositionRollback:
 
         assert destination.paragraphs[0]._p is anchor_element
         assert anchor.text == "anchor"
-
-
-class DescribeScrubAndFinalizeRollback:
-    def it_restores_comment_parts_and_existing_comment_proxies(self, monkeypatch):
-        document = docx.Document()
-        document.add_paragraph("target")
-        comment = find_one(document, "target").comment("review note", author="Reviewer")
-        comment_element = comment._comment_elm
-        monkeypatch.setattr(scrubbing, "_scrub_comment_anchors", _late_refusal)
-
-        assert_refusal_atomic(
-            document,
-            lambda candidate: candidate.scrub(comments=True, metadata=False),
-            UnsupportedStructureError,
-        )
-
-        restored = document.comments.get(comment.comment_id)
-        assert restored is not None
-        assert restored._comment_elm is comment_element
-        assert comment.text == "review note"
-
-    def it_restores_xml_blobs_and_package_relationships(self, monkeypatch):
-        document = docx.Document()
-        document.core_properties.author = "Audit Author"
-        package = document.part.package
-        assert package is not None
-        app_part = package.part_related_by(RT.EXTENDED_PROPERTIES)
-        app_root = etree.fromstring(app_part.blob)
-        company = next(app_root.iter("{*}Company"))
-        company.text = "Audit Company"
-        app_part._blob = etree.tostring(  # noqa: SLF001 - generic Part storage
-            app_root, xml_declaration=True, encoding="UTF-8", standalone=True
-        )
-        app_blob = app_part.blob
-        monkeypatch.setattr(scrubbing, "_scrub_track_changes_setting", _late_refusal)
-
-        assert_refusal_atomic(
-            document,
-            lambda candidate: candidate.scrub(comments=False),
-            UnsupportedStructureError,
-        )
-
-        assert document.core_properties.author == "Audit Author"
-        assert app_part.blob == app_blob
-        assert package.part_related_by(RT.THUMBNAIL).partname
-
-    def it_restores_revisions_when_finalize_postcheck_refuses(self, monkeypatch):
-        document = _two_revision_document()
-        revisions = document.revisions
-        original_elements = tuple(item._element for item in revisions)
-        monkeypatch.setattr(scrubbing, "_remaining_markup", _late_refusal)
-
-        assert_refusal_atomic(
-            document,
-            lambda candidate: candidate.finalize(),
-            UnsupportedStructureError,
-        )
-
-        current = document.revisions
-        assert len(current) == 2
-        assert all(
-            current_item._element is original
-            for current_item, original in zip(current, original_elements)
-        )
-
-    def it_restores_every_scrub_target_after_a_final_stage_refusal(self, monkeypatch):
-        document = docx.Document()
-        document.add_paragraph("commented")
-        find_one(document, "commented").comment("note", author="Reviewer")
-        hidden_paragraph = document.add_paragraph()._p
-        hidden_paragraph.set(qn("w:rsidR"), "00112233")
-        hidden_paragraph.append(
-            parse_xml(f"<w:r {nsdecls('w')}><w:rPr><w:vanish/></w:rPr><w:t>hidden</w:t></w:r>")
-        )
-        document.core_properties.author = "Audit Author"
-        settings = document.settings._settings
-        settings.insert(0, parse_xml(f"<w:trackRevisions {nsdecls('w')}/>"))
-        settings.append(parse_xml(f'<w:rsids {nsdecls("w")}><w:rsid w:val="00112233"/></w:rsids>'))
-        original = scrubbing._scrub_hidden_text
-
-        def scrub_hidden_then_refuse(hidden_runs, report):
-            original(hidden_runs, report)
-            raise UnsupportedStructureError("forced late refusal")
-
-        monkeypatch.setattr(scrubbing, "_scrub_hidden_text", scrub_hidden_then_refuse)
-
-        assert_refusal_atomic(
-            document,
-            lambda candidate: candidate.scrub(rsids=True, hidden_text=True),
-            UnsupportedStructureError,
-        )
-
-        assert "hidden" in document.element.xml
-        assert hidden_paragraph.get(qn("w:rsidR")) == "00112233"
-        assert settings.find(qn("w:trackRevisions")) is not None
-        assert settings.find(qn("w:rsids")) is not None
 
 
 class DescribeRevisionRollback:

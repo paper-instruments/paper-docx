@@ -79,8 +79,8 @@ cross-references, a table of contents), always as *formulas* with placeholder
 results. Word computes the displayed values when it opens the document.
 
 
-Review, resolve and finalize
-----------------------------
+Review and resolve
+------------------
 
 ``Document.revisions`` (:ref:`docx.revision <paper_revisions_api>`) enumerates
 every tracked change across every story part and resolves them — insertions,
@@ -92,11 +92,7 @@ deletions, format changes, table-row revisions, and moves as paired units:
         print(rev.revision_type, rev.author, repr(rev.text))
     doc.revisions.reject_all(author="Bob Reviewer")     # or accept_all()
 
-Before delivery, ``Document.finalize`` resolves every revision (or refuses,
-naming what blocked it) and ``Document.scrub``
-removes reviewing residue such as comments, metadata, and RSIDs. It returns a
-|ScrubReport| itemizing exactly what left the package (:ref:`docx.scrubbing
-<paper_scrubbing_api>`). Document protection is honored throughout:
+Document protection is honored throughout:
 :ref:`docx.protection <paper_protection_api>` makes every fork mutating API
 refuse with |DocumentProtectedError| on a Restrict-Editing setting rather than
 silently editing a locked template.
