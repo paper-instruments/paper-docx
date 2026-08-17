@@ -164,8 +164,6 @@ from them, so no API fact is written twice.
 Everything inherited from python-docx works as documented at the
 [python-docx documentation](https://python-docx.readthedocs.io/).
 
-The repository also still carries the inherited Sphinx tree under `docs/`, which
-nothing publishes; it is being retired now that the reference is generated.
 
 ## How it's tested
 
