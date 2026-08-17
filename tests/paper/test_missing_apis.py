@@ -60,6 +60,7 @@ def _attach_bound_control(
     locked: bool = False,
     extra_pr: str = "",
     xpath: str = "/ns0:root/ns0:name",
+    prefix_mappings: str | None = "xmlns:ns0='http://example.com/form'",
     item_xml: str = (
         '<ns0:root xmlns:ns0="http://example.com/form">'
         "<ns0:name>old</ns0:name></ns0:root>"
@@ -86,13 +87,15 @@ def _attach_bound_control(
     document.part.relate_to(item_part, RT.CUSTOM_XML)
     item_part.relate_to(props_part, RT.CUSTOM_XML_PROPS)
     lock = '<w:lock w:val="contentLocked"/>' if locked else ""
+    mapping_attr = (
+        f" w:prefixMappings=\"{prefix_mappings}\"" if prefix_mappings is not None else ""
+    )
     document.element.body.insert(
         len(document.element.body) - 1,
         parse_xml(
             f'<w:p {nsdecls("w", "w14")}>'
             f'<w:sdt><w:sdtPr><w:tag w:val="{tag}"/>{lock}{extra_pr}'
-            "<w:dataBinding"
-            " w:prefixMappings=\"xmlns:ns0='http://example.com/form'\""
+            f"<w:dataBinding{mapping_attr}"
             f' w:xpath="{xpath}"'
             f' w:storeItemID="{STORE_ID}"/></w:sdtPr>'
             "<w:sdtContent><w:r><w:t>old</w:t></w:r></w:sdtContent>"
@@ -641,3 +644,52 @@ class DescribeDataBoundControls:
 
         root = _part_root(_BlobPart())
         assert (root.text or "") != "EXPANDED"
+
+    def it_writes_the_store_using_the_item_namespaces(self):
+        document = _doc()
+        _attach_bound_control(document, "bound", prefix_mappings=None)
+        set_control_value(document, "new", tag="bound")
+        store = None
+        for part in document.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                store = part._element
+        ns = {"ns0": "http://example.com/form"}
+        assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"
+
+    def it_writes_the_store_using_the_default_namespace(self):
+        document = _doc()
+        _attach_bound_control(
+            document,
+            "bound-default",
+            prefix_mappings=None,
+            xpath="/root/name",
+            item_xml=(
+                '<root xmlns="http://example.com/form"><name>old</name></root>'
+            ),
+        )
+        set_control_value(document, "new", tag="bound-default")
+        store = None
+        for part in document.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                store = part._element
+        ns = {"ns0": "http://example.com/form"}
+        assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"
+
+    def it_writes_the_store_when_prefix_mappings_declare_a_default_ns(self):
+        document = _doc()
+        _attach_bound_control(
+            document,
+            "bound-default-map",
+            prefix_mappings="xmlns='http://example.com/form'",
+            xpath="/root/name",
+            item_xml=(
+                '<root xmlns="http://example.com/form"><name>old</name></root>'
+            ),
+        )
+        set_control_value(document, "new", tag="bound-default-map")
+        store = None
+        for part in document.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                store = part._element
+        ns = {"ns0": "http://example.com/form"}
+        assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"

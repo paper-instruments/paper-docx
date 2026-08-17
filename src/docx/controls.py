@@ -640,12 +640,38 @@ def _validate_span_surface_edit(sdt: "_Element") -> None:
 def _prefix_map(raw: Optional[str]) -> dict:
     if not raw:
         return {}
-    return {
-        match.group(1): match.group(2)
-        for match in re.finditer(
-            r"xmlns:([A-Za-z0-9_]+)\s*=\s*['\"]([^'\"]+)['\"]", raw
-        )
-    }
+    mapping = {}
+    for match in re.finditer(
+        r"xmlns(?::([A-Za-z_][\w.-]*))?\s*=\s*['\"]([^'\"]+)['\"]", raw
+    ):
+        mapping[match.group(1) or "_"] = match.group(2)
+    return mapping
+
+
+def _binding_namespaces(root, binding: "_Element") -> dict:
+    nsmap = _prefix_map(binding.get(_PREFIX_MAPPINGS))
+    if nsmap:
+        return nsmap
+    nsmap = {prefix: uri for prefix, uri in (root.nsmap or {}).items() if prefix}
+    default = (root.nsmap or {}).get(None)
+    if default is not None:
+        nsmap["_"] = default
+    return nsmap
+
+
+def _eval_store_xpath(root, xpath: str, nsmap: dict):
+    namespaces = nsmap or None
+    nodes = root.xpath(xpath, namespaces=namespaces)
+    if nodes:
+        return nodes
+    if "_" not in nsmap or re.search(r"(^|/)[A-Za-z_][\w.-]*:", xpath):
+        return nodes
+    qualified = re.sub(
+        r"(^|/)([A-Za-z_][\w.-]*)",
+        lambda match: f"{match.group(1)}_:{match.group(2)}",
+        xpath,
+    )
+    return root.xpath(qualified, namespaces=nsmap)
 
 
 def _part_root(part):
@@ -683,7 +709,6 @@ def _write_bound_store(document: "Document", binding: "_Element", value: str) ->
         raise UnsupportedStructureError(
             "data-bound control is missing storeItemID or xpath; nothing was changed"
         )
-    nsmap = _prefix_map(binding.get(_PREFIX_MAPPINGS))
     props_part = None
     for part in document.part.package.iter_parts():
         if part.content_type != CT.OFC_CUSTOM_XML_PROPERTIES:
@@ -720,7 +745,7 @@ def _write_bound_store(document: "Document", binding: "_Element", value: str) ->
         raise UnsupportedStructureError(
             "custom XML item is not writable XML; nothing was changed"
         )
-    nodes = item_root.xpath(xpath, namespaces=nsmap or None)
+    nodes = _eval_store_xpath(item_root, xpath, _binding_namespaces(item_root, binding))
     if not nodes:
         raise TargetNotFoundError(
             f"xpath {xpath!r} matched no node in the custom XML store"
