@@ -29,6 +29,14 @@ if TYPE_CHECKING:
     from docx.document import Document
     from docx.text.paragraph import Paragraph
 
+__all__ = [
+    "add_date_field",
+    "add_page_count_field",
+    "add_page_number_field",
+    "add_reference_field",
+    "insert_toc_after",
+]
+
 check_install()
 
 #: placeholder result texts — deliberately obviously-stale until a renderer

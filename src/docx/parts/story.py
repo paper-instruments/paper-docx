@@ -1,4 +1,4 @@
-"""|StoryPart| and related objects."""
+"""`StoryPart` and related objects."""
 
 from __future__ import annotations
 
@@ -29,7 +29,7 @@ class StoryPart(XmlPart):
 
         `rId` is the str key (often like "rId7") for the relationship between this story
         part and the image part, reused if already present, newly created if not.
-        `image` is an |Image| instance providing access to the properties of the image,
+        `image` is an `Image` instance providing access to the properties of the image,
         such as dimensions and image type.
         """
         package = self._package
@@ -41,7 +41,7 @@ class StoryPart(XmlPart):
     def get_style(self, style_id: str | None, style_type: WD_STYLE_TYPE) -> BaseStyle:
         """Return the style in this document matching `style_id`.
 
-        Returns the default style for `style_type` if `style_id` is |None| or does not
+        Returns the default style for `style_type` if `style_id` is `None` or does not
         match a defined style of `style_type`.
         """
         return self._document_part.get_style(style_id, style_type)
@@ -51,8 +51,8 @@ class StoryPart(XmlPart):
     ) -> str | None:
         """Return str style_id for `style_or_name` of `style_type`.
 
-        Returns |None| if the style resolves to the default style for `style_type` or if
-        `style_or_name` is itself |None|. Raises if `style_or_name` is a style of the
+        Returns `None` if the style resolves to the default style for `style_type` or if
+        `style_or_name` is itself `None`. Raises if `style_or_name` is a style of the
         wrong type or names a style not present in the document.
         """
         return self._document_part.get_style_id(style_or_name, style_type)
@@ -89,7 +89,7 @@ class StoryPart(XmlPart):
 
     @lazyproperty
     def _document_part(self) -> DocumentPart:
-        """|DocumentPart| object for this package."""
+        """`DocumentPart` object for this package."""
         package = self.package
         assert package is not None
         return cast("DocumentPart", package.main_document_part)

@@ -110,7 +110,7 @@ class CT_R(BaseOxmlElement):
     def style(self) -> str | None:
         """String contained in `w:val` attribute of `w:rStyle` grandchild.
 
-        |None| if that element is not present.
+        `None` if that element is not present.
         """
         rPr = self.rPr
         if rPr is None:
@@ -151,9 +151,9 @@ class CT_R(BaseOxmlElement):
 
         Should look like this:
 
-            <w:r>
-              <w:rPr><w:rStyle w:val="CommentReference"/></w:rPr>
-              <w:commentReference w:id="0"/>
+            `<w:r>`
+              `<w:rPr>``<w:rStyle w:val="CommentReference"/>`</w:rPr>
+              `<w:commentReference w:id="0"/>`
             </w:r>
 
         """

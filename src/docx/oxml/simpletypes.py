@@ -325,7 +325,7 @@ class ST_HpsMeasure(XsdUnsignedLong):
 
 
 class ST_Merge(XsdStringEnumeration):
-    """Valid values for <w:xMerge val=""> attribute."""
+    """Valid values for `<w:xMerge val="">` attribute."""
 
     CONTINUE = "continue"
     RESTART = "restart"

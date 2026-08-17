@@ -27,9 +27,9 @@ if TYPE_CHECKING:
 
 
 class OpcPackage:
-    """Main API class for |python-opc|.
+    """Main API class for `python-opc`.
 
-    A new instance is constructed by calling the :meth:`open` class method with a path
+    A new instance is constructed by calling the `open` class method with a path
     to a package file or file-like object containing one.
     """
 
@@ -44,7 +44,7 @@ class OpcPackage:
 
     @property
     def core_properties(self) -> CoreProperties:
-        """|CoreProperties| object providing read/write access to the Dublin Core
+        """`CoreProperties` object providing read/write access to the Dublin Core
         properties for this document."""
         return self._core_properties_part.core_properties
 
@@ -92,10 +92,10 @@ class OpcPackage:
             yield part
 
     def load_rel(self, reltype: str, target: Part | str, rId: str, is_external: bool = False):
-        """Return newly added |_Relationship| instance of `reltype` between this part
+        """Return newly added `_Relationship` instance of `reltype` between this part
         and `target` with key `rId`.
 
-        Target mode is set to ``RTM.EXTERNAL`` if `is_external` is |True|. Intended for
+        Target mode is set to ``RTM.EXTERNAL`` if `is_external` is `True`. Intended for
         use during load from a serialized package, where the rId is well known. Other
         methods exist for adding a new relationship to the package during processing.
         """
@@ -112,7 +112,7 @@ class OpcPackage:
         return self.part_related_by(RT.OFFICE_DOCUMENT)
 
     def next_partname(self, template: str) -> PackURI:
-        """Return a |PackURI| instance representing partname matching `template`.
+        """Return a `PackURI` instance representing partname matching `template`.
 
         The returned part-name has the next available numeric suffix to distinguish it
         from other parts of its type. `template` is a printf (%)-style template string
@@ -127,7 +127,7 @@ class OpcPackage:
 
     @classmethod
     def open(cls, pkg_file: str | IO[bytes]) -> Self:
-        """Return an |OpcPackage| instance loaded with the contents of `pkg_file`."""
+        """Return an `OpcPackage` instance loaded with the contents of `pkg_file`."""
         pkg_reader = PackageReader.from_file(pkg_file)
         package = cls()
         Unmarshaller.unmarshal(pkg_reader, package, PartFactory)
@@ -136,7 +136,7 @@ class OpcPackage:
     def part_related_by(self, reltype: str) -> Part:
         """Return part to which this package has a relationship of `reltype`.
 
-        Raises |KeyError| if no such relationship is found and |ValueError| if more than
+        Raises `KeyError` if no such relationship is found and `ValueError` if more than
         one such relationship is found.
         """
         return self.rels.part_with_reltype(reltype)
@@ -157,7 +157,7 @@ class OpcPackage:
 
     @lazyproperty
     def rels(self):
-        """Return a reference to the |Relationships| instance holding the collection of
+        """Return a reference to the `Relationships` instance holding the collection of
         relationships for this package."""
         return Relationships(PACKAGE_URI.baseURI)
 
@@ -177,7 +177,7 @@ class OpcPackage:
 
     @property
     def _core_properties_part(self) -> CorePropertiesPart:
-        """|CorePropertiesPart| object related to this package.
+        """`CorePropertiesPart` object related to this package.
 
         Creates a default core properties part if one is not present (not common).
         """
@@ -190,7 +190,7 @@ class OpcPackage:
 
 
 class Unmarshaller:
-    """Hosts static methods for unmarshalling a package from a |PackageReader|."""
+    """Hosts static methods for unmarshalling a package from a `PackageReader`."""
 
     @staticmethod
     def unmarshal(pkg_reader, package, part_factory):
@@ -207,7 +207,7 @@ class Unmarshaller:
 
     @staticmethod
     def _unmarshal_parts(pkg_reader, package, part_factory):
-        """Return a dictionary of |Part| instances unmarshalled from `pkg_reader`, keyed
+        """Return a dictionary of `Part` instances unmarshalled from `pkg_reader`, keyed
         by partname.
 
         Side-effect is that each part in `pkg_reader` is constructed using

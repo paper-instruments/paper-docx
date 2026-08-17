@@ -287,7 +287,7 @@ class ElementProxy:
         self._parent = parent
 
     def __eq__(self, other: object):
-        """Return |True| if this proxy object refers to the same oxml element as does
+        """Return `True` if this proxy object refers to the same oxml element as does
         `other`.
 
         ElementProxy objects are value objects and should maintain no mutable local

@@ -2,7 +2,7 @@
 
 Word's Restrict Editing pane writes `w:documentProtection` into
 word/settings.xml; Word then blocks or restricts editing. This package's own
-mutating APIs check that setting and refuse with |DocumentProtectedError|
+mutating APIs check that setting and refuse with `DocumentProtectedError`
 rather than silently editing a locked template — the same fail-loudly
 principle applied elsewhere in this fork. Upstream python-docx APIs are untouched
 (strict superset).
@@ -26,6 +26,12 @@ from docx.oxml.ns import qn
 
 if TYPE_CHECKING:
     from docx.document import Document
+
+__all__ = [
+    "ProtectionStatus",
+    "acknowledge_protection",
+    "protection_status",
+]
 
 check_install()
 
@@ -67,7 +73,7 @@ class ProtectionStatus:
 
 
 def _package_of(obj):
-    """The OPC package behind a |Document| or any Parented proxy/part."""
+    """The OPC package behind a `Document` or any Parented proxy/part."""
     part = getattr(obj, "part", None) or getattr(obj, "_part", None)
     if part is None:
         raise TypeError(f"cannot resolve a package from {type(obj).__name__}")
@@ -121,7 +127,7 @@ def acknowledge_protection(document: "Document") -> ProtectionStatus:
 def _refuse_if_protected(obj, operation: str) -> None:
     """Typed refusal when `obj`'s document enforces edit/format protection.
 
-    `obj` is whatever the mutating API has in hand: a |Document|, or any
+    `obj` is whatever the mutating API has in hand: a `Document`, or any
     proxy/part with a `.part` (Table, Paragraph, ...). Called BEFORE any
     mutation (refusal atomicity).
     """

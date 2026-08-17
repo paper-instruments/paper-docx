@@ -1,4 +1,4 @@
-"""The |Table| object and related proxy classes."""
+"""The `Table` object and related proxy classes."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ class Table(StoryChild):
         self._tbl = tbl
 
     def add_column(self, width: Length):
-        """Return a |_Column| object of `width`, newly added rightmost to the table."""
+        """Return a `_Column` object of `width`, newly added rightmost to the table."""
         tblGrid = self._tbl.tblGrid
         gridCol = tblGrid.add_gridCol()
         gridCol.w = width
@@ -45,7 +45,7 @@ class Table(StoryChild):
         return _Column(gridCol, self)
 
     def add_row(self):
-        """Return a |_Row| instance, newly added bottom-most to the table."""
+        """Return a `_Row` instance, newly added bottom-most to the table."""
         tbl = self._tbl
         tr = tbl.add_tr()
         for gridCol in tbl.tblGrid.gridCol_lst:
@@ -58,8 +58,8 @@ class Table(StoryChild):
     def alignment(self) -> WD_TABLE_ALIGNMENT | None:
         """Read/write.
 
-        A member of :ref:`WdRowAlignment` or None, specifying the positioning of this
-        table between the page margins. |None| if no setting is specified, causing the
+        A member of `WdRowAlignment` or None, specifying the positioning of this
+        table between the page margins. `None` if no setting is specified, causing the
         effective value to be inherited from the style hierarchy.
         """
         return self._tblPr.alignment
@@ -70,10 +70,10 @@ class Table(StoryChild):
 
     @property
     def autofit(self) -> bool:
-        """|True| if column widths can be automatically adjusted to improve the fit of
+        """`True` if column widths can be automatically adjusted to improve the fit of
         cell contents.
 
-        |False| if table layout is fixed. Column widths are adjusted in either case if
+        `False` if table layout is fixed. Column widths are adjusted in either case if
         total column width exceeds page width. Read/write boolean.
         """
         return self._tblPr.autofit
@@ -83,7 +83,7 @@ class Table(StoryChild):
         self._tblPr.autofit = value
 
     def cell(self, row_idx: int, col_idx: int) -> _Cell:
-        """|_Cell| at `row_idx`, `col_idx` intersection.
+        """`_Cell` at `row_idx`, `col_idx` intersection.
 
         (0, 0) is the top, left-most cell.
         """
@@ -98,7 +98,7 @@ class Table(StoryChild):
 
     @lazyproperty
     def columns(self):
-        """|_Columns| instance representing the sequence of columns in this table."""
+        """`_Columns` instance representing the sequence of columns in this table."""
         return _Columns(self._tbl, self)
 
     def row_cells(self, row_idx: int) -> list[_Cell]:
@@ -113,15 +113,15 @@ class Table(StoryChild):
 
     @lazyproperty
     def rows(self) -> _Rows:
-        """|_Rows| instance containing the sequence of rows in this table."""
+        """`_Rows` instance containing the sequence of rows in this table."""
         return _Rows(self._tbl, self)
 
     @property
     def style(self) -> _TableStyle | None:
-        """|_TableStyle| object representing the style applied to this table.
+        """`_TableStyle` object representing the style applied to this table.
 
         Read/write. The default table style for the document (often `Normal Table`) is
-        returned if the table has no directly-applied style. Assigning |None| to this
+        returned if the table has no directly-applied style. Assigning `None` to this
         property removes any directly-applied table style causing it to inherit the
         default table style of the document.
 
@@ -139,8 +139,8 @@ class Table(StoryChild):
 
     @property
     def table(self):
-        """Provide child objects with reference to the |Table| object they belong to,
-        without them having to know their direct parent is a |Table| object.
+        """Provide child objects with reference to the `Table` object they belong to,
+        without them having to know their direct parent is a `Table` object.
 
         This is the terminus of a series of `parent._table` calls from an arbitrary
         child through its ancestors.
@@ -149,9 +149,9 @@ class Table(StoryChild):
 
     @property
     def table_direction(self) -> WD_TABLE_DIRECTION | None:
-        """Member of :ref:`WdTableDirection` indicating cell-ordering direction.
+        """Member of `WdTableDirection` indicating cell-ordering direction.
 
-        For example: `WD_TABLE_DIRECTION.LTR`. |None| indicates the value is inherited
+        For example: `WD_TABLE_DIRECTION.LTR`. `None` indicates the value is inherited
         from the style hierarchy.
         """
         return cast("WD_TABLE_DIRECTION | None", self._tbl.bidiVisual_val)
@@ -162,9 +162,9 @@ class Table(StoryChild):
 
     @property
     def _cells(self) -> list[_Cell]:
-        """A sequence of |_Cell| objects, one for each cell of the layout grid.
+        """A sequence of `_Cell` objects, one for each cell of the layout grid.
 
-        If the table contains a span, one or more |_Cell| object references are
+        If the table contains a span, one or more `_Cell` object references are
         repeated.
         """
         col_count = self._column_count
@@ -201,7 +201,7 @@ class _Cell(BlockItemContainer):
         """Return a paragraph newly added to the end of the content in this cell.
 
         If present, `text` is added to the paragraph in a single run. If specified, the
-        paragraph style `style` is applied. If `style` is not specified or is |None|,
+        paragraph style `style` is applied. If `style` is not specified or is `None`,
         the result is as though the 'Normal' style was applied. Note that the formatting
         of text in a cell can be influenced by the table style. `text` can contain tab
         (``\\t``) characters, which are converted to the appropriate XML form for a tab.
@@ -238,7 +238,7 @@ class _Cell(BlockItemContainer):
         """Return a merged cell created by spanning the rectangular region having this
         cell and `other_cell` as diagonal corners.
 
-        Raises |InvalidSpanError| if the cells do not define a rectangular region.
+        Raises `InvalidSpanError` if the cells do not define a rectangular region.
         """
         tc, tc_2 = self._tc, other_cell._tc
         merged_tc = tc.merge(tc_2)
@@ -285,10 +285,10 @@ class _Cell(BlockItemContainer):
 
     @property
     def vertical_alignment(self):
-        """Member of :ref:`WdCellVerticalAlignment` or None.
+        """Member of `WdCellVerticalAlignment` or None.
 
-        A value of |None| indicates vertical alignment for this cell is inherited.
-        Assigning |None| causes any explicitly defined vertical alignment to be removed,
+        A value of `None` indicates vertical alignment for this cell is inherited.
+        Assigning `None` causes any explicitly defined vertical alignment to be removed,
         restoring inheritance.
         """
         tcPr = self._element.tcPr
@@ -303,7 +303,7 @@ class _Cell(BlockItemContainer):
 
     @property
     def width(self):
-        """The width of this cell in EMU, or |None| if no explicit width is set."""
+        """The width of this cell in EMU, or `None` if no explicit width is set."""
         return self._tc.width
 
     @width.setter
@@ -321,17 +321,17 @@ class _Column(Parented):
 
     @property
     def cells(self) -> tuple[_Cell, ...]:
-        """Sequence of |_Cell| instances corresponding to cells in this column."""
+        """Sequence of `_Cell` instances corresponding to cells in this column."""
         return tuple(self.table.column_cells(self._index))
 
     @property
     def table(self) -> Table:
-        """Reference to the |Table| object this column belongs to."""
+        """Reference to the `Table` object this column belongs to."""
         return self._parent.table
 
     @property
     def width(self) -> Length | None:
-        """The width of this column in EMU, or |None| if no explicit width is set."""
+        """The width of this column in EMU, or `None` if no explicit width is set."""
         return self._gridCol.w
 
     @width.setter
@@ -345,7 +345,7 @@ class _Column(Parented):
 
 
 class _Columns(Parented):
-    """Sequence of |_Column| instances corresponding to the columns in a table.
+    """Sequence of `_Column` instances corresponding to the columns in a table.
 
     Supports ``len()``, iteration and indexed access.
     """
@@ -373,7 +373,7 @@ class _Columns(Parented):
 
     @property
     def table(self) -> Table:
-        """Reference to the |Table| object this column collection belongs to."""
+        """Reference to the `Table` object this column collection belongs to."""
         return self._parent.table
 
     @property
@@ -394,7 +394,7 @@ class _Row(Parented):
 
     @property
     def cells(self) -> tuple[_Cell, ...]:
-        """Sequence of |_Cell| instances corresponding to cells in this row.
+        """Sequence of `_Cell` instances corresponding to cells in this row.
 
         Note that Word allows table rows to start later than the first column and end before the
         last column.
@@ -473,7 +473,7 @@ class _Row(Parented):
 
     @property
     def height(self) -> Length | None:
-        """Return a |Length| object representing the height of this cell, or |None| if
+        """Return a `Length` object representing the height of this cell, or `None` if
         no explicit height is set."""
         return self._tr.trHeight_val
 
@@ -483,9 +483,9 @@ class _Row(Parented):
 
     @property
     def height_rule(self) -> WD_ROW_HEIGHT_RULE | None:
-        """Return the height rule of this cell as a member of the :ref:`WdRowHeightRule`.
+        """Return the height rule of this cell as a member of the `WdRowHeightRule`.
 
-        This value is |None| if no explicit height_rule is set.
+        This value is `None` if no explicit height_rule is set.
         """
         return self._tr.trHeight_hRule
 
@@ -495,7 +495,7 @@ class _Row(Parented):
 
     @property
     def table(self) -> Table:
-        """Reference to the |Table| object this row belongs to."""
+        """Reference to the `Table` object this row belongs to."""
         return self._parent.table
 
     @property
@@ -505,7 +505,7 @@ class _Row(Parented):
 
 
 class _Rows(Parented):
-    """Sequence of |_Row| objects corresponding to the rows in a table.
+    """Sequence of `_Row` objects corresponding to the rows in a table.
 
     Supports ``len()``, iteration, indexed access, and slicing.
     """
@@ -533,5 +533,5 @@ class _Rows(Parented):
 
     @property
     def table(self) -> Table:
-        """Reference to the |Table| object this row collection belongs to."""
+        """Reference to the `Table` object this row collection belongs to."""
         return self._parent.table

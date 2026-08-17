@@ -38,7 +38,7 @@ class CT_P(BaseOxmlElement):
 
     @property
     def alignment(self) -> WD_PARAGRAPH_ALIGNMENT | None:
-        """The value of the `<w:jc>` grandchild element or |None| if not present."""
+        """The value of the `<w:jc>` grandchild element or `None` if not present."""
         pPr = self.pPr
         if pPr is None:
             return None
@@ -80,7 +80,7 @@ class CT_P(BaseOxmlElement):
     def style(self) -> str | None:
         """String contained in `w:val` attribute of `./w:pPr/w:pStyle` grandchild.
 
-        |None| if not present.
+        `None` if not present.
         """
         pPr = self.pPr
         if pPr is None:

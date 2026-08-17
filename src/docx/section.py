@@ -1,4 +1,4 @@
-"""The |Section| object and related proxy classes."""
+"""The `Section` object and related proxy classes."""
 
 from __future__ import annotations
 
@@ -36,7 +36,7 @@ class Section:
     def bottom_margin(self) -> Length | None:
         """Read/write. Bottom margin for pages in this section, in EMU.
 
-        `None` when no bottom margin has been specified. Assigning |None| removes any
+        `None` when no bottom margin has been specified. Assigning `None` removes any
         bottom-margin setting.
         """
         return self._sectPr.bottom_margin
@@ -50,7 +50,7 @@ class Section:
         """True if this section displays a distinct first-page header and footer.
 
         Read/write. The definition of the first-page header and footer are accessed
-        using :attr:`.first_page_header` and :attr:`.first_page_footer` respectively.
+        using `first_page_header` and `first_page_footer` respectively.
         """
         return self._sectPr.titlePg_val
 
@@ -60,43 +60,43 @@ class Section:
 
     @property
     def even_page_footer(self) -> _Footer:
-        """|_Footer| object defining footer content for even pages.
+        """`_Footer` object defining footer content for even pages.
 
         The content of this footer definition is ignored unless the document setting
-        :attr:`~.Settings.odd_and_even_pages_header_footer` is set True.
+        `Settings.odd_and_even_pages_header_footer` is set True.
         """
         return _Footer(self._sectPr, self._document_part, WD_HEADER_FOOTER.EVEN_PAGE)
 
     @property
     def even_page_header(self) -> _Header:
-        """|_Header| object defining header content for even pages.
+        """`_Header` object defining header content for even pages.
 
         The content of this header definition is ignored unless the document setting
-        :attr:`~.Settings.odd_and_even_pages_header_footer` is set True.
+        `Settings.odd_and_even_pages_header_footer` is set True.
         """
         return _Header(self._sectPr, self._document_part, WD_HEADER_FOOTER.EVEN_PAGE)
 
     @property
     def first_page_footer(self) -> _Footer:
-        """|_Footer| object defining footer content for the first page of this section.
+        """`_Footer` object defining footer content for the first page of this section.
 
         The content of this footer definition is ignored unless the property
-        :attr:`.different_first_page_header_footer` is set True.
+        `different_first_page_header_footer` is set True.
         """
         return _Footer(self._sectPr, self._document_part, WD_HEADER_FOOTER.FIRST_PAGE)
 
     @property
     def first_page_header(self) -> _Header:
-        """|_Header| object defining header content for the first page of this section.
+        """`_Header` object defining header content for the first page of this section.
 
         The content of this header definition is ignored unless the property
-        :attr:`.different_first_page_header_footer` is set True.
+        `different_first_page_header_footer` is set True.
         """
         return _Header(self._sectPr, self._document_part, WD_HEADER_FOOTER.FIRST_PAGE)
 
     @lazyproperty
     def footer(self) -> _Footer:
-        """|_Footer| object representing default page footer for this section.
+        """`_Footer` object representing default page footer for this section.
 
         The default footer is used for odd-numbered pages when separate odd/even footers
         are enabled. It is used for both odd and even-numbered pages otherwise.
@@ -107,7 +107,7 @@ class Section:
     def footer_distance(self) -> Length | None:
         """Distance from bottom edge of page to bottom edge of the footer.
 
-        Read/write. |None| if no setting is present in the XML.
+        Read/write. `None` if no setting is present in the XML.
         """
         return self._sectPr.footer
 
@@ -117,7 +117,7 @@ class Section:
 
     @property
     def gutter(self) -> Length | None:
-        """|Length| object representing page gutter size in English Metric Units.
+        """`Length` object representing page gutter size in English Metric Units.
 
         Read/write. The page gutter is extra spacing added to the `inner` margin to
         ensure even margins after page binding. Generally only used in book-bound
@@ -134,7 +134,7 @@ class Section:
 
     @lazyproperty
     def header(self) -> _Header:
-        """|_Header| object representing default page header for this section.
+        """`_Header` object representing default page header for this section.
 
         The default header is used for odd-numbered pages when separate odd/even headers
         are enabled. It is used for both odd and even-numbered pages otherwise.
@@ -145,7 +145,7 @@ class Section:
     def header_distance(self) -> Length | None:
         """Distance from top edge of page to top edge of header.
 
-        Read/write. |None| if no setting is present in the XML. Assigning |None| causes
+        Read/write. `None` if no setting is present in the XML. Assigning `None` causes
         default value to be used.
         """
         return self._sectPr.header
@@ -164,7 +164,7 @@ class Section:
 
     @property
     def left_margin(self) -> Length | None:
-        """|Length| object representing the left margin for all pages in this section in
+        """`Length` object representing the left margin for all pages in this section in
         English Metric Units."""
         return self._sectPr.left_margin
 
@@ -174,7 +174,7 @@ class Section:
 
     @property
     def orientation(self) -> WD_ORIENTATION:
-        """:ref:`WdOrientation` member specifying page orientation for this section.
+        """`WdOrientation` member specifying page orientation for this section.
 
         One of ``WD_ORIENT.PORTRAIT`` or ``WD_ORIENT.LANDSCAPE``.
         """
@@ -221,7 +221,7 @@ class Section:
 
     @property
     def right_margin(self) -> Length | None:
-        """|Length| object representing the right margin for all pages in this section
+        """`Length` object representing the right margin for all pages in this section
         in English Metric Units."""
         return self._sectPr.right_margin
 
@@ -244,7 +244,7 @@ class Section:
 
     @property
     def top_margin(self) -> Length | None:
-        """|Length| object representing the top margin for all pages in this section in
+        """`Length` object representing the top margin for all pages in this section in
         English Metric Units."""
         return self._sectPr.top_margin
 
@@ -254,7 +254,7 @@ class Section:
 
 
 class Sections(Sequence[Section]):
-    """Sequence of |Section| objects corresponding to the sections in the document.
+    """Sequence of `Section` objects corresponding to the sections in the document.
 
     Supports ``len()``, iteration, and indexed access.
     """
@@ -326,7 +326,7 @@ class _BaseHeaderFooter(BlockItemContainer):
 
     @property
     def part(self) -> HeaderPart | FooterPart:
-        """The |HeaderPart| or |FooterPart| for this header/footer.
+        """The `HeaderPart` or `FooterPart` for this header/footer.
 
         This overrides `BlockItemContainer.part` and is required to support image
         insertion and perhaps other content like hyperlinks.
@@ -341,7 +341,7 @@ class _BaseHeaderFooter(BlockItemContainer):
 
     @property
     def _definition(self) -> HeaderPart | FooterPart:
-        """|HeaderPart| or |FooterPart| object containing header/footer content."""
+        """`HeaderPart` or `FooterPart` object containing header/footer content."""
         raise NotImplementedError("must be implemented by each subclass")
 
     def _drop_definition(self) -> None:
@@ -380,7 +380,7 @@ class _BaseHeaderFooter(BlockItemContainer):
 
     @property
     def _prior_headerfooter(self) -> _Header | _Footer | None:
-        """|_Header| or |_Footer| proxy on prior sectPr element.
+        """`_Header` or `_Footer` proxy on prior sectPr element.
 
         Returns None if this is first section.
         """
@@ -393,7 +393,7 @@ class _Footer(_BaseHeaderFooter):
     Note that, like a document or table cell, a footer must contain a minimum of one
     paragraph and a new or otherwise "empty" footer contains a single empty paragraph.
     This first paragraph can be accessed as `footer.paragraphs[0]` for purposes of
-    adding content to it. Using :meth:`add_paragraph()` by itself to add content will
+    adding content to it. Using `add_paragraph()` by itself to add content will
     leave an empty paragraph above the newly added one.
     """
 
@@ -405,7 +405,7 @@ class _Footer(_BaseHeaderFooter):
 
     @property
     def _definition(self):
-        """|FooterPart| object containing content of this footer."""
+        """`FooterPart` object containing content of this footer."""
         footerReference = self._sectPr.get_footerReference(self._hdrftr_index)
         # -- currently this is never called when `._has_definition` evaluates False --
         assert footerReference is not None
@@ -424,7 +424,7 @@ class _Footer(_BaseHeaderFooter):
 
     @property
     def _prior_headerfooter(self):
-        """|_Footer| proxy on prior sectPr element or None if this is first section."""
+        """`_Footer` proxy on prior sectPr element or None if this is first section."""
         preceding_sectPr = self._sectPr.preceding_sectPr
         return (
             None
@@ -439,7 +439,7 @@ class _Header(_BaseHeaderFooter):
     Note that, like a document or table cell, a header must contain a minimum of one
     paragraph and a new or otherwise "empty" header contains a single empty paragraph.
     This first paragraph can be accessed as `header.paragraphs[0]` for purposes of
-    adding content to it. Using :meth:`add_paragraph()` by itself to add content will
+    adding content to it. Using `add_paragraph()` by itself to add content will
     leave an empty paragraph above the newly added one.
     """
 
@@ -451,7 +451,7 @@ class _Header(_BaseHeaderFooter):
 
     @property
     def _definition(self):
-        """|HeaderPart| object containing content of this header."""
+        """`HeaderPart` object containing content of this header."""
         headerReference = self._sectPr.get_headerReference(self._hdrftr_index)
         # -- currently this is never called when `._has_definition` evaluates False --
         assert headerReference is not None
@@ -470,7 +470,7 @@ class _Header(_BaseHeaderFooter):
 
     @property
     def _prior_headerfooter(self):
-        """|_Header| proxy on prior sectPr element or None if this is first section."""
+        """`_Header` proxy on prior sectPr element or None if this is first section."""
         preceding_sectPr = self._sectPr.preceding_sectPr
         return (
             None

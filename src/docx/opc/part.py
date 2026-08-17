@@ -86,11 +86,11 @@ class Part:
         return cls(partname, content_type, blob, package)
 
     def load_rel(self, reltype: str, target: Part | str, rId: str, is_external: bool = False):
-        """Return newly added |_Relationship| instance of `reltype`.
+        """Return newly added `_Relationship` instance of `reltype`.
 
         The new relationship relates the `target` part to this part with key `rId`.
 
-        Target mode is set to ``RTM.EXTERNAL`` if `is_external` is |True|. Intended for
+        Target mode is set to ``RTM.EXTERNAL`` if `is_external` is `True`. Intended for
         use during load from a serialized package, where the rId is well-known. Other
         methods exist for adding a new relationship to a part when manipulating a part.
         """
@@ -98,12 +98,12 @@ class Part:
 
     @property
     def package(self):
-        """|OpcPackage| instance this part belongs to."""
+        """`OpcPackage` instance this part belongs to."""
         return self._package
 
     @property
     def partname(self):
-        """|PackURI| instance holding partname of this part, e.g.
+        """`PackURI` instance holding partname of this part, e.g.
         '/ppt/slides/slide1.xml'."""
         return self._partname
 
@@ -117,7 +117,7 @@ class Part:
     def part_related_by(self, reltype: str) -> Part:
         """Return part to which this part has a relationship of `reltype`.
 
-        Raises |KeyError| if no such relationship is found and |ValueError| if more than
+        Raises `KeyError` if no such relationship is found and `ValueError` if more than
         one such relationship is found. Provides ability to resolve implicitly related
         part, such as Slide -> SlideLayout.
         """
@@ -139,12 +139,12 @@ class Part:
     def related_parts(self):
         """Dictionary mapping related parts by rId, so child objects can resolve
         explicit relationships present in the part XML, e.g. sldIdLst to a specific
-        |Slide| instance."""
+        `Slide` instance."""
         return self.rels.related_parts
 
     @lazyproperty
     def rels(self):
-        """|Relationships| instance holding the relationships for this part."""
+        """`Relationships` instance holding the relationships for this part."""
         # -- prevent breakage in `python-docx-template` by retaining legacy `._rels` attribute --
         self._rels = Relationships(self._partname.baseURI)
         return self._rels
@@ -163,13 +163,13 @@ class Part:
 
 
 class PartFactory:
-    """Provides a way for client code to specify a subclass of |Part| to be constructed
-    by |Unmarshaller| based on its content type and/or a custom callable.
+    """Provides a way for client code to specify a subclass of `Part` to be constructed
+    by `Unmarshaller` based on its content type and/or a custom callable.
 
     Setting ``PartFactory.part_class_selector`` to a callable object will cause that
     object to be called with the parameters ``content_type, reltype``, once for each
     part in the package. If the callable returns an object, it is used as the class for
-    that part. If it returns |None|, part class selection falls back to the content type
+    that part. If it returns `None`, part class selection falls back to the content type
     map defined in ``PartFactory.part_type_for``. If no class is returned from either of
     these, the class contained in ``PartFactory.default_part_type`` is used to construct
     the part, which is by default ``opc.package.Part``.
@@ -207,7 +207,7 @@ class PartFactory:
 class XmlPart(Part):
     """Base class for package parts containing an XML payload, which is most of them.
 
-    Provides additional methods to the |Part| base class that take care of parsing and
+    Provides additional methods to the `Part` base class that take care of parsing and
     reserializing the XML payload and managing relationships to other parts.
     """
 

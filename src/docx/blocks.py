@@ -50,6 +50,18 @@ if TYPE_CHECKING:
 
     from docx.document import Document
 
+__all__ = [
+    "BlockEditResult",
+    "ListBlock",
+    "RichParagraph",
+    "TableBlock",
+    "TextRun",
+    "insert_blocks_after",
+    "insert_section_after",
+    "tracked_delete_paragraphs",
+    "tracked_replace_paragraphs",
+]
+
 check_install()
 
 AnchorLike = Union[str, Block, Span, Anchor]
@@ -759,9 +771,9 @@ def insert_blocks_after(
 ) -> BlockEditResult:
     """Insert a typed block list after `anchor`.
 
-    `blocks` mixes |RichParagraph| (styled runs), |ListBlock| (REAL bullet or
+    `blocks` mixes `RichParagraph` (styled runs), `ListBlock` (REAL bullet or
     decimal lists — the numbering definition is created on demand), and
-    |TableBlock| (simple rectangular tables). This is deliberately a small
+    `TableBlock` (simple rectangular tables). This is deliberately a small
     vocabulary: rich enough for a report section, small enough to stay safe.
     Tracked mode covers paragraphs and lists; tracked TABLE insertion refuses
     (Word's row-revision vocabulary is a later phase).

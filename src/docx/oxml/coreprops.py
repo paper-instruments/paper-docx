@@ -210,7 +210,7 @@ class CT_CoreProperties(BaseOxmlElement):
 
     @classmethod
     def _offset_dt(cls, dt_: dt.datetime, offset_str: str) -> dt.datetime:
-        """A |datetime| instance offset from `dt_` by timezone offset in `offset_str`.
+        """A `datetime` instance offset from `dt_` by timezone offset in `offset_str`.
 
         `offset_str` is like `"-07:00"`.
         """

@@ -1,4 +1,4 @@
-"""|SettingsPart| and closely related objects."""
+"""`SettingsPart` and closely related objects."""
 
 from __future__ import annotations
 
@@ -35,7 +35,7 @@ class SettingsPart(XmlPart):
 
     @property
     def settings(self) -> Settings:
-        """A |Settings| proxy object for the `w:settings` element in this part.
+        """A `Settings` proxy object for the `w:settings` element in this part.
 
         Contains the document-level settings for this document.
         """

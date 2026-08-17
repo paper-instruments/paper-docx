@@ -45,7 +45,7 @@ class CT_LatentStyles(BaseOxmlElement):
     defUnhideWhenUsed = OptionalAttribute("w:defUnhideWhenUsed", ST_OnOff)
 
     def bool_prop(self, attr_name):
-        """Return the boolean value of the attribute having `attr_name`, or |False| if
+        """Return the boolean value of the attribute having `attr_name`, or `False` if
         not present."""
         value = getattr(self, attr_name)
         if value is None:
@@ -53,7 +53,7 @@ class CT_LatentStyles(BaseOxmlElement):
         return value
 
     def get_by_name(self, name):
-        """Return the `w:lsdException` child having `name`, or |None| if not found."""
+        """Return the `w:lsdException` child having `name`, or `None` if not found."""
         found = self.xpath('w:lsdException[@w:name="%s"]' % name)
         if not found:
             return None
@@ -80,7 +80,7 @@ class CT_LsdException(BaseOxmlElement):
         self.getparent().remove(self)
 
     def on_off_prop(self, attr_name):
-        """Return the boolean value of the attribute having `attr_name`, or |None| if
+        """Return the boolean value of the attribute having `attr_name`, or `None` if
         not present."""
         return getattr(self, attr_name)
 
@@ -139,7 +139,7 @@ class CT_Style(BaseOxmlElement):
 
     @property
     def basedOn_val(self):
-        """Value of `w:basedOn/@w:val` or |None| if not present."""
+        """Value of `w:basedOn/@w:val` or `None` if not present."""
         basedOn = self.basedOn
         if basedOn is None:
             return None
@@ -154,7 +154,7 @@ class CT_Style(BaseOxmlElement):
 
     @property
     def base_style(self):
-        """Sibling CT_Style element this style is based on or |None| if no base style or
+        """Sibling CT_Style element this style is based on or `None` if no base style or
         base style not found."""
         basedOn = self.basedOn
         if basedOn is None:
@@ -171,7 +171,7 @@ class CT_Style(BaseOxmlElement):
 
     @property
     def locked_val(self):
-        """Value of `w:locked/@w:val` or |False| if not present."""
+        """Value of `w:locked/@w:val` or `False` if not present."""
         locked = self.locked
         if locked is None:
             return False
@@ -186,7 +186,7 @@ class CT_Style(BaseOxmlElement):
 
     @property
     def name_val(self):
-        """Value of ``<w:name>`` child or |None| if not present."""
+        """Value of ``<w:name>`` child or `None` if not present."""
         name = self.name
         if name is None:
             return None
@@ -201,7 +201,7 @@ class CT_Style(BaseOxmlElement):
 
     @property
     def next_style(self):
-        """Sibling CT_Style element identified by the value of `w:name/@w:val` or |None|
+        """Sibling CT_Style element identified by the value of `w:name/@w:val` or `None`
         if no value is present or no style with that style id is found."""
         next = self.next
         if next is None:
@@ -211,7 +211,7 @@ class CT_Style(BaseOxmlElement):
 
     @property
     def qFormat_val(self):
-        """Value of `w:qFormat/@w:val` or |False| if not present."""
+        """Value of `w:qFormat/@w:val` or `False` if not present."""
         qFormat = self.qFormat
         if qFormat is None:
             return False
@@ -225,7 +225,7 @@ class CT_Style(BaseOxmlElement):
 
     @property
     def semiHidden_val(self):
-        """Value of ``<w:semiHidden>`` child or |False| if not present."""
+        """Value of ``<w:semiHidden>`` child or `False` if not present."""
         semiHidden = self.semiHidden
         if semiHidden is None:
             return False
@@ -240,7 +240,7 @@ class CT_Style(BaseOxmlElement):
 
     @property
     def uiPriority_val(self):
-        """Value of ``<w:uiPriority>`` child or |None| if not present."""
+        """Value of ``<w:uiPriority>`` child or `None` if not present."""
         uiPriority = self.uiPriority
         if uiPriority is None:
             return None
@@ -255,7 +255,7 @@ class CT_Style(BaseOxmlElement):
 
     @property
     def unhideWhenUsed_val(self):
-        """Value of `w:unhideWhenUsed/@w:val` or |False| if not present."""
+        """Value of `w:unhideWhenUsed/@w:val` or `False` if not present."""
         unhideWhenUsed = self.unhideWhenUsed
         if unhideWhenUsed is None:
             return False
@@ -290,7 +290,7 @@ class CT_Styles(BaseOxmlElement):
         return style
 
     def default_for(self, style_type):
-        """Return `w:style[@w:type="*{style_type}*][-1]` or |None| if not found."""
+        """Return `w:style[@w:type="*{style_type}*][-1]` or `None` if not found."""
         default_styles_for_type = [
             s for s in self._iter_styles() if s.type == style_type and s.default
         ]
@@ -302,7 +302,7 @@ class CT_Styles(BaseOxmlElement):
     def get_by_id(self, styleId: str) -> CT_Style | None:
         """`w:style` child where @styleId = `styleId`.
 
-        |None| if not found.
+        `None` if not found.
         """
         xpath = f'w:style[@w:styleId="{styleId}"]'
         return next(iter(self.xpath(xpath)), None)
@@ -310,7 +310,7 @@ class CT_Styles(BaseOxmlElement):
     def get_by_name(self, name: str) -> CT_Style | None:
         """`w:style` child with `w:name` grandchild having value `name`.
 
-        |None| if not found.
+        `None` if not found.
         """
         xpath = 'w:style[w:name/@w:val="%s"]' % name
         return next(iter(self.xpath(xpath)), None)

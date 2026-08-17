@@ -1,4 +1,4 @@
-"""|FootnotesPart|, the story part containing a document's footnotes."""
+"""`FootnotesPart`, the story part containing a document's footnotes."""
 
 from __future__ import annotations
 

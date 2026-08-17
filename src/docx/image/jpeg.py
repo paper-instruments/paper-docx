@@ -31,7 +31,7 @@ class Exif(Jpeg):
 
     @classmethod
     def from_stream(cls, stream):
-        """Return |Exif| instance having header properties parsed from Exif image in
+        """Return `Exif` instance having header properties parsed from Exif image in
         `stream`."""
         markers = _JfifMarkers.from_stream(stream)
         # print('\n%s' % markers)
@@ -49,7 +49,7 @@ class Jfif(Jpeg):
 
     @classmethod
     def from_stream(cls, stream):
-        """Return a |Jfif| instance having header properties parsed from image in
+        """Return a `Jfif` instance having header properties parsed from image in
         `stream`."""
         markers = _JfifMarkers.from_stream(stream)
 
@@ -90,7 +90,7 @@ class _JfifMarkers:
 
     @classmethod
     def from_stream(cls, stream):
-        """Return a |_JfifMarkers| instance containing a |_JfifMarker| subclass instance
+        """Return a `_JfifMarkers` instance containing a `_JfifMarker` subclass instance
         for each marker in `stream`."""
         marker_parser = _MarkerParser.from_stream(stream)
         markers = []
@@ -135,7 +135,7 @@ class _MarkerParser:
 
     @classmethod
     def from_stream(cls, stream):
-        """Return a |_MarkerParser| instance to parse JFIF markers from `stream`."""
+        """Return a `_MarkerParser` instance to parse JFIF markers from `stream`."""
         stream_reader = StreamReader(stream, BIG_ENDIAN)
         return cls(stream_reader)
 
@@ -161,7 +161,7 @@ class _MarkerFinder:
 
     @classmethod
     def from_stream(cls, stream):
-        """Return a |_MarkerFinder| instance to find JFIF markers in `stream`."""
+        """Return a `_MarkerFinder` instance to find JFIF markers in `stream`."""
         return cls(stream)
 
     def next(self, start):
@@ -226,7 +226,7 @@ class _MarkerFinder:
 
 
 def _MarkerFactory(marker_code, stream, offset):
-    """Return |_Marker| or subclass instance appropriate for marker at `offset` in
+    """Return `_Marker` or subclass instance appropriate for marker at `offset` in
     `stream` having `marker_code`."""
     if marker_code == JPEG_MARKER_CODE.APP0:
         marker_cls = _App0Marker
@@ -253,7 +253,7 @@ class _Marker:
 
     @classmethod
     def from_stream(cls, stream, marker_code, offset):
-        """Return a generic |_Marker| instance for the marker at `offset` in `stream`
+        """Return a generic `_Marker` instance for the marker at `offset` in `stream`
         having `marker_code`."""
         if JPEG_MARKER_CODE.is_standalone(marker_code):
             segment_length = 0
@@ -314,7 +314,7 @@ class _App0Marker(_Marker):
 
     @classmethod
     def from_stream(cls, stream, marker_code, offset):
-        """Return an |_App0Marker| instance for the APP0 marker at `offset` in
+        """Return an `_App0Marker` instance for the APP0 marker at `offset` in
         `stream`."""
         # field               off  type   notes
         # ------------------  ---  -----  -------------------
@@ -382,7 +382,7 @@ class _App1Marker(_Marker):
 
     @classmethod
     def _tiff_from_exif_segment(cls, stream, offset, segment_length):
-        """Return a |Tiff| instance parsed from the Exif APP1 segment of
+        """Return a `Tiff` instance parsed from the Exif APP1 segment of
         `segment_length` at `offset` in `stream`."""
         # wrap full segment in its own stream and feed to Tiff()
         stream.seek(offset + 8)
@@ -401,7 +401,7 @@ class _SofMarker(_Marker):
 
     @classmethod
     def from_stream(cls, stream, marker_code, offset):
-        """Return an |_SofMarker| instance for the SOFn marker at `offset` in stream."""
+        """Return an `_SofMarker` instance for the SOFn marker at `offset` in stream."""
         # field                 off  type   notes
         # ------------------  ---  -----  ----------------------------
         # segment length       0   short

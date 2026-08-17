@@ -22,7 +22,7 @@ class Tiff(BaseImageHeader):
 
     @classmethod
     def from_stream(cls, stream):
-        """Return a |Tiff| instance containing the properties of the TIFF image in
+        """Return a `Tiff` instance containing the properties of the TIFF image in
         `stream`."""
         parser = _TiffParser.parse(stream)
 
@@ -44,7 +44,7 @@ class _TiffParser:
 
     @classmethod
     def parse(cls, stream):
-        """Return an instance of |_TiffParser| containing the properties parsed from the
+        """Return an instance of `_TiffParser` containing the properties parsed from the
         TIFF image in `stream`."""
         stream_rdr = cls._make_stream_reader(stream)
         ifd0_offset = stream_rdr.read_long(4)
@@ -65,14 +65,14 @@ class _TiffParser:
 
     @property
     def px_height(self):
-        """The number of stacked rows of pixels in the image, |None| if the IFD contains
+        """The number of stacked rows of pixels in the image, `None` if the IFD contains
         no ``ImageLength`` tag, the expected case when the TIFF is embeded in an Exif
         image."""
         return self._ifd_entries.get(TIFF_TAG.IMAGE_LENGTH)
 
     @property
     def px_width(self):
-        """The number of pixels in each row in the image, |None| if the IFD contains no
+        """The number of pixels in each row in the image, `None` if the IFD contains no
         ``ImageWidth`` tag, the expected case when the TIFF is embeded in an Exif
         image."""
         return self._ifd_entries.get(TIFF_TAG.IMAGE_WIDTH)
@@ -90,7 +90,7 @@ class _TiffParser:
         TIFF_TAG.X_RESOLUTION or TIFF_TAG.Y_RESOLUTION.
 
         The calculation is based on the values of both that tag and the
-        TIFF_TAG.RESOLUTION_UNIT tag in this parser's |_IfdEntries| instance.
+        TIFF_TAG.RESOLUTION_UNIT tag in this parser's `_IfdEntries` instance.
         """
         ifd_entries = self._ifd_entries
 
@@ -109,7 +109,7 @@ class _TiffParser:
 
     @classmethod
     def _make_stream_reader(cls, stream):
-        """Return a |StreamReader| instance with wrapping `stream` and having "endian-
+        """Return a `StreamReader` instance with wrapping `stream` and having "endian-
         ness" determined by the 'MM' or 'II' indicator in the TIFF stream header."""
         endian = cls._detect_endian(stream)
         return StreamReader(stream, endian)
@@ -133,7 +133,7 @@ class _IfdEntries:
 
     @classmethod
     def from_stream(cls, stream, offset):
-        """Return a new |_IfdEntries| instance parsed from `stream` starting at
+        """Return a new `_IfdEntries` instance parsed from `stream` starting at
         `offset`."""
         ifd_parser = _IfdParser(stream, offset)
         entries = {e.tag: e.value for e in ifd_parser.iter_entries()}
@@ -155,7 +155,7 @@ class _IfdParser:
         self._offset = offset
 
     def iter_entries(self):
-        """Generate an |_IfdEntry| instance corresponding to each entry in the
+        """Generate an `_IfdEntry` instance corresponding to each entry in the
         directory."""
         for idx in range(self._entry_count):
             dir_entry_offset = self._offset + 2 + (idx * 12)
@@ -169,7 +169,7 @@ class _IfdParser:
 
 
 def _IfdEntryFactory(stream_rdr, offset):
-    """Return an |_IfdEntry| subclass instance containing the value of the directory
+    """Return an `_IfdEntry` subclass instance containing the value of the directory
     entry at `offset` in `stream_rdr`."""
     ifd_entry_classes = {
         TIFF_FLD.ASCII: _AsciiIfdEntry,
@@ -195,7 +195,7 @@ class _IfdEntry:
 
     @classmethod
     def from_stream(cls, stream_rdr, offset):
-        """Return an |_IfdEntry| subclass instance containing the tag and value of the
+        """Return an `_IfdEntry` subclass instance containing the tag and value of the
         tag parsed from `stream_rdr` at `offset`.
 
         Note this method is common to all subclasses. Override the ``_parse_value()``

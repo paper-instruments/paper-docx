@@ -23,7 +23,7 @@ class PackageWriter:
     """Writes a zip-format OPC package to `pkg_file`, where `pkg_file` can be either a
     path to a zip file (a string) or a file-like object.
 
-    Its single API method, :meth:`write`, is static, so this class is not intended to be
+    Its single API method, `write`, is static, so this class is not intended to be
     instantiated.
     """
 

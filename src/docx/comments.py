@@ -103,7 +103,7 @@ class Comments:
 
         `author` is a required attribute, set to the empty string by default.
 
-        `initials` is an optional attribute, set to the empty string by default. Passing |None|
+        `initials` is an optional attribute, set to the empty string by default. Passing `None`
         for the `initials` parameter causes that attribute to be omitted from the XML.
         """
         if self._comments_elm is not self._comments_part._element:
@@ -138,7 +138,7 @@ class Comments:
             return add()
 
     def get(self, comment_id: int) -> Comment | None:
-        """Return the comment identified by `comment_id`, or |None| if not found."""
+        """Return the comment identified by `comment_id`, or `None` if not found."""
         comment_elm = self._comments_elm.get_comment_by_id(comment_id)
         return Comment(comment_elm, self._comments_part) if comment_elm is not None else None
 
@@ -177,7 +177,7 @@ class Comment(BlockItemContainer):
         """Return paragraph newly added to the end of the content in this container.
 
         The paragraph has `text` in a single run if present, and is given paragraph style `style`.
-        When `style` is |None| or ommitted, the "CommentText" paragraph style is applied, which is
+        When `style` is `None` or ommitted, the "CommentText" paragraph style is applied, which is
         the default style for comments.
         """
         document = self._validate_live("edit a comment")
@@ -268,7 +268,7 @@ class Comment(BlockItemContainer):
     def initials(self) -> str | None:
         """Read/write. The recorded initials of the comment author.
 
-        This attribute is optional in the XML, returns |None| if not set. Assigning |None| removes
+        This attribute is optional in the XML, returns `None` if not set. Assigning `None` removes
         any existing initials from the XML.
         """
         return self._comment_elm.initials
@@ -293,6 +293,6 @@ class Comment(BlockItemContainer):
     def timestamp(self) -> dt.datetime | None:
         """The date and time this comment was authored.
 
-        This attribute is optional in the XML, returns |None| if not set.
+        This attribute is optional in the XML, returns `None` if not set.
         """
         return self._comment_elm.date

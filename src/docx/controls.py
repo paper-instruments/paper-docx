@@ -34,6 +34,15 @@ if TYPE_CHECKING:
 
     from docx.document import Document
 
+__all__ = [
+    "Control",
+    "ControlInfo",
+    "get_control",
+    "iter_controls",
+    "list_controls",
+    "set_control_value",
+]
+
 check_install()
 
 _SDT = qn("w:sdt")

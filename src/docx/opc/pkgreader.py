@@ -17,7 +17,7 @@ from docx.opc.shared import CaseInsensitiveDict
 
 class PackageReader:
     """Provides access to the contents of a zip-format OPC package via its
-    :attr:`serialized_parts` and :attr:`pkg_srels` attributes."""
+    `serialized_parts` and `pkg_srels` attributes."""
 
     def __init__(self, content_types, pkg_srels, sparts):
         super(PackageReader, self).__init__()
@@ -26,7 +26,7 @@ class PackageReader:
 
     @staticmethod
     def from_file(pkg_file):
-        """Return a |PackageReader| instance loaded with contents of `pkg_file`."""
+        """Return a `PackageReader` instance loaded with contents of `pkg_file`."""
         phys_reader = PhysPkgReader(pkg_file)
         try:
             content_types = _ContentTypeMap.from_xml(phys_reader.content_types_xml)
@@ -54,7 +54,7 @@ class PackageReader:
 
     @staticmethod
     def _load_serialized_parts(phys_reader, pkg_srels, content_types):
-        """Return a list of |_SerializedPart| instances corresponding to the parts in
+        """Return a list of `_SerializedPart` instances corresponding to the parts in
         `phys_reader` accessible by walking the relationship graph starting with
         `pkg_srels`."""
         sparts = []
@@ -69,7 +69,7 @@ class PackageReader:
 
     @staticmethod
     def _srels_for(phys_reader, source_uri):
-        """Return |_SerializedRelationships| instance populated with relationships for
+        """Return `_SerializedRelationships` instance populated with relationships for
         source identified by `source_uri`."""
         rels_xml = phys_reader.rels_xml_for(source_uri)
         return _SerializedRelationships.load_from_xml(source_uri.baseURI, rels_xml)
@@ -139,7 +139,7 @@ class _ContentTypeMap:
 
     @staticmethod
     def from_xml(content_types_xml):
-        """Return a new |_ContentTypeMap| instance populated with the contents of
+        """Return a new `_ContentTypeMap` instance populated with the contents of
         `content_types_xml`."""
         _parse_content_types(content_types_xml)
         types_elm = parse_xml(content_types_xml)
@@ -202,7 +202,7 @@ class _SerializedRelationship:
     """Value object representing a serialized relationship in an OPC package.
 
     Serialized, in this case, means any target part is referred to via its partname
-    rather than a direct link to an in-memory |Part| object.
+    rather than a direct link to an in-memory `Part` object.
     """
 
     def __init__(self, baseURI, rel_elm):
@@ -244,10 +244,10 @@ class _SerializedRelationship:
 
     @property
     def target_partname(self):
-        """|PackURI| instance containing partname targeted by this relationship.
+        """`PackURI` instance containing partname targeted by this relationship.
 
         Raises ``ValueError`` on reference if target_mode is ``'External'``. Use
-        :attr:`target_mode` to check before referencing.
+        `target_mode` to check before referencing.
         """
         if self.is_external:
             msg = (
@@ -262,7 +262,7 @@ class _SerializedRelationship:
 
 
 class _SerializedRelationships:
-    """Read-only sequence of |_SerializedRelationship| instances corresponding to the
+    """Read-only sequence of `_SerializedRelationship` instances corresponding to the
     relationships item XML passed to constructor."""
 
     def __init__(self):
@@ -275,10 +275,10 @@ class _SerializedRelationships:
 
     @staticmethod
     def load_from_xml(baseURI, rels_item_xml):
-        """Return |_SerializedRelationships| instance loaded with the relationships
+        """Return `_SerializedRelationships` instance loaded with the relationships
         contained in `rels_item_xml`.
 
-        Returns an empty collection if `rels_item_xml` is |None|.
+        Returns an empty collection if `rels_item_xml` is `None`.
         """
         srels = _SerializedRelationships()
         if rels_item_xml is not None:

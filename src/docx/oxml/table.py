@@ -105,7 +105,7 @@ class CT_Row(BaseOxmlElement):
 
     @property
     def trHeight_hRule(self) -> WD_ROW_HEIGHT_RULE | None:
-        """The value of `./w:trPr/w:trHeight/@w:hRule`, or |None| if not present."""
+        """The value of `./w:trPr/w:trHeight/@w:hRule`, or `None` if not present."""
         trPr = self.trPr
         if trPr is None:
             return None
@@ -118,7 +118,7 @@ class CT_Row(BaseOxmlElement):
 
     @property
     def trHeight_val(self):
-        """Return the value of `w:trPr/w:trHeight@w:val`, or |None| if not present."""
+        """Return the value of `w:trPr/w:trHeight@w:val`, or `None` if not present."""
         trPr = self.trPr
         if trPr is None:
             return None
@@ -155,7 +155,7 @@ class CT_Tbl(BaseOxmlElement):
 
     @property
     def bidiVisual_val(self) -> bool | None:
-        """Value of `./w:tblPr/w:bidiVisual/@w:val` or |None| if not present.
+        """Value of `./w:tblPr/w:bidiVisual/@w:val` or `None` if not present.
 
         Controls whether table cells are displayed right-to-left or left-to-right.
         """
@@ -198,7 +198,7 @@ class CT_Tbl(BaseOxmlElement):
 
     @property
     def tblStyle_val(self) -> str | None:
-        """`w:tblPr/w:tblStyle/@w:val` (a table style id) or |None| if not present."""
+        """`w:tblPr/w:tblStyle/@w:val` (a table style id) or `None` if not present."""
         tblStyle = self.tblPr.tblStyle
         if tblStyle is None:
             return None
@@ -342,7 +342,7 @@ class CT_TblPr(BaseOxmlElement):
 
     @property
     def alignment(self) -> WD_TABLE_ALIGNMENT | None:
-        """Horizontal alignment of table, |None| if `./w:jc` is not present."""
+        """Horizontal alignment of table, `None` if `./w:jc` is not present."""
         jc = self.jc
         if jc is None:
             return None
@@ -358,9 +358,9 @@ class CT_TblPr(BaseOxmlElement):
 
     @property
     def autofit(self) -> bool:
-        """|False| when there is a `w:tblLayout` child with `@w:type="fixed"`.
+        """`False` when there is a `w:tblLayout` child with `@w:type="fixed"`.
 
-        Otherwise |True|.
+        Otherwise `True`.
         """
         tblLayout = self.tblLayout
         return True if tblLayout is None else tblLayout.type != "fixed"
@@ -373,7 +373,7 @@ class CT_TblPr(BaseOxmlElement):
     @property
     def style(self):
         """Return the value of the ``val`` attribute of the ``<w:tblStyle>`` child or
-        |None| if not present."""
+        `None` if not present."""
         tblStyle = self.tblStyle
         if tblStyle is None:
             return None
@@ -540,7 +540,7 @@ class CT_Tc(BaseOxmlElement):
 
     @property
     def vMerge(self) -> str | None:
-        """Value of ./w:tcPr/w:vMerge/@val, |None| if w:vMerge is not present."""
+        """Value of ./w:tcPr/w:vMerge/@val, `None` if w:vMerge is not present."""
         tcPr = self.tcPr
         if tcPr is None:
             return None
@@ -553,7 +553,7 @@ class CT_Tc(BaseOxmlElement):
 
     @property
     def width(self) -> Length | None:
-        """EMU length represented in `./w:tcPr/w:tcW` or |None| if not present."""
+        """EMU length represented in `./w:tcPr/w:tcW` or `None` if not present."""
         tcPr = self.tcPr
         if tcPr is None:
             return None
@@ -636,7 +636,7 @@ class CT_Tc(BaseOxmlElement):
 
     @property
     def _next_tc(self) -> CT_Tc | None:
-        """The `w:tc` element immediately following this one in this row, or |None| if
+        """The `w:tc` element immediately following this one in this row, or `None` if
         this is the last `w:tc` element in the row."""
         following_tcs = self.xpath("./following-sibling::w:tc")
         return following_tcs[0] if following_tcs else None
@@ -693,11 +693,11 @@ class CT_Tc(BaseOxmlElement):
 
         Incorporated `w:tc` elements are removed (replaced by gridSpan value).
 
-        Raises |ValueError| if `grid_width` cannot be exactly achieved, such as when a
+        Raises `ValueError` if `grid_width` cannot be exactly achieved, such as when a
         merged cell would drive the span width greater than `grid_width` or if not
         enough grid columns are available to make this cell that wide. All content from
         incorporated cells is appended to `top_tc`. The val attribute of the vMerge
-        element on the single remaining cell is set to `vMerge`. If `vMerge` is |None|,
+        element on the single remaining cell is set to `vMerge`. If `vMerge` is `None`,
         the vMerge element is removed if present.
         """
         self._move_content_to(top_tc)
@@ -712,7 +712,7 @@ class CT_Tc(BaseOxmlElement):
 
         Any content in the following `w:tc` element is appended to the content of
         `top_tc`. The width of the following `w:tc` element is added to this one, if
-        present. Raises |InvalidSpanError| if the width of the resulting cell is greater
+        present. Raises `InvalidSpanError` if the width of the resulting cell is greater
         than `grid_width` or if there is no next `<w:tc>` element in the row.
         """
 
@@ -757,7 +757,7 @@ class CT_Tc(BaseOxmlElement):
     def _tr_above(self) -> CT_Row:
         """The tr element prior in sequence to the tr this cell appears in.
 
-        Raises |ValueError| if called on a cell in the top-most row.
+        Raises `ValueError` if called on a cell in the top-most row.
         """
         tr_aboves = self.xpath("./ancestor::w:tr[position()=1]/preceding-sibling::w:tr[1]")
         if not tr_aboves:
@@ -766,7 +766,7 @@ class CT_Tc(BaseOxmlElement):
 
     @property
     def _tr_below(self) -> CT_Row | None:
-        """The tr element next in sequence after the tr this cell appears in, or |None|
+        """The tr element next in sequence after the tr this cell appears in, or `None`
         if this cell appears in the last row."""
         tr_lst = self._tbl.tr_lst
         tr_idx = tr_lst.index(self._tr)
@@ -845,7 +845,7 @@ class CT_TcPr(BaseOxmlElement):
     def vAlign_val(self):
         """Value of `w:val` attribute on  `w:vAlign` child.
 
-        Value is |None| if `w:vAlign` child is not present. The `w:val` attribute on
+        Value is `None` if `w:vAlign` child is not present. The `w:val` attribute on
         `w:vAlign` is required.
         """
         vAlign = self.vAlign
@@ -862,7 +862,7 @@ class CT_TcPr(BaseOxmlElement):
 
     @property
     def vMerge_val(self):
-        """The value of the ./w:vMerge/@val attribute, or |None| if the w:vMerge element
+        """The value of the ./w:vMerge/@val attribute, or `None` if the w:vMerge element
         is not present."""
         vMerge = self.vMerge
         if vMerge is None:
@@ -877,7 +877,7 @@ class CT_TcPr(BaseOxmlElement):
 
     @property
     def width(self) -> Length | None:
-        """EMU length in `./w:tcW` or |None| if not present or its type is not 'dxa'."""
+        """EMU length in `./w:tcW` or `None` if not present or its type is not 'dxa'."""
         tcW = self.tcW
         if tcW is None:
             return None
@@ -936,7 +936,7 @@ class CT_TrPr(BaseOxmlElement):
 
     @property
     def trHeight_hRule(self) -> WD_ROW_HEIGHT_RULE | None:
-        """Return the value of `w:trHeight@w:hRule`, or |None| if not present."""
+        """Return the value of `w:trHeight@w:hRule`, or `None` if not present."""
         trHeight = self.trHeight
         return None if trHeight is None else trHeight.hRule
 
@@ -949,7 +949,7 @@ class CT_TrPr(BaseOxmlElement):
 
     @property
     def trHeight_val(self):
-        """Return the value of `w:trHeight@w:val`, or |None| if not present."""
+        """Return the value of `w:trHeight@w:val`, or `None` if not present."""
         trHeight = self.trHeight
         return None if trHeight is None else trHeight.val
 

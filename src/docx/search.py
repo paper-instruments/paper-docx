@@ -3,7 +3,7 @@
 `find_text` matches the way people (and models) actually quote documents:
 smart quotes, dashes, exotic spaces and case differences are normalized away
 (`normalize_text`), and matches assemble across Word's fragmented runs and
-across paragraph boundaries. The returned |Span| is the pivotal object of the
+across paragraph boundaries. The returned `Span` is the pivotal object of the
 editing surface: it maps a visible-text interval back to the concrete
 `w:t` text atoms that hold it, carries a stable block anchor, and is the
 receiver of the safe replace operations (`Span.replace`).
@@ -44,6 +44,16 @@ if TYPE_CHECKING:
     from lxml.etree import _Element
 
     from docx.document import Document
+
+__all__ = [
+    "ReplaceAllResult",
+    "ReplaceResult",
+    "Span",
+    "find_one",
+    "find_text",
+    "normalize_text",
+    "replace_all",
+]
 
 check_install()
 
@@ -357,7 +367,7 @@ class Span:
 
     Spans hold live references into the document tree and go stale when the
     underlying text changes; every operation revalidates first and raises
-    |TargetNotFoundError| on staleness.
+    `TargetNotFoundError` on staleness.
     """
 
     text: str
@@ -406,7 +416,7 @@ class Span:
     ) -> "object":
         """Anchor a new comment to exactly this span's text.
 
-        Returns the upstream |Comment|. The comment range marks wrap the
+        Returns the upstream `Comment`. The comment range marks wrap the
         span's runs; `date` defaults to the injectable clock. Comments can
         only be anchored in the main document story.
         """
@@ -1620,8 +1630,8 @@ def find_one(
 ) -> Span:
     """The single span matching `needle`, or a typed refusal.
 
-    Zero matches raise |TargetNotFoundError|; more than one (after `nth`,
-    `near`, `story` disambiguation) raises |AmbiguousTargetError| — the
+    Zero matches raise `TargetNotFoundError`; more than one (after `nth`,
+    `near`, `story` disambiguation) raises `AmbiguousTargetError` — the
     library never guesses which occurrence you meant.
     """
     matches = find_text(document, needle, nth=nth, near=near, story=story, view=view)

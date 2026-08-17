@@ -38,6 +38,19 @@ if TYPE_CHECKING:
 
     from docx.document import Document
 
+__all__ = [
+    "Anchor",
+    "BLIND_REGION_KEYS",
+    "Block",
+    "Outline",
+    "TableShape",
+    "VIEWS",
+    "content_hash",
+    "iter_blocks",
+    "outline",
+    "story_parts",
+]
+
 check_install()
 
 VIEWS = ("current", "original", "all")

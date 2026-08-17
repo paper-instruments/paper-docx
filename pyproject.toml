@@ -53,7 +53,7 @@ dev = [
 
 [project.urls]
 Changelog = "https://github.com/The-LLM-Data-Company/paper-docx/blob/main/HISTORY.rst"
-Documentation = "https://github.com/The-LLM-Data-Company/paper-docx"
+Documentation = "https://docs.paperinstruments.com/docs/docx"
 Homepage = "https://github.com/The-LLM-Data-Company/paper-docx"
 Issues = "https://github.com/The-LLM-Data-Company/paper-docx/issues"
 Repository = "https://github.com/The-LLM-Data-Company/paper-docx"

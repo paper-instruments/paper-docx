@@ -1,4 +1,4 @@
-"""Directly exposed API functions and classes, :func:`Document` for now.
+"""Directly exposed API functions and classes, `Document` for now.
 
 Provides a syntactically more convenient API for interacting with the OpcPackage graph.
 """
@@ -17,7 +17,7 @@ if TYPE_CHECKING:
 
 
 def Document(docx: str | IO[bytes] | None = None) -> DocumentObject:
-    """Return a |Document| object loaded from `docx`, where `docx` can be either a path
+    """Return a `Document` object loaded from `docx`, where `docx` can be either a path
     to a ``.docx`` file (a string) or a file-like object.
 
     If `docx` is missing or ``None``, the built-in default document "template" is

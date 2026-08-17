@@ -32,6 +32,19 @@ if TYPE_CHECKING:
     from docx.document import Document
     from docx.text.paragraph import Paragraph
 
+__all__ = [
+    "NumberedParagraph",
+    "NumberingDefinition",
+    "NumberingLevel",
+    "NumberingReport",
+    "apply_list_style",
+    "apply_numbering",
+    "ensure_bullet_definition",
+    "ensure_decimal_definition",
+    "list_numbering",
+    "restart_numbering",
+]
+
 
 check_install()
 
@@ -357,7 +370,7 @@ def apply_numbering(paragraph: "Paragraph", *, num_id: int, level: int = 0) -> N
     """Give `paragraph` the existing numbering definition `num_id` at `level`.
 
     The definition must exist in word/numbering.xml and define `level` —
-    otherwise |TargetNotFoundError|; this API never fabricates definitions
+    otherwise `TargetNotFoundError`; this API never fabricates definitions
     (create one deliberately with `ensure_bullet_definition` /
     `ensure_decimal_definition`).
     """
@@ -401,7 +414,7 @@ def _style_numbering_binding(document: "Document", style_name: str) -> Optional[
 
 def apply_list_style(paragraph: "Paragraph", style_name: str) -> None:
     """Apply the existing paragraph style named `style_name` (e.g. a list
-    style like "List Bullet") — |TargetNotFoundError| when undefined.
+    style like "List Bullet") — `TargetNotFoundError` when undefined.
 
     When the style binds a numbering definition, that definition must
     actually resolve in word/numbering.xml; otherwise this call refuses

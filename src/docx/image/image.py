@@ -27,14 +27,14 @@ class Image:
 
     @classmethod
     def from_blob(cls, blob: bytes) -> Image:
-        """Return a new |Image| subclass instance parsed from the image binary contained
+        """Return a new `Image` subclass instance parsed from the image binary contained
         in `blob`."""
         stream = io.BytesIO(blob)
         return cls._from_stream(stream, blob)
 
     @classmethod
     def from_file(cls, image_descriptor: str | IO[bytes]):
-        """Return a new |Image| subclass instance loaded from the image file identified
+        """Return a new `Image` subclass instance loaded from the image file identified
         by `image_descriptor`, a path or file-like object."""
         if isinstance(image_descriptor, str):
             path = image_descriptor
@@ -103,13 +103,13 @@ class Image:
 
     @property
     def width(self) -> Inches:
-        """A |Length| value representing the native width of the image, calculated from
+        """A `Length` value representing the native width of the image, calculated from
         the values of `px_width` and `horz_dpi`."""
         return Inches(self.px_width / self.horz_dpi)
 
     @property
     def height(self) -> Inches:
-        """A |Length| value representing the native height of the image, calculated from
+        """A `Length` value representing the native height of the image, calculated from
         the values of `px_height` and `vert_dpi`."""
         return Inches(self.px_height / self.vert_dpi)
 
@@ -125,11 +125,11 @@ class Image:
         `height`); no scaling is performed.
         * If only one is specified, it is used to compute a scaling factor that is then
         applied to the unspecified dimension, preserving the aspect ratio of the image.
-        * If both `width` and `height` are |None|, the native dimensions are returned.
+        * If both `width` and `height` are `None`, the native dimensions are returned.
 
         The native dimensions are calculated using the dots-per-inch (dpi) value
         embedded in the image, defaulting to 72 dpi if no value is specified, as is
-        often the case. The returned values are both |Length| objects.
+        often the case. The returned values are both `Length` objects.
         """
         if width is None and height is None:
             return self.width, self.height
@@ -157,7 +157,7 @@ class Image:
         blob: bytes,
         filename: str | None = None,
     ) -> Image:
-        """Return an instance of the |Image| subclass corresponding to the format of the
+        """Return an instance of the `Image` subclass corresponding to the format of the
         image in `stream`."""
         image_header = _ImageHeaderFactory(stream)
         if filename is None:
@@ -166,7 +166,7 @@ class Image:
 
 
 def _ImageHeaderFactory(stream: IO[bytes]):
-    """A |BaseImageHeader| subclass instance that can parse headers of image in `stream`."""
+    """A `BaseImageHeader` subclass instance that can parse headers of image in `stream`."""
     from docx.image import SIGNATURES
 
     def read_32(stream: IO[bytes]):
@@ -183,7 +183,7 @@ def _ImageHeaderFactory(stream: IO[bytes]):
 
 
 class BaseImageHeader:
-    """Base class for image header subclasses like |Jpeg| and |Tiff|."""
+    """Base class for image header subclasses like `Jpeg` and `Tiff`."""
 
     def __init__(self, px_width: int, px_height: int, horz_dpi: int, vert_dpi: int):
         self._px_width = px_width

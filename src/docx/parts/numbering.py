@@ -1,4 +1,4 @@
-"""|NumberingPart| and closely related objects."""
+"""`NumberingPart` and closely related objects."""
 
 from ..opc.part import XmlPart
 from ..shared import lazyproperty
@@ -15,13 +15,13 @@ class NumberingPart(XmlPart):
 
     @lazyproperty
     def numbering_definitions(self):
-        """The |_NumberingDefinitions| instance containing the numbering definitions
-        (<w:num> element proxies) for this numbering part."""
+        """The `_NumberingDefinitions` instance containing the numbering definitions
+        (`<w:num>` element proxies) for this numbering part."""
         return _NumberingDefinitions(self._element)
 
 
 class _NumberingDefinitions:
-    """Collection of |_NumberingDefinition| instances corresponding to the ``<w:num>``
+    """Collection of `_NumberingDefinition` instances corresponding to the ``<w:num>``
     elements in a numbering part."""
 
     def __init__(self, numbering_elm):

@@ -1,4 +1,4 @@
-"""Custom element classes that correspond to the document part, e.g. <w:document>."""
+"""Custom element classes that correspond to the document part, e.g. `<w:document>`."""
 
 from __future__ import annotations
 
@@ -71,9 +71,9 @@ class CT_Body(BaseOxmlElement):
         return sentinel_sectPr
 
     def clear_content(self):
-        """Remove all content child elements from this <w:body> element.
+        """Remove all content child elements from this `<w:body>` element.
 
-        Leave the <w:sectPr> element if it is present.
+        Leave the `<w:sectPr>` element if it is present.
         """
         for content_elm in self.xpath("./*[not(self::w:sectPr)]"):
             self.remove(content_elm)

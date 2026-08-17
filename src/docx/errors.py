@@ -1,7 +1,7 @@
 """Typed refusals for paper-docx safe-editing APIs.
 
 Every mutating paper API is validate-fully-then-mutate: a raised
-|PaperRefusal| guarantees the in-memory XML tree and any file on disk are
+`PaperRefusal` guarantees the in-memory XML tree and any file on disk are
 exactly as they were. Callers can therefore catch "safe refusal" distinctly
 from "bug" — programmer errors remain `TypeError`/`ValueError`.
 """
@@ -9,6 +9,17 @@ from "bug" — programmer errors remain `TypeError`/`ValueError`.
 from __future__ import annotations
 
 from docx._guard import check_install
+
+__all__ = [
+    "AmbiguousTargetError",
+    "BoundaryViolationError",
+    "DocumentProtectedError",
+    "PackageLimitError",
+    "PaperRefusal",
+    "RelationshipPolicyError",
+    "TargetNotFoundError",
+    "UnsupportedStructureError",
+]
 
 check_install()
 

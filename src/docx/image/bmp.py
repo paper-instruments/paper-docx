@@ -8,7 +8,7 @@ class Bmp(BaseImageHeader):
 
     @classmethod
     def from_stream(cls, stream):
-        """Return |Bmp| instance having header properties parsed from the BMP image in
+        """Return `Bmp` instance having header properties parsed from the BMP image in
         `stream`."""
         stream_rdr = StreamReader(stream, LITTLE_ENDIAN)
 

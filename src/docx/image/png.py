@@ -20,7 +20,7 @@ class Png(BaseImageHeader):
 
     @classmethod
     def from_stream(cls, stream):
-        """Return a |Png| instance having header properties parsed from image in
+        """Return a `Png` instance having header properties parsed from image in
         `stream`."""
         parser = _PngParser.parse(stream)
 
@@ -41,7 +41,7 @@ class _PngParser:
 
     @classmethod
     def parse(cls, stream):
-        """Return a |_PngParser| instance containing the header properties parsed from
+        """Return a `_PngParser` instance containing the header properties parsed from
         the PNG image in `stream`."""
         chunks = _Chunks.from_stream(stream)
         return cls(chunks)
@@ -98,7 +98,7 @@ class _Chunks:
 
     @classmethod
     def from_stream(cls, stream):
-        """Return a |_Chunks| instance containing the PNG chunks in `stream`."""
+        """Return a `_Chunks` instance containing the PNG chunks in `stream`."""
         chunk_parser = _ChunkParser.from_stream(stream)
         chunks = list(chunk_parser.iter_chunks())
         return cls(chunks)
@@ -114,7 +114,7 @@ class _Chunks:
 
     @property
     def pHYs(self):
-        """PHYs chunk in PNG image, or |None| if not present."""
+        """PHYs chunk in PNG image, or `None` if not present."""
         match = lambda chunk: chunk.type_name == PNG_CHUNK_TYPE.pHYs  # noqa
         return self._find_first(match)
 
@@ -135,13 +135,13 @@ class _ChunkParser:
 
     @classmethod
     def from_stream(cls, stream):
-        """Return a |_ChunkParser| instance that can extract the chunks from the PNG
+        """Return a `_ChunkParser` instance that can extract the chunks from the PNG
         image in `stream`."""
         stream_rdr = StreamReader(stream, BIG_ENDIAN)
         return cls(stream_rdr)
 
     def iter_chunks(self):
-        """Generate a |_Chunk| subclass instance for each chunk in this parser's PNG
+        """Generate a `_Chunk` subclass instance for each chunk in this parser's PNG
         stream, in the order encountered in the stream."""
         for chunk_type, offset in self._iter_chunk_offsets():
             chunk = _ChunkFactory(chunk_type, self._stream_rdr, offset)
@@ -166,7 +166,7 @@ class _ChunkParser:
 
 
 def _ChunkFactory(chunk_type, stream_rdr, offset):
-    """Return a |_Chunk| subclass instance appropriate to `chunk_type` parsed from
+    """Return a `_Chunk` subclass instance appropriate to `chunk_type` parsed from
     `stream_rdr` at `offset`."""
     chunk_cls_map = {
         PNG_CHUNK_TYPE.IHDR: _IHDRChunk,

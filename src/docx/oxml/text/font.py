@@ -171,7 +171,7 @@ class CT_RPr(BaseOxmlElement):
 
     @property
     def rFonts_ascii(self) -> str | None:
-        """The value of `w:rFonts/@w:ascii` or |None| if not present.
+        """The value of `w:rFonts/@w:ascii` or `None` if not present.
 
         Represents the assigned typeface name. The rFonts element also specifies other
         special-case typeface names; this method handles the case where just the common
@@ -192,7 +192,7 @@ class CT_RPr(BaseOxmlElement):
 
     @property
     def rFonts_hAnsi(self) -> str | None:
-        """The value of `w:rFonts/@w:hAnsi` or |None| if not present."""
+        """The value of `w:rFonts/@w:hAnsi` or `None` if not present."""
         rFonts = self.rFonts
         if rFonts is None:
             return None
@@ -217,7 +217,7 @@ class CT_RPr(BaseOxmlElement):
     def style(self, style: str | None) -> None:
         """Set `./w:rStyle/@val` to `style`, adding the `w:rStyle` element if necessary.
 
-        If `style` is |None|, remove `w:rStyle` element if present.
+        If `style` is `None`, remove `w:rStyle` element if present.
         """
         if style is None:
             self._remove_rStyle()
@@ -228,9 +228,9 @@ class CT_RPr(BaseOxmlElement):
 
     @property
     def subscript(self) -> bool | None:
-        """|True| if `./w:vertAlign/@w:val` is "subscript".
+        """`True` if `./w:vertAlign/@w:val` is "subscript".
 
-        |False| if `w:vertAlign/@w:val` contains any other value. |None| if
+        `False` if `w:vertAlign/@w:val` contains any other value. `None` if
         `w:vertAlign` is not present.
         """
         vertAlign = self.vertAlign
@@ -250,9 +250,9 @@ class CT_RPr(BaseOxmlElement):
 
     @property
     def superscript(self) -> bool | None:
-        """|True| if `w:vertAlign/@w:val` is 'superscript'.
+        """`True` if `w:vertAlign/@w:val` is 'superscript'.
 
-        |False| if `w:vertAlign/@w:val` contains any other value. |None| if
+        `False` if `w:vertAlign/@w:val` contains any other value. `None` if
         `w:vertAlign` is not present.
         """
         vertAlign = self.vertAlign
@@ -272,7 +272,7 @@ class CT_RPr(BaseOxmlElement):
 
     @property
     def sz_val(self) -> Length | None:
-        """The value of `w:sz/@w:val` or |None| if not present."""
+        """The value of `w:sz/@w:val` or `None` if not present."""
         sz = self.sz
         if sz is None:
             return None

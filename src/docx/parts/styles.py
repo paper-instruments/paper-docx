@@ -29,7 +29,7 @@ class StylesPart(XmlPart):
 
     @property
     def styles(self):
-        """The |_Styles| instance containing the styles (<w:style> element proxies) for
+        """The `_Styles` instance containing the styles (`<w:style>` element proxies) for
         this styles part."""
         return Styles(self.element)
 

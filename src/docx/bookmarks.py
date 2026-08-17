@@ -1,7 +1,7 @@
 """Bookmark enumeration, creation, and deletion.
 
 Bookmarks are the anchor infrastructure cross-references ride on. Creation
-wraps an exact |Span| (the comment-range machinery generalized); ids are
+wraps an exact `Span` (the comment-range machinery generalized); ids are
 globally unique across every story; deletion removes only the markers —
 never the text — and refuses while a field instruction still references the
 name (a dangling REF renders "Error!" in Word).
@@ -28,6 +28,13 @@ if TYPE_CHECKING:
 
     from docx.document import Document
     from docx.search import Span
+
+__all__ = [
+    "BookmarkInfo",
+    "create_bookmark",
+    "delete_bookmark",
+    "list_bookmarks",
+]
 
 check_install()
 
