@@ -953,3 +953,23 @@ class DescribeSourceLetterhead:
         header_xml = destination.sections[-1].header._element.xml
         assert f" REF {renamed} " in header_xml
         assert f'w:anchor="{renamed}"' in header_xml
+
+    def it_does_not_apply_source_first_page_headers_to_destination_pages(
+        self, tmp_path: Path
+    ):
+        destination = _doc()
+        destination.sections[0].header.paragraphs[0].text = "Dest running"
+        source = _doc()
+        source.sections[0].header.paragraphs[0].text = "Source running"
+        source.sections[0].different_first_page_header_footer = True
+        source.sections[0].first_page_header.paragraphs[0].text = "Source first page"
+        report = append_document(destination, source, headers="source")
+        assert any(
+            finding.kind == "letterhead_first_page_skipped"
+            for finding in report.findings
+        )
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert not reopened.sections[-1].different_first_page_header_footer
+        header_text = reopened.sections[-1].header.paragraphs[0].text
+        assert "Source running" in header_text
+        assert "Source first page" not in header_text

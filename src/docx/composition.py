@@ -184,6 +184,9 @@ def append_document(
     `w:sectPr`: `section="new_page"` prefixes the appended content with a
     page break; `"continuous"` appends flush. Pass `headers="source"` to
     copy the source letterhead onto the destination's last section.
+    First-page headers cannot target the appended content (they apply to
+    that section's first page, which already holds destination body) and
+    are skipped.
     """
     _validate_styles_mode(styles)
     if section not in ("new_page", "continuous"):
@@ -234,9 +237,6 @@ def _copy_letterhead(
 ) -> None:
     dest_section = document.sections[-1]
     src_section = source.sections[-1]
-    dest_section.different_first_page_header_footer = (
-        src_section.different_first_page_header_footer
-    )
     source_even = source.settings.odd_and_even_pages_header_footer
     dest_even = document.settings.odd_and_even_pages_header_footer
     if source_even != dest_even and dest_section_count > 1:
@@ -245,11 +245,21 @@ def _copy_letterhead(
             " more than one section. Nothing was changed"
         )
     document.settings.odd_and_even_pages_header_footer = source_even
+    if src_section.different_first_page_header_footer:
+        report.findings.append(
+            CompositionFinding(
+                kind="letterhead_first_page_skipped",
+                detail=(
+                    "first-page headers apply to the destination section's"
+                    " first page, not the appended content; the source"
+                    " first-page letterhead was not copied"
+                ),
+            )
+        )
+    dest_section.different_first_page_header_footer = False
     pairs = (
         (src_section.header, dest_section.header),
         (src_section.footer, dest_section.footer),
-        (src_section.first_page_header, dest_section.first_page_header),
-        (src_section.first_page_footer, dest_section.first_page_footer),
         (src_section.even_page_header, dest_section.even_page_header),
         (src_section.even_page_footer, dest_section.even_page_footer),
     )
