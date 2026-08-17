@@ -37,7 +37,7 @@ uv run pyright                           # types
 
 CI runs **pytest and behave only** — not ruff, not pyright. So a repo-wide invariant is enforced
 by writing a test for it, and that is the idiomatic way to add a guard here. See
-`tests/paper/test_public_surface.py` and `tests/paper/test_docstring_hygiene.py`.
+`tests/paper/test_docs_tree.py`, `test_public_surface.py`, and `test_docstring_hygiene.py`.
 
 Test functions are named `it_`, `its_`, `they_`, `and_`, `but_` — **not `test_`**; classes are
 `Describe…`. A method named `test_something` is silently never collected. See
@@ -85,8 +85,9 @@ New tests go under `tests/paper/`, kept cleanly separate from upstream's suite.
 
 ## Read the analysis notes before adding XML vocabulary
 
-`docs/dev/analysis/` holds 35 `.rst` files under `features/` and `schema/`. They are
-python-docx's own per-feature design notes, inherited with the fork and never modified. Each
+`docs/dev/analysis/` holds 35 `.rst` files under `features/` and `schema/` — the only reST left
+in the repository, guarded by `tests/paper/test_docs_tree.py`. They are python-docx's own
+per-feature design notes, inherited with the fork and never modified. Each
 pairs prose with a real XML specimen and the matching xsd excerpt, so they document the OOXML
 format and how the oxml layer models it — the layer this fork does not change.
 
