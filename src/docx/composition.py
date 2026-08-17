@@ -30,6 +30,7 @@ from docx._guard import check_install
 from docx._ownership import require_anchor_owner
 from docx._transaction import rollback_on_error
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
+from docx.fields import _set_update_fields_on_open
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
 from docx.protection import _refuse_if_protected
@@ -54,6 +55,7 @@ _NAME = qn("w:name")
 _VAL = qn("w:val")
 _INSTR_TEXT = qn("w:instrText")
 _FLD_SIMPLE = qn("w:fldSimple")
+_FLD_CHAR = qn("w:fldChar")
 _INSTR = qn("w:instr")
 _BLIP = qn("a:blip")
 # VML (legacy image markup); its prefix is not in the upstream nsmap
@@ -85,6 +87,14 @@ _REFUSED_TAGS = {
     qn("w:commentReference"): "a comment anchor (composition cannot carry comments)",
     qn("w:subDoc"): "a subdocument reference",
 }
+
+
+def _contains_fields(elements) -> bool:
+    return any(
+        True
+        for element in elements
+        for _node in element.iter(_FLD_SIMPLE, _FLD_CHAR)
+    )
 
 
 @dataclass(frozen=True)
@@ -263,6 +273,7 @@ def _copy_letterhead(
         (src_section.even_page_header, dest_section.even_page_header),
         (src_section.even_page_footer, dest_section.even_page_footer),
     )
+    letterhead_has_fields = False
     for src_hf, dest_hf in pairs:
         src_defined = _defined_header_footer(src_hf)
         if src_defined is None:
@@ -281,6 +292,8 @@ def _copy_letterhead(
         for child in list(dest_root):
             dest_root.remove(child)
         clones = [copy.deepcopy(child) for child in source_children]
+        if _contains_fields(clones):
+            letterhead_has_fields = True
         imported_definitions = _reconcile_styles(
             document, source, clones, styles_mode, report
         )
@@ -293,6 +306,8 @@ def _copy_letterhead(
         _reallocate_sdt_ids(document, clones)
         for clone in clones:
             dest_root.append(clone)
+    if letterhead_has_fields:
+        _set_update_fields_on_open(document)
 
 
 def _defined_header_footer(hf):
@@ -389,9 +404,7 @@ def _compose(
     )
 
     report = CompositionReport()
-    has_fields = any(
-        True for element in range_elements for _node in element.iter(_FLD_SIMPLE, qn("w:fldChar"))
-    )
+    has_fields = _contains_fields(range_elements)
     # ALL refusal conditions run before any mutation (refusal atomicity):
     # importing styles/numbering/media first would leave orphaned
     # definitions behind when the destination anchor turns out invalid
@@ -432,8 +445,6 @@ def _compose(
     _pad_adjacent_tables(anchor_p, clones)
     _insert_after(anchor_p, clones)
     if has_fields:
-        from docx.fields import _set_update_fields_on_open
-
         _set_update_fields_on_open(document)
     report.inserted_blocks = len(clones)
     report.declared_parts = [

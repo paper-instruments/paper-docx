@@ -973,3 +973,17 @@ class DescribeSourceLetterhead:
         header_text = reopened.sections[-1].header.paragraphs[0].text
         assert "Source running" in header_text
         assert "Source first page" not in header_text
+
+    def it_arms_letterhead_fields_for_update(self):
+        destination = _doc()
+        source = _doc()
+        source.sections[0].header.paragraphs[0]._p.append(
+            parse_xml(
+                f'<w:fldSimple {nsdecls("w")} w:instr=" PAGE ">'
+                "<w:r><w:t>1</w:t></w:r></w:fldSimple>"
+            )
+        )
+        append_document(destination, source, headers="source")
+        update = destination.settings.element.find(qn("w:updateFields"))
+        assert update is not None
+        assert update.get(qn("w:val")) == "true"
