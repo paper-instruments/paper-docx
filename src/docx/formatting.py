@@ -33,6 +33,13 @@ if TYPE_CHECKING:
 
     from docx.document import Document
 
+__all__ = [
+    "EffectiveFormat",
+    "ResolvedValue",
+    "format_of",
+    "surrounding_format",
+]
+
 check_install()
 
 _VAL = qn("w:val")
@@ -128,7 +135,7 @@ class EffectiveFormat:
 
 
 def format_of(target) -> EffectiveFormat:
-    """The effective formatting of a |Run|, |Paragraph| or |Span|.
+    """The effective formatting of a `Run`, `Paragraph` or `Span`.
 
     Runs resolve the supported run-property subset in ``properties``;
     paragraphs resolve alignment and style plus the supported run defaults

@@ -121,10 +121,10 @@ class CT_PPr(BaseOxmlElement):
 
     @property
     def first_line_indent(self) -> Length | None:
-        """A |Length| value calculated from the values of `w:ind/@w:firstLine` and
+        """A `Length` value calculated from the values of `w:ind/@w:firstLine` and
         `w:ind/@w:hanging`.
 
-        Returns |None| if the `w:ind` child is not present.
+        Returns `None` if the `w:ind` child is not present.
         """
         ind = self.ind
         if ind is None:
@@ -152,7 +152,7 @@ class CT_PPr(BaseOxmlElement):
 
     @property
     def ind_left(self) -> Length | None:
-        """The value of `w:ind/@w:left` or |None| if not present."""
+        """The value of `w:ind/@w:left` or `None` if not present."""
         ind = self.ind
         if ind is None:
             return None
@@ -167,7 +167,7 @@ class CT_PPr(BaseOxmlElement):
 
     @property
     def ind_right(self) -> Length | None:
-        """The value of `w:ind/@w:right` or |None| if not present."""
+        """The value of `w:ind/@w:right` or `None` if not present."""
         ind = self.ind
         if ind is None:
             return None
@@ -182,7 +182,7 @@ class CT_PPr(BaseOxmlElement):
 
     @property
     def jc_val(self) -> WD_ALIGN_PARAGRAPH | None:
-        """Value of the `<w:jc>` child element or |None| if not present."""
+        """Value of the `<w:jc>` child element or `None` if not present."""
         return self.jc.val if self.jc is not None else None
 
     @jc_val.setter
@@ -194,7 +194,7 @@ class CT_PPr(BaseOxmlElement):
 
     @property
     def keepLines_val(self):
-        """The value of `keepLines/@val` or |None| if not present."""
+        """The value of `keepLines/@val` or `None` if not present."""
         keepLines = self.keepLines
         if keepLines is None:
             return None
@@ -209,7 +209,7 @@ class CT_PPr(BaseOxmlElement):
 
     @property
     def keepNext_val(self):
-        """The value of `keepNext/@val` or |None| if not present."""
+        """The value of `keepNext/@val` or `None` if not present."""
         keepNext = self.keepNext
         if keepNext is None:
             return None
@@ -224,7 +224,7 @@ class CT_PPr(BaseOxmlElement):
 
     @property
     def pageBreakBefore_val(self):
-        """The value of `pageBreakBefore/@val` or |None| if not present."""
+        """The value of `pageBreakBefore/@val` or `None` if not present."""
         pageBreakBefore = self.pageBreakBefore
         if pageBreakBefore is None:
             return None
@@ -239,7 +239,7 @@ class CT_PPr(BaseOxmlElement):
 
     @property
     def spacing_after(self):
-        """The value of `w:spacing/@w:after` or |None| if not present."""
+        """The value of `w:spacing/@w:after` or `None` if not present."""
         spacing = self.spacing
         if spacing is None:
             return None
@@ -253,7 +253,7 @@ class CT_PPr(BaseOxmlElement):
 
     @property
     def spacing_before(self):
-        """The value of `w:spacing/@w:before` or |None| if not present."""
+        """The value of `w:spacing/@w:before` or `None` if not present."""
         spacing = self.spacing
         if spacing is None:
             return None
@@ -267,7 +267,7 @@ class CT_PPr(BaseOxmlElement):
 
     @property
     def spacing_line(self):
-        """The value of `w:spacing/@w:line` or |None| if not present."""
+        """The value of `w:spacing/@w:line` or `None` if not present."""
         spacing = self.spacing
         if spacing is None:
             return None
@@ -281,7 +281,7 @@ class CT_PPr(BaseOxmlElement):
 
     @property
     def spacing_lineRule(self):
-        """The value of `w:spacing/@w:lineRule` as a member of the :ref:`WdLineSpacing`
+        """The value of `w:spacing/@w:lineRule` as a member of the `WdLineSpacing`
         enumeration.
 
         Only the `MULTIPLE`, `EXACTLY`, and `AT_LEAST` members are used. It is the
@@ -315,7 +315,7 @@ class CT_PPr(BaseOxmlElement):
     def style(self, style: str | None):
         """Set `./w:pStyle/@val` `style`, adding a new element if necessary.
 
-        If `style` is |None|, remove `./w:pStyle` when present.
+        If `style` is `None`, remove `./w:pStyle` when present.
         """
         if style is None:
             self._remove_pStyle()
@@ -325,7 +325,7 @@ class CT_PPr(BaseOxmlElement):
 
     @property
     def widowControl_val(self):
-        """The value of `widowControl/@val` or |None| if not present."""
+        """The value of `widowControl/@val` or `None` if not present."""
         widowControl = self.widowControl
         if widowControl is None:
             return None

@@ -11,7 +11,7 @@ if TYPE_CHECKING:
 
 
 class Relationships(Dict[str, "_Relationship"]):
-    """Collection object for |_Relationship| instances, having list semantics."""
+    """Collection object for `_Relationship` instances, having list semantics."""
 
     def __init__(self, baseURI: str):
         super(Relationships, self).__init__()
@@ -26,7 +26,7 @@ class Relationships(Dict[str, "_Relationship"]):
     def add_relationship(
         self, reltype: str, target: Part | str, rId: str, is_external: bool = False
     ) -> "_Relationship":
-        """Return a newly added |_Relationship| instance."""
+        """Return a newly added `_Relationship` instance."""
         rel = _Relationship(rId, reltype, target, self._baseURI, is_external)
         self[rId] = rel
         if not is_external:
@@ -52,8 +52,8 @@ class Relationships(Dict[str, "_Relationship"]):
         return rel.rId
 
     def part_with_reltype(self, reltype: str) -> Part:
-        """Return target part of rel with matching `reltype`, raising |KeyError| if not
-        found and |ValueError| if more than one matching relationship is found."""
+        """Return target part of rel with matching `reltype`, raising `KeyError` if not
+        found and `ValueError` if more than one matching relationship is found."""
         rel = self._get_rel_of_type(reltype)
         return rel.target_part
 
@@ -94,7 +94,7 @@ class Relationships(Dict[str, "_Relationship"]):
     def _get_rel_of_type(self, reltype: str):
         """Return single relationship of type `reltype` from the collection.
 
-        Raises |KeyError| if no matching relationship is found. Raises |ValueError| if
+        Raises `KeyError` if no matching relationship is found. Raises `ValueError` if
         more than one matching relationship is found.
         """
         matching = [rel for rel in self.values() if rel.reltype == reltype]

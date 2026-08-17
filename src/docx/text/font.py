@@ -49,7 +49,7 @@ class Font(ElementProxy):
 
     @property
     def color(self):
-        """A |ColorFormat| object providing a way to get and set the text color for this
+        """A `ColorFormat` object providing a way to get and set the text color for this
         font."""
         return ColorFormat(self._element)
 
@@ -57,7 +57,7 @@ class Font(ElementProxy):
     def complex_script(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, causes the characters in the run to be treated as complex script
+        When `True`, causes the characters in the run to be treated as complex script
         regardless of their Unicode values.
         """
         return self._get_bool_prop("cs")
@@ -70,7 +70,7 @@ class Font(ElementProxy):
     def cs_bold(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, causes the complex script characters in the run to be displayed in
+        When `True`, causes the complex script characters in the run to be displayed in
         bold typeface.
         """
         return self._get_bool_prop("bCs")
@@ -83,7 +83,7 @@ class Font(ElementProxy):
     def cs_italic(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, causes the complex script characters in the run to be displayed in
+        When `True`, causes the complex script characters in the run to be displayed in
         italic typeface.
         """
         return self._get_bool_prop("iCs")
@@ -96,7 +96,7 @@ class Font(ElementProxy):
     def double_strike(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, causes the text in the run to appear with double strikethrough.
+        When `True`, causes the text in the run to appear with double strikethrough.
         """
         return self._get_bool_prop("dstrike")
 
@@ -108,7 +108,7 @@ class Font(ElementProxy):
     def emboss(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, causes the text in the run to appear as if raised off the page in
+        When `True`, causes the text in the run to appear as if raised off the page in
         relief.
         """
         return self._get_bool_prop("emboss")
@@ -121,7 +121,7 @@ class Font(ElementProxy):
     def hidden(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, causes the text in the run to be hidden from display, unless
+        When `True`, causes the text in the run to be hidden from display, unless
         applications settings force hidden text to be shown.
         """
         return self._get_bool_prop("vanish")
@@ -132,7 +132,7 @@ class Font(ElementProxy):
 
     @property
     def highlight_color(self) -> WD_COLOR_INDEX | None:
-        """Color of highlighing applied or |None| if not highlighted."""
+        """Color of highlighing applied or `None` if not highlighted."""
         rPr = self._element.rPr
         if rPr is None:
             return None
@@ -147,7 +147,7 @@ class Font(ElementProxy):
     def italic(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, causes the text of the run to appear in italics. |None| indicates
+        When `True`, causes the text of the run to appear in italics. `None` indicates
         the effective value is inherited from the style hierarchy.
         """
         return self._get_bool_prop("i")
@@ -160,7 +160,7 @@ class Font(ElementProxy):
     def imprint(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, causes the text in the run to appear as if pressed into the page.
+        When `True`, causes the text in the run to appear as if pressed into the page.
         """
         return self._get_bool_prop("imprint")
 
@@ -172,7 +172,7 @@ class Font(ElementProxy):
     def math(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, specifies this run contains WML that should be handled as though it
+        When `True`, specifies this run contains WML that should be handled as though it
         was Office Open XML Math.
         """
         return self._get_bool_prop("oMath")
@@ -183,10 +183,10 @@ class Font(ElementProxy):
 
     @property
     def name(self) -> str | None:
-        """The typeface name for this |Font|.
+        """The typeface name for this `Font`.
 
         Causes the text it controls to appear in the named font, if a matching font is
-        found. |None| indicates the typeface is inherited from the style hierarchy.
+        found. `None` indicates the typeface is inherited from the style hierarchy.
         """
         rPr = self._element.rPr
         if rPr is None:
@@ -203,7 +203,7 @@ class Font(ElementProxy):
     def no_proof(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, specifies that the contents of this run should not report any
+        When `True`, specifies that the contents of this run should not report any
         errors when the document is scanned for spelling and grammar.
         """
         return self._get_bool_prop("noProof")
@@ -216,7 +216,7 @@ class Font(ElementProxy):
     def outline(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True| causes the characters in the run to appear as if they have an
+        When `True` causes the characters in the run to appear as if they have an
         outline, by drawing a one pixel wide border around the inside and outside
         borders of each character glyph.
         """
@@ -230,7 +230,7 @@ class Font(ElementProxy):
     def rtl(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True| causes the text in the run to have right-to-left characteristics.
+        When `True` causes the text in the run to have right-to-left characteristics.
         """
         return self._get_bool_prop("rtl")
 
@@ -242,7 +242,7 @@ class Font(ElementProxy):
     def shadow(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True| causes the text in the run to appear as if each character has a
+        When `True` causes the text in the run to appear as if each character has a
         shadow.
         """
         return self._get_bool_prop("shadow")
@@ -255,9 +255,9 @@ class Font(ElementProxy):
     def size(self) -> Length | None:
         """Font height in English Metric Units (EMU).
 
-        |None| indicates the font size should be inherited from the style hierarchy.
-        |Length| is a subclass of |int| having properties for convenient conversion into
-        points or other length units. The :class:`docx.shared.Pt` class allows
+        `None` indicates the font size should be inherited from the style hierarchy.
+        `Length` is a subclass of `int` having properties for convenient conversion into
+        points or other length units. The `docx.shared.Pt` class allows
         convenient specification of point values::
 
             >>> font.size = Pt(24)
@@ -281,7 +281,7 @@ class Font(ElementProxy):
     def small_caps(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True| causes the lowercase characters in the run to appear as capital
+        When `True` causes the lowercase characters in the run to appear as capital
         letters two points smaller than the font size specified for the run.
         """
         return self._get_bool_prop("smallCaps")
@@ -294,7 +294,7 @@ class Font(ElementProxy):
     def snap_to_grid(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True| causes the run to use the document grid characters per line settings
+        When `True` causes the run to use the document grid characters per line settings
         defined in the docGrid element when laying out the characters in this run.
         """
         return self._get_bool_prop("snapToGrid")
@@ -307,7 +307,7 @@ class Font(ElementProxy):
     def spec_vanish(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, specifies that the given run shall always behave as if it is
+        When `True`, specifies that the given run shall always behave as if it is
         hidden, even when hidden text is being displayed in the current document. The
         property has a very narrow, specialized use related to the table of contents.
         Consult the spec (§17.3.2.36) for more details.
@@ -322,7 +322,7 @@ class Font(ElementProxy):
     def strike(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True| causes the text in the run to appear with a single horizontal line
+        When `True` causes the text in the run to appear with a single horizontal line
         through the center of the line.
         """
         return self._get_bool_prop("strike")
@@ -333,9 +333,9 @@ class Font(ElementProxy):
 
     @property
     def subscript(self) -> bool | None:
-        """Boolean indicating whether the characters in this |Font| appear as subscript.
+        """Boolean indicating whether the characters in this `Font` appear as subscript.
 
-        |None| indicates the subscript/subscript value is inherited from the style
+        `None` indicates the subscript/subscript value is inherited from the style
         hierarchy.
         """
         rPr = self._element.rPr
@@ -350,10 +350,10 @@ class Font(ElementProxy):
 
     @property
     def superscript(self) -> bool | None:
-        """Boolean indicating whether the characters in this |Font| appear as
+        """Boolean indicating whether the characters in this `Font` appear as
         superscript.
 
-        |None| indicates the subscript/superscript value is inherited from the style
+        `None` indicates the subscript/superscript value is inherited from the style
         hierarchy.
         """
         rPr = self._element.rPr
@@ -368,13 +368,13 @@ class Font(ElementProxy):
 
     @property
     def underline(self) -> bool | WD_UNDERLINE | None:
-        """The underline style for this |Font|.
+        """The underline style for this `Font`.
 
-        The value is one of |None|, |True|, |False|, or a member of :ref:`WdUnderline`.
+        The value is one of `None`, `True`, `False`, or a member of `WdUnderline`.
 
-        |None| indicates the font inherits its underline value from the style hierarchy.
-        |False| indicates no underline. |True| indicates single underline. The values
-        from :ref:`WdUnderline` are used to specify other outline styles such as double,
+        `None` indicates the font inherits its underline value from the style hierarchy.
+        `False` indicates no underline. `True` indicates single underline. The values
+        from `WdUnderline` are used to specify other outline styles such as double,
         wavy, and dotted.
         """
         rPr = self._element.rPr
@@ -406,7 +406,7 @@ class Font(ElementProxy):
     def web_hidden(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, specifies that the contents of this run shall be hidden when the
+        When `True`, specifies that the contents of this run shall be hidden when the
         document is displayed in web page view.
         """
         return self._get_bool_prop("webHidden")

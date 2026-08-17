@@ -1,7 +1,7 @@
 # pyright: reportImportCycles=false
 # pyright: reportPrivateUsage=false
 
-"""|Document| and closely related objects."""
+"""`Document` and closely related objects."""
 
 from __future__ import annotations
 
@@ -30,7 +30,7 @@ if TYPE_CHECKING:
 class Document(ElementProxy):
     """WordprocessingML (WML) document.
 
-    Not intended to be constructed directly. Use :func:`docx.Document` to open or create
+    Not intended to be constructed directly. Use `docx.Document` to open or create
     a document.
     """
 
@@ -72,7 +72,7 @@ class Document(ElementProxy):
 
         The `author` and `initials` parameters allow that metadata to be set for the comment.
         `author` is a required attribute on a comment and is the empty string by default.
-        `initials` is optional on a comment and may be omitted by passing |None|, but Word adds an
+        `initials` is optional on a comment and may be omitted by passing `None`, but Word adds an
         `initials` attribute by default and we follow that convention by using the empty string
         when no `initials` argument is provided.
         """
@@ -107,7 +107,7 @@ class Document(ElementProxy):
         The heading paragraph will contain `text` and have its paragraph style
         determined by `level`. If `level` is 0, the style is set to `Title`. If `level`
         is 1 (or omitted), `Heading 1` is used. Otherwise the style is set to `Heading
-        {level}`. Raises |ValueError| if `level` is outside the range 0-9.
+        `{level}``. Raises |ValueError| if `level` is outside the range 0-9.
         """
         if not 0 <= level <= 9:
             raise ValueError("level must be in range 0-9, got %d" % level)
@@ -115,7 +115,7 @@ class Document(ElementProxy):
         return self.add_paragraph(text, style)
 
     def add_page_break(self):
-        """Return newly |Paragraph| object containing only a page break."""
+        """Return newly `Paragraph` object containing only a page break."""
         paragraph = self.add_paragraph()
         paragraph.add_run().add_break(WD_BREAK.PAGE)
         return paragraph
@@ -152,9 +152,9 @@ class Document(ElementProxy):
         return run.add_picture(image_path_or_stream, width, height)
 
     def add_section(self, start_type: WD_SECTION = WD_SECTION.NEW_PAGE):
-        """Return a |Section| object newly added at the end of the document.
+        """Return a `Section` object newly added at the end of the document.
 
-        The optional `start_type` argument must be a member of the :ref:`WdSectionStart`
+        The optional `start_type` argument must be a member of the `WdSectionStart`
         enumeration, and defaults to ``WD_SECTION.NEW_PAGE`` if not provided.
         """
         new_sectPr = self._element.body.add_section_break()
@@ -164,7 +164,7 @@ class Document(ElementProxy):
     def add_table(self, rows: int, cols: int, style: str | _TableStyle | None = None):
         """Add a table having row and column counts of `rows` and `cols` respectively.
 
-        `style` may be a table style object or a table style name. If `style` is |None|,
+        `style` may be a table style object or a table style name. If `style` is `None`,
         the table inherits the default table style of the document.
         """
         table = self._body.add_table(rows, cols, self._block_width)
@@ -173,17 +173,17 @@ class Document(ElementProxy):
 
     @property
     def comments(self) -> Comments:
-        """A |Comments| object providing access to comments added to the document."""
+        """A `Comments` object providing access to comments added to the document."""
         return self._part.comments
 
     @property
     def core_properties(self):
-        """A |CoreProperties| object providing Dublin Core properties of document."""
+        """A `CoreProperties` object providing Dublin Core properties of document."""
         return self._part.core_properties
 
     @property
     def inline_shapes(self):
-        """The |InlineShapes| collection for this document.
+        """The `InlineShapes` collection for this document.
 
         An inline shape is a graphical object, such as a picture, contained in a run of
         text and behaving like a character glyph, being flowed like other text in a
@@ -197,7 +197,7 @@ class Document(ElementProxy):
 
     @property
     def paragraphs(self) -> List[Paragraph]:
-        """The |Paragraph| instances in the document, in document order.
+        """The `Paragraph` instances in the document, in document order.
 
         Note that paragraphs within revision marks such as ``<w:ins>`` or ``<w:del>`` do
         not appear in this list.
@@ -206,12 +206,12 @@ class Document(ElementProxy):
 
     @property
     def part(self) -> DocumentPart:
-        """The |DocumentPart| object of this document."""
+        """The `DocumentPart` object of this document."""
         return self._part
 
     @property
     def revisions(self):
-        """|Revisions| object enumerating tracked changes across all story parts.
+        """`Revisions` object enumerating tracked changes across all story parts.
 
         paper-docx addition: a fresh snapshot on each access; supports
         accept/reject of all revisions or filtered by author. See
@@ -267,22 +267,22 @@ class Document(ElementProxy):
 
     @property
     def sections(self) -> Sections:
-        """|Sections| object providing access to each section in this document."""
+        """`Sections` object providing access to each section in this document."""
         return Sections(self._element, self._part)
 
     @property
     def settings(self) -> Settings:
-        """A |Settings| object providing access to the document-level settings."""
+        """A `Settings` object providing access to the document-level settings."""
         return self._part.settings
 
     @property
     def styles(self):
-        """A |Styles| object providing access to the styles in this document."""
+        """A `Styles` object providing access to the styles in this document."""
         return self._part.styles
 
     @property
     def tables(self) -> List[Table]:
-        """All |Table| instances in the document, in document order.
+        """All `Table` instances in the document, in document order.
 
         Note that only tables appearing at the top level of the document appear in this
         list; a table nested inside a table cell does not appear. A table within
@@ -293,7 +293,7 @@ class Document(ElementProxy):
 
     @property
     def _block_width(self) -> Length:
-        """A |Length| object specifying the space between margins in last section."""
+        """A `Length` object specifying the space between margins in last section."""
         section = self.sections[-1]
         page_width = section.page_width or Inches(8.5)
         left_margin = section.left_margin or Inches(1)
@@ -302,7 +302,7 @@ class Document(ElementProxy):
 
     @property
     def _body(self) -> _Body:
-        """The |_Body| instance containing the content for this document."""
+        """The `_Body` instance containing the content for this document."""
         if self.__body is None:
             self.__body = _Body(self._element.body, self)
         return self.__body
@@ -319,7 +319,7 @@ class _Body(BlockItemContainer):
         self._body = body_elm
 
     def clear_content(self) -> _Body:
-        """Return this |_Body| instance after clearing it of all content.
+        """Return this `_Body` instance after clearing it of all content.
 
         Section properties for the main document story, if present, are preserved.
         """

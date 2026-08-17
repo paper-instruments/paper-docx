@@ -23,7 +23,7 @@ class Package(OpcPackage):
         self._gather_image_parts()
 
     def get_or_add_image_part(self, image_descriptor: str | IO[bytes]) -> ImagePart:
-        """Return |ImagePart| containing image specified by `image_descriptor`.
+        """Return `ImagePart` containing image specified by `image_descriptor`.
 
         The image-part is newly created if a matching one is not already present in the
         collection.
@@ -32,7 +32,7 @@ class Package(OpcPackage):
 
     @lazyproperty
     def image_parts(self) -> ImageParts:
-        """|ImageParts| collection object for this package."""
+        """`ImageParts` collection object for this package."""
         return ImageParts()
 
     def _gather_image_parts(self):
@@ -48,7 +48,7 @@ class Package(OpcPackage):
 
 
 class ImageParts:
-    """Collection of |ImagePart| objects corresponding to images in the package."""
+    """Collection of `ImagePart` objects corresponding to images in the package."""
 
     def __init__(self):
         self._image_parts: list[ImagePart] = []
@@ -66,7 +66,7 @@ class ImageParts:
         self._image_parts.append(item)
 
     def get_or_add_image_part(self, image_descriptor: str | IO[bytes]) -> ImagePart:
-        """Return |ImagePart| object containing image identified by `image_descriptor`.
+        """Return `ImagePart` object containing image identified by `image_descriptor`.
 
         The image-part is newly created if a matching one is not present in the
         collection.
@@ -78,7 +78,7 @@ class ImageParts:
         return self._add_image_part(image)
 
     def _add_image_part(self, image: Image):
-        """Return |ImagePart| instance newly created from `image` and appended to the collection."""
+        """Return `ImagePart` instance newly created from `image` and appended to the collection."""
         partname = self._next_image_partname(image.ext)
         image_part = ImagePart.from_image(image, partname)
         self.append(image_part)
@@ -86,7 +86,7 @@ class ImageParts:
 
     def _get_by_sha1(self, sha1: str) -> ImagePart | None:
         """Return the image part in this collection having a SHA1 hash matching `sha1`,
-        or |None| if not found."""
+        or `None` if not found."""
         for image_part in self._image_parts:
             if image_part.sha1 == sha1:
                 return image_part

@@ -3,7 +3,7 @@
 `finalize` totally resolves every tracked revision (or refuses, typed,
 naming what blocked it). `scrub` removes the reviewing residue a file
 carries into the outside world — comments, metadata, the track-changes
-switch, optionally RSIDs and hidden text — and returns a |ScrubReport|
+switch, optionally RSIDs and hidden text — and returns a `ScrubReport`
 itemizing exactly what was removed, so the changed-part budget is
 report-matches-diff, never trust-me.
 
@@ -28,6 +28,12 @@ if TYPE_CHECKING:
     from lxml.etree import _Element
 
     from docx.document import Document
+
+__all__ = [
+    "ScrubReport",
+    "finalize",
+    "scrub",
+]
 
 check_install()
 
@@ -168,7 +174,7 @@ def scrub(
 ) -> ScrubReport:
     """Remove reviewing residue before a file leaves the building.
 
-    Every target is individually toggleable; the returned |ScrubReport|
+    Every target is individually toggleable; the returned `ScrubReport`
     itemizes exactly what was removed. A metadata scrub refuses while
     tracked revisions are pending (their author/date attributions would
     survive it) — `finalize` first. Document protection settings are

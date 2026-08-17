@@ -30,6 +30,17 @@ if TYPE_CHECKING:
     from docx.comments import Comment
     from docx.document import Document
 
+__all__ = [
+    "COMMENTS_EXTENDED_CONTENT_TYPE",
+    "COMMENTS_EXTENDED_RELATIONSHIP_TYPE",
+    "anchored_text",
+    "comment_thread",
+    "is_resolved",
+    "parent_of",
+    "reply",
+    "resolve",
+]
+
 check_install()
 
 _W15_NS = "http://schemas.microsoft.com/office/word/2012/wordml"

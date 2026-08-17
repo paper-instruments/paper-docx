@@ -169,9 +169,9 @@ class CT_SectPr(BaseOxmlElement):
 
     @property
     def bottom_margin(self) -> Length | None:
-        """Value of the `w:bottom` attr of `<w:pgMar>` child element, as |Length|.
+        """Value of the `w:bottom` attr of `<w:pgMar>` child element, as `Length`.
 
-        |None| when either the element or the attribute is not present.
+        `None` when either the element or the attribute is not present.
         """
         pgMar = self.pgMar
         if pgMar is None:
@@ -198,7 +198,7 @@ class CT_SectPr(BaseOxmlElement):
         """Distance from bottom edge of page to bottom edge of the footer.
 
         This is the value of the `w:footer` attribute in the `w:pgMar` child element,
-        as a |Length| object, or |None| if either the element or the attribute is not
+        as a `Length` object, or `None` if either the element or the attribute is not
         present.
         """
         pgMar = self.pgMar
@@ -231,7 +231,7 @@ class CT_SectPr(BaseOxmlElement):
     @property
     def gutter(self) -> Length | None:
         """The value of the ``w:gutter`` attribute in the ``<w:pgMar>`` child element,
-        as a |Length| object, or |None| if either the element or the attribute is not
+        as a `Length` object, or `None` if either the element or the attribute is not
         present."""
         pgMar = self.pgMar
         if pgMar is None:
@@ -248,7 +248,7 @@ class CT_SectPr(BaseOxmlElement):
         """Distance from top edge of page to top edge of header.
 
         This value comes from the `w:header` attribute on the `w:pgMar` child element.
-        |None| if either the element or the attribute is not present.
+        `None` if either the element or the attribute is not present.
         """
         pgMar = self.pgMar
         if pgMar is None:
@@ -271,7 +271,7 @@ class CT_SectPr(BaseOxmlElement):
     @property
     def left_margin(self) -> Length | None:
         """The value of the ``w:left`` attribute in the ``<w:pgMar>`` child element, as
-        a |Length| object, or |None| if either the element or the attribute is not
+        a `Length` object, or `None` if either the element or the attribute is not
         present."""
         pgMar = self.pgMar
         if pgMar is None:
@@ -304,7 +304,7 @@ class CT_SectPr(BaseOxmlElement):
     def page_height(self) -> Length | None:
         """Value in EMU of the `h` attribute of the `w:pgSz` child element.
 
-        |None| if not present.
+        `None` if not present.
         """
         pgSz = self.pgSz
         if pgSz is None:
@@ -320,7 +320,7 @@ class CT_SectPr(BaseOxmlElement):
     def page_width(self) -> Length | None:
         """Value in EMU of the ``w`` attribute of the ``<w:pgSz>`` child element.
 
-        |None| if not present.
+        `None` if not present.
         """
         pgSz = self.pgSz
         if pgSz is None:
@@ -362,7 +362,7 @@ class CT_SectPr(BaseOxmlElement):
     @property
     def right_margin(self) -> Length | None:
         """The value of the ``w:right`` attribute in the ``<w:pgMar>`` child element, as
-        a |Length| object, or |None| if either the element or the attribute is not
+        a `Length` object, or `None` if either the element or the attribute is not
         present."""
         pgMar = self.pgMar
         if pgMar is None:
@@ -394,7 +394,7 @@ class CT_SectPr(BaseOxmlElement):
 
     @property
     def titlePg_val(self) -> bool:
-        """Value of `w:titlePg/@val` or |False| if `./w:titlePg` is not present."""
+        """Value of `w:titlePg/@val` or `False` if `./w:titlePg` is not present."""
         titlePg = self.titlePg
         if titlePg is None:
             return False
@@ -410,7 +410,7 @@ class CT_SectPr(BaseOxmlElement):
     @property
     def top_margin(self) -> Length | None:
         """The value of the ``w:top`` attribute in the ``<w:pgMar>`` child element, as a
-        |Length| object, or |None| if either the element or the attribute is not
+        `Length` object, or `None` if either the element or the attribute is not
         present."""
         pgMar = self.pgMar
         if pgMar is None:

@@ -38,6 +38,13 @@ if TYPE_CHECKING:
     from docx.document import Document
     from docx.table import Table, _Cell
 
+__all__ = [
+    "delete_row",
+    "find_table",
+    "insert_row_after",
+    "update_cell",
+]
+
 check_install()
 
 _T = qn("w:t")
@@ -183,8 +190,8 @@ def _cell_text(cell: "_Cell") -> str:
 def find_table(document: "Document", *, near_text: str) -> "Table":
     """The table whose cell text contains `near_text` (normalized matching).
 
-    Zero matching tables raise |TargetNotFoundError|; more than one raise
-    |AmbiguousTargetError| — make `near_text` more specific.
+    Zero matching tables raise `TargetNotFoundError`; more than one raise
+    `AmbiguousTargetError` — make `near_text` more specific.
     """
     needle = normalize_text(near_text)
     matches = []

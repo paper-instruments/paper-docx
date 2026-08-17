@@ -12,7 +12,7 @@ import re
 class PackURI(str):
     """Provides access to pack URI components such as the baseURI and the filename slice.
 
-    Behaves as |str| otherwise.
+    Behaves as `str` otherwise.
     """
 
     _filename_re = re.compile("([a-zA-Z]+)([1-9][0-9]*)?")
@@ -61,7 +61,7 @@ class PackURI(str):
     @property
     def idx(self):
         """Return partname index as integer for tuple partname or None for singleton
-        partname, e.g. ``21`` for ``'/ppt/slides/slide21.xml'`` and |None| for
+        partname, e.g. ``21`` for ``'/ppt/slides/slide21.xml'`` and `None` for
         ``'/ppt/presentation.xml'``."""
         filename = self.filename
         if not filename:

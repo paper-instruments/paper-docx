@@ -152,11 +152,20 @@ be applied to every install in that environment.
 
 ## Documentation
 
-The Sphinx docs extend the upstream python-docx documentation to cover the
-fork's additions: start with `docs/user/paper-additions.rst` and the
-`docs/api/paper-*.rst` reference pages. Everything inherited from python-docx
-works as documented at the
+The documentation site is
+**[docs.paperinstruments.com](https://docs.paperinstruments.com/docs/docx)**.
+
+Docstrings are the single source of truth for what a function does, what it
+refuses, and what it returns. They ship in the wheel, so
+`help(docx.search.replace_all)` is authoritative offline — and the site's
+[API reference](https://docs.paperinstruments.com/docs/docx/api) is generated
+from them, so no API fact is written twice.
+
+Everything inherited from python-docx works as documented at the
 [python-docx documentation](https://python-docx.readthedocs.io/).
+
+The repository also still carries the inherited Sphinx tree under `docs/`, which
+nothing publishes; it is being retired now that the reference is generated.
 
 ## How it's tested
 

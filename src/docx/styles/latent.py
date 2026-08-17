@@ -6,7 +6,7 @@ from docx.styles import BabelFish
 
 class LatentStyles(ElementProxy):
     """Provides access to the default behaviors for latent styles in this document and
-    to the collection of |_LatentStyle| objects that define overrides of those defaults
+    to the collection of `_LatentStyle` objects that define overrides of those defaults
     for a particular named latent style."""
 
     def __getitem__(self, key):
@@ -24,7 +24,7 @@ class LatentStyles(ElementProxy):
         return len(self._element.lsdException_lst)
 
     def add_latent_style(self, name):
-        """Return a newly added |_LatentStyle| object to override the inherited defaults
+        """Return a newly added `_LatentStyle` object to override the inherited defaults
         defined in this latent styles object for the built-in style having `name`."""
         lsdException = self._element.add_lsdException()
         lsdException.name = BabelFish.ui2internal(name)
@@ -35,7 +35,7 @@ class LatentStyles(ElementProxy):
         """Integer between 0 and 99 inclusive specifying the default sort order for
         latent styles in style lists and the style gallery.
 
-        |None| if no value is assigned, which causes Word to use the default value 99.
+        `None` if no value is assigned, which causes Word to use the default value 99.
         """
         return self._element.defUIPriority
 
@@ -94,9 +94,9 @@ class LatentStyles(ElementProxy):
     @property
     def load_count(self):
         """Integer specifying the number of built-in styles to initialize to the
-        defaults specified in this |LatentStyles| object.
+        defaults specified in this `LatentStyles` object.
 
-        |None| if there is no setting in the XML (very uncommon). The default Word 2011
+        `None` if there is no setting in the XML (very uncommon). The default Word 2011
         template sets this value to 276, accounting for the built-in styles in Word
         2010.
         """
@@ -118,11 +118,11 @@ class _LatentStyle(ElementProxy):
 
     def delete(self):
         """Remove this latent style definition such that the defaults defined in the
-        containing |LatentStyles| object provide the effective value for each of its
+        containing `LatentStyles` object provide the effective value for each of its
         attributes.
 
         Attempting to access any attributes on this object after calling this method
-        will raise |AttributeError|.
+        will raise `AttributeError`.
         """
         self._element.delete()
         self._element = None
@@ -132,7 +132,7 @@ class _LatentStyle(ElementProxy):
         """Tri-state value specifying whether this latent style should appear in the
         recommended list.
 
-        |None| indicates the effective value is inherited from the parent
+        `None` indicates the effective value is inherited from the parent
         ``<w:latentStyles>`` element.
         """
         return self._element.on_off_prop("semiHidden")
@@ -174,8 +174,8 @@ class _LatentStyle(ElementProxy):
         """Tri-state value specifying whether this latent style should appear in the
         Word styles gallery when not hidden.
 
-        |None| indicates the effective value should be inherited from the default values
-        in its parent |LatentStyles| object.
+        `None` indicates the effective value should be inherited from the default values
+        in its parent `LatentStyles` object.
         """
         return self._element.on_off_prop("qFormat")
 
@@ -185,11 +185,11 @@ class _LatentStyle(ElementProxy):
 
     @property
     def unhide_when_used(self):
-        """Tri-state value specifying whether this style should have its :attr:`hidden`
-        attribute set |False| the next time the style is applied to content.
+        """Tri-state value specifying whether this style should have its `hidden`
+        attribute set `False` the next time the style is applied to content.
 
-        |None| indicates the effective value should be inherited from the default
-        specified by its parent |LatentStyles| object.
+        `None` indicates the effective value should be inherited from the default
+        specified by its parent `LatentStyles` object.
         """
         return self._element.on_off_prop("unhideWhenUsed")
 

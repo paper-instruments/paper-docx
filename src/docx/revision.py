@@ -38,6 +38,12 @@ if TYPE_CHECKING:
 
     from docx.document import Document
 
+__all__ = [
+    "RESOLVABLE_TYPES",
+    "Revision",
+    "Revisions",
+]
+
 check_install()
 
 _INS = qn("w:ins")
@@ -282,7 +288,7 @@ class Revisions(Sequence[Revision]):
 
     A fresh snapshot is enumerated on each `Document.revisions` access;
     mutation through another snapshot invalidates this snapshot and its
-    previously-held |Revision| objects. Stale resolution attempts refuse.
+    previously-held `Revision` objects. Stale resolution attempts refuse.
     """
 
     def __init__(self, document: "Document") -> None:
@@ -317,7 +323,7 @@ class Revisions(Sequence[Revision]):
         return self._resolve_all(accept=False, author=author)
 
     def remaining_unsupported(self) -> dict:
-        """{revision_type: count} for enumerated-but-unresolvable revisions."""
+        """`{revision_type: count}` for enumerated-but-unresolvable revisions."""
         census: dict = {}
         for revision in self._items:
             if not revision.is_resolvable:
@@ -919,7 +925,7 @@ _MARKUP_SCAN_TAGS = tuple(_REVISION_TYPES) + tuple(
 
 
 def _remaining_markup(document: "Document") -> dict:
-    """{local-tag-name: count} of ALL revision markup left ANYWHERE — the
+    """`{local-tag-name: count}` of ALL revision markup left ANYWHERE — the
     full serialized space, including mc:Fallback branches (which traversal
     skips but a saved file still carries). The invariant oracle: after a
     successful `accept_all()`/`reject_all()` this is empty — "resolved"

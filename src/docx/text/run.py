@@ -27,8 +27,8 @@ if TYPE_CHECKING:
 class Run(StoryChild):
     """Proxy object wrapping `<w:r>` element.
 
-    Several of the properties on Run take a tri-state value, |True|, |False|, or |None|.
-    |True| and |False| correspond to on and off respectively. |None| indicates the
+    Several of the properties on Run take a tri-state value, `True`, `False`, or `None`.
+    `True` and `False` correspond to on and off respectively. `None` indicates the
     property is not specified directly on the run and its effective value is taken from
     the style hierarchy.
     """
@@ -64,7 +64,7 @@ class Run(StoryChild):
         width: int | Length | None = None,
         height: int | Length | None = None,
     ) -> InlineShape:
-        """Return |InlineShape| containing image identified by `image_path_or_stream`.
+        """Return `InlineShape` containing image identified by `image_path_or_stream`.
 
         The picture is added to the end of this run.
 
@@ -88,11 +88,11 @@ class Run(StoryChild):
         self._r.add_tab()
 
     def add_text(self, text: str):
-        """Returns a newly appended |_Text| object (corresponding to a new ``<w:t>``
+        """Returns a newly appended `_Text` object (corresponding to a new ``<w:t>``
         child element) to the run, containing `text`.
 
         Compare with the possibly more friendly approach of assigning text to the
-        :attr:`Run.text` property.
+        `Run.text` property.
         """
         t = self._r.add_t(text)
         return _Text(t)
@@ -101,8 +101,8 @@ class Run(StoryChild):
     def bold(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, causes the text of the run to appear in bold face. When |False|,
-        the text unconditionally appears non-bold. When |None| the bold setting for this
+        When `True`, causes the text of the run to appear in bold face. When `False`,
+        the text unconditionally appears non-bold. When `None` the bold setting for this
         run is inherited from the style hierarchy.
         """
         return self.font.bold
@@ -134,7 +134,7 @@ class Run(StoryChild):
 
     @property
     def font(self) -> Font:
-        """The |Font| object providing access to the character formatting properties for
+        """The `Font` object providing access to the character formatting properties for
         this run, such as font name and size."""
         return Font(self._element)
 
@@ -142,8 +142,8 @@ class Run(StoryChild):
     def italic(self) -> bool | None:
         """Read/write tri-state value.
 
-        When |True|, causes the text of the run to appear in italics. When |False|, the
-        text unconditionally appears non-italic. When |None| the italic setting for this
+        When `True`, causes the text of the run to appear in italics. When `False`, the
+        text unconditionally appears non-italic. When `None` the italic setting for this
         run is inherited from the style hierarchy.
         """
         return self.font.italic
@@ -204,10 +204,10 @@ class Run(StoryChild):
     def style(self) -> CharacterStyle:
         """Read/write.
 
-        A |CharacterStyle| object representing the character style applied to this run.
+        A `CharacterStyle` object representing the character style applied to this run.
         The default character style for the document (often `Default Character Font`) is
         returned if the run has no directly-applied character style. Setting this
-        property to |None| removes any directly-applied character style.
+        property to `None` removes any directly-applied character style.
         """
         style_id = self._r.style
         return cast(CharacterStyle, self.part.get_style(style_id, WD_STYLE_TYPE.CHARACTER))
@@ -241,20 +241,20 @@ class Run(StoryChild):
 
     @property
     def underline(self) -> bool | WD_UNDERLINE | None:
-        """The underline style for this |Run|.
+        """The underline style for this `Run`.
 
-        Value is one of |None|, |True|, |False|, or a member of :ref:`WdUnderline`.
+        Value is one of `None`, `True`, `False`, or a member of `WdUnderline`.
 
-        A value of |None| indicates the run has no directly-applied underline value and
+        A value of `None` indicates the run has no directly-applied underline value and
         so will inherit the underline value of its containing paragraph. Assigning
-        |None| to this property removes any directly-applied underline value.
+        `None` to this property removes any directly-applied underline value.
 
-        A value of |False| indicates a directly-applied setting of no underline,
+        A value of `False` indicates a directly-applied setting of no underline,
         overriding any inherited value.
 
-        A value of |True| indicates single underline.
+        A value of `True` indicates single underline.
 
-        The values from :ref:`WdUnderline` are used to specify other outline styles such
+        The values from `WdUnderline` are used to specify other outline styles such
         as double, wavy, and dotted.
         """
         return self.font.underline

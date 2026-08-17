@@ -1,4 +1,4 @@
-"""|EndnotesPart|, the story part containing a document's endnotes."""
+"""`EndnotesPart`, the story part containing a document's endnotes."""
 
 from __future__ import annotations
 

@@ -81,7 +81,7 @@ class Hyperlink(Parented):
 
     @property
     def runs(self) -> list[Run]:
-        """List of |Run| instances in this hyperlink.
+        """List of `Run` instances in this hyperlink.
 
         Together these define the visible text of the hyperlink. The text of a hyperlink
         is typically contained in a single run will be broken into multiple runs if for

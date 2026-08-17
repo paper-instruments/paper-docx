@@ -31,7 +31,7 @@ class CommentsPart(StoryPart):
 
     @property
     def comments(self) -> Comments:
-        """A |Comments| proxy object for the `w:comments` root element of this part."""
+        """A `Comments` proxy object for the `w:comments` root element of this part."""
         return Comments(self._comments, self)
 
     @classmethod

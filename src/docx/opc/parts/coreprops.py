@@ -24,7 +24,7 @@ class CorePropertiesPart(XmlPart):
 
     @classmethod
     def default(cls, package: OpcPackage):
-        """Return a new |CorePropertiesPart| object initialized with default values for
+        """Return a new `CorePropertiesPart` object initialized with default values for
         its base properties."""
         core_properties_part = cls._new(package)
         core_properties = core_properties_part.core_properties
@@ -36,7 +36,7 @@ class CorePropertiesPart(XmlPart):
 
     @property
     def core_properties(self):
-        """A |CoreProperties| object providing read/write access to the core properties
+        """A `CoreProperties` object providing read/write access to the core properties
         contained in this core properties part."""
         return CoreProperties(self.element)
 

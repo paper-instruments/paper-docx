@@ -85,3 +85,26 @@ jobs:
         uses: pypa/gh-action-pypi-publish@cef221092ed1bacb1cc03d23a2d87d1d172e277b # release/v1
         with:
           packages-dir: dist/
+
+  docs:
+    name: Regenerate the API reference
+    needs: pypi
+    runs-on: ubuntu-latest
+    steps:
+      # -- Runs after pypi, because the docs site regenerates from the *released* package: the
+      # -- published reference should only ever describe a version somebody can install.
+      # -- Opens a pull request rather than pushing; the generated diff is the reviewable
+      # -- artifact, and fumadocs calls its Python docgen experimental.
+      - name: Ask paper-office-docs to regenerate
+        env:
+          GH_TOKEN: ${{ secrets.PAPER_OFFICE_DOCS_TOKEN }}
+        run: |
+          set -euo pipefail
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "PAPER_OFFICE_DOCS_TOKEN is not set; skipping docs regeneration" >&2
+            exit 0
+          fi
+          gh workflow run pyapi.yml \
+            --repo paper-instruments/paper-office-docs \
+            --field package=paper-docx \
+            --field version="${GITHUB_REF_NAME#v}"

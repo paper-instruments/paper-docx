@@ -38,7 +38,7 @@ class PhysPkgWriter:
 
 
 class _DirPkgReader(PhysPkgReader):
-    """Implements |PhysPkgReader| interface for an OPC package extracted into a
+    """Implements `PhysPkgReader` interface for an OPC package extracted into a
     directory."""
 
     def __init__(self, path):
@@ -89,7 +89,7 @@ class _DirPkgReader(PhysPkgReader):
         return self._member_names
 
     def close(self):
-        """Provides interface consistency with |ZipFileSystem|, but does nothing, a
+        """Provides interface consistency with `ZipFileSystem`, but does nothing, a
         directory file system doesn't need closing."""
         pass
 
@@ -109,7 +109,7 @@ class _DirPkgReader(PhysPkgReader):
 
 
 class _ZipPkgReader(PhysPkgReader):
-    """Implements |PhysPkgReader| interface for a zip file OPC package."""
+    """Implements `PhysPkgReader` interface for a zip file OPC package."""
 
     def __init__(self, pkg_file):
         super(_ZipPkgReader, self).__init__()
@@ -139,7 +139,7 @@ class _ZipPkgReader(PhysPkgReader):
     def blob_for(self, pack_uri):
         """Return blob corresponding to `pack_uri`.
 
-        Raises |ValueError| if no matching member is present in zip archive.
+        Raises `ValueError` if no matching member is present in zip archive.
         """
         actual_name = self._member_name_by_fold[pack_uri.membername.casefold()]
         return self._guarded_reader.read(actual_name)
@@ -172,7 +172,7 @@ class _ZipPkgReader(PhysPkgReader):
 
 
 class _ZipPkgWriter(PhysPkgWriter):
-    """Implements |PhysPkgWriter| interface for a zip file OPC package."""
+    """Implements `PhysPkgWriter` interface for a zip file OPC package."""
 
     def __init__(self, pkg_file):
         super(_ZipPkgWriter, self).__init__()

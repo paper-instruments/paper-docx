@@ -155,7 +155,7 @@ class OptionalAttribute(BaseAttribute):
     """Defines an optional attribute on a custom element class.
 
     An optional attribute returns a default value when not present for reading. When
-    assigned |None|, the attribute is removed, but still returns the default value when
+    assigned `None`, the attribute is removed, but still returns the default value when
     one is specified.
     """
 
@@ -219,8 +219,8 @@ class RequiredAttribute(BaseAttribute):
 
     A required attribute is assumed to be present for reading, so does not have a
     default value; its actual value is always used. If missing on read, an
-    |InvalidXmlError| is raised. It also does not remove the attribute if |None| is
-    assigned. Assigning |None| raises |TypeError| or |ValueError|, depending on the
+    `InvalidXmlError` is raised. It also does not remove the attribute if `None` is
+    assigned. Assigning `None` raises `TypeError` or `ValueError`, depending on the
     simple type of the attribute.
     """
 
@@ -373,7 +373,7 @@ class _BaseChildElement:
         """Return a function object suitable for the "get" side of the property
         descriptor.
 
-        This default getter returns the child element with matching tag name or |None|
+        This default getter returns the child element with matching tag name or `None`
         if not present.
         """
 
@@ -598,7 +598,7 @@ class ZeroOrOneChoice(_BaseChildElement):
 
     def _add_choice_getter(self):
         """Add a read-only ``{prop_name}`` property to the element class that returns
-        the present member of this group, or |None| if none are present."""
+        the present member of this group, or `None` if none are present."""
         property_ = property(self._choice_getter, None, None)
         # assign unconditionally to overwrite element name definition
         setattr(self._element_cls, self._prop_name, property_)

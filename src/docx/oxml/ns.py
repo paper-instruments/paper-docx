@@ -102,7 +102,7 @@ def qn(tag: str) -> str:
 
     This utility function converts a familiar namespace-prefixed tag name like "w:p"
     into a Clark-notation qualified tag name for lxml. For example, `qn("w:p")` returns
-    "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}p".
+    "`{http://schemas.openxmlformats.org/wordprocessingml/2006/main}`p".
     """
     prefix, tagroot = tag.split(":")
     uri = nsmap[prefix]

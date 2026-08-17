@@ -15,7 +15,7 @@ if TYPE_CHECKING:
 class Settings(ElementProxy):
     """Provides access to document-level settings for a document.
 
-    Accessed using the :attr:`.Document.settings` property.
+    Accessed using the `Document.settings` property.
     """
 
     def __init__(self, element: BaseOxmlElement, parent: t.ProvidesXmlPart | None = None):

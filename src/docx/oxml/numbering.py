@@ -14,7 +14,7 @@ from docx.oxml.xmlchemy import (
 
 class CT_Num(BaseOxmlElement):
     """``<w:num>`` element, which represents a concrete list definition instance, having
-    a required child <w:abstractNumId> that references an abstract numbering definition
+    a required child `<w:abstractNumId>` that references an abstract numbering definition
     that defines most of the formatting details."""
 
     abstractNumId = OneAndOnlyOne("w:abstractNumId")
@@ -22,7 +22,7 @@ class CT_Num(BaseOxmlElement):
     numId = RequiredAttribute("w:numId", ST_DecimalNumber)
 
     def add_lvlOverride(self, ilvl):
-        """Return a newly added CT_NumLvl (<w:lvlOverride>) element having its ``ilvl``
+        """Return a newly added CT_NumLvl (`<w:lvlOverride>`) element having its ``ilvl``
         attribute set to `ilvl`."""
         return self._add_lvlOverride(ilvl=ilvl)
 
@@ -82,7 +82,7 @@ class CT_Numbering(BaseOxmlElement):
     num = ZeroOrMore("w:num", successors=("w:numIdMacAtCleanup",))
 
     def add_num(self, abstractNum_id):
-        """Return a newly added CT_Num (<w:num>) element referencing the abstract
+        """Return a newly added CT_Num (`<w:num>`) element referencing the abstract
         numbering definition identified by `abstractNum_id`."""
         next_num_id = self._next_numId
         num = CT_Num.new(next_num_id, abstractNum_id)

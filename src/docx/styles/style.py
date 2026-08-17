@@ -13,7 +13,7 @@ from docx.text.parfmt import ParagraphFormat
 
 
 def StyleFactory(style_elm: CT_Style) -> BaseStyle:
-    """Return `Style` object of appropriate |BaseStyle| subclass for `style_elm`."""
+    """Return `Style` object of appropriate `BaseStyle` subclass for `style_elm`."""
     style_cls: Type[BaseStyle] = {
         WD_STYLE_TYPE.PARAGRAPH: ParagraphStyle,
         WD_STYLE_TYPE.CHARACTER: CharacterStyle,
@@ -39,7 +39,7 @@ class BaseStyle(ElementProxy):
     def builtin(self):
         """Read-only.
 
-        |True| if this style is a built-in style. |False| indicates it is a custom
+        `True` if this style is a built-in style. `False` indicates it is a custom
         (user-defined) style. Note this value is based on the presence of a
         `customStyle` attribute in the XML, not on specific knowledge of which styles
         are built into Word.
@@ -58,11 +58,11 @@ class BaseStyle(ElementProxy):
 
     @property
     def hidden(self):
-        """|True| if display of this style in the style gallery and list of recommended
+        """`True` if display of this style in the style gallery and list of recommended
         styles is suppressed.
 
-        |False| otherwise. In order to be shown in the style gallery, this value must be
-        |False| and :attr:`.quick_style` must be |True|.
+        `False` otherwise. In order to be shown in the style gallery, this value must be
+        `False` and `quick_style` must be `True`.
         """
         return self._element.semiHidden_val
 
@@ -74,7 +74,7 @@ class BaseStyle(ElementProxy):
     def locked(self):
         """Read/write Boolean.
 
-        |True| if this style is locked. A locked style does not appear in the styles
+        `True` if this style is locked. A locked style does not appear in the styles
         panel or the style gallery and cannot be applied to document content. This
         behavior is only active when formatting protection is turned on for the document
         (via the Developer menu).
@@ -101,7 +101,7 @@ class BaseStyle(ElementProxy):
     def priority(self):
         """The integer sort key governing display sequence of this style in the Word UI.
 
-        |None| indicates no setting is defined, causing Word to use the default value of
+        `None` indicates no setting is defined, causing Word to use the default value of
         0. Style name is used as a secondary sort key to resolve ordering of styles
         having the same priority value.
         """
@@ -113,8 +113,8 @@ class BaseStyle(ElementProxy):
 
     @property
     def quick_style(self):
-        """|True| if this style should be displayed in the style gallery when
-        :attr:`.hidden` is |False|.
+        """`True` if this style should be displayed in the style gallery when
+        `hidden` is `False`.
 
         Read/write Boolean.
         """
@@ -139,7 +139,7 @@ class BaseStyle(ElementProxy):
 
     @property
     def type(self):
-        """Member of :ref:`WdStyleType` corresponding to the type of this style, e.g.
+        """Member of `WdStyleType` corresponding to the type of this style, e.g.
         ``WD_STYLE_TYPE.PARAGRAPH``."""
         type = self._style_elm.type
         if type is None:
@@ -148,11 +148,11 @@ class BaseStyle(ElementProxy):
 
     @property
     def unhide_when_used(self):
-        """|True| if an application should make this style visible the next time it is
+        """`True` if an application should make this style visible the next time it is
         applied to content.
 
-        False otherwise. Note that |docx| does not automatically unhide a style having
-        |True| for this attribute when it is applied to content.
+        False otherwise. Note that `docx` does not automatically unhide a style having
+        `True` for this attribute when it is applied to content.
         """
         return self._element.unhideWhenUsed_val
 
@@ -164,13 +164,13 @@ class BaseStyle(ElementProxy):
 class CharacterStyle(BaseStyle):
     """A character style.
 
-    A character style is applied to a |Run| object and primarily provides character-
-    level formatting via the |Font| object in its :attr:`.font` property.
+    A character style is applied to a `Run` object and primarily provides character-
+    level formatting via the `Font` object in its `font` property.
     """
 
     @property
     def base_style(self):
-        """Style object this style inherits from or |None| if this style is not based on
+        """Style object this style inherits from or `None` if this style is not based on
         another style."""
         base_style = self._element.base_style
         if base_style is None:
@@ -184,7 +184,7 @@ class CharacterStyle(BaseStyle):
 
     @property
     def font(self):
-        """The |Font| object providing access to the character formatting properties for
+        """The `Font` object providing access to the character formatting properties for
         this style, such as font name and size."""
         return Font(self._element)
 
@@ -205,10 +205,10 @@ class ParagraphStyle(CharacterStyle):
 
     @property
     def next_paragraph_style(self):
-        """|_ParagraphStyle| object representing the style to be applied automatically
+        """`_ParagraphStyle` object representing the style to be applied automatically
         to a new paragraph inserted after a paragraph of this style.
 
-        Returns self if no next paragraph style is defined. Assigning |None| or `self`
+        Returns self if no next paragraph style is defined. Assigning `None` or `self`
         removes the setting such that new paragraphs are created using this same style.
         """
         next_style_elm = self._element.next_style
@@ -227,7 +227,7 @@ class ParagraphStyle(CharacterStyle):
 
     @property
     def paragraph_format(self):
-        """The |ParagraphFormat| object providing access to the paragraph formatting
+        """The `ParagraphFormat` object providing access to the paragraph formatting
         properties for this style such as indentation."""
         return ParagraphFormat(self._element)
 

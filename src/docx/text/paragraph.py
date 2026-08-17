@@ -45,12 +45,12 @@ class Paragraph(StoryChild):
 
     @property
     def alignment(self) -> WD_PARAGRAPH_ALIGNMENT | None:
-        """A member of the :ref:`WdParagraphAlignment` enumeration specifying the
+        """A member of the `WdParagraphAlignment` enumeration specifying the
         justification setting for this paragraph.
 
-        A value of |None| indicates the paragraph has no directly-applied alignment
+        A value of `None` indicates the paragraph has no directly-applied alignment
         value and will inherit its alignment value from its style hierarchy. Assigning
-        |None| to this property removes any directly-applied alignment value.
+        `None` to this property removes any directly-applied alignment value.
         """
         return self._p.alignment
 
@@ -73,7 +73,7 @@ class Paragraph(StoryChild):
 
     @property
     def hyperlinks(self) -> List[Hyperlink]:
-        """A |Hyperlink| instance for each hyperlink in this paragraph."""
+        """A `Hyperlink` instance for each hyperlink in this paragraph."""
         return [Hyperlink(hyperlink, self) for hyperlink in self._p.hyperlink_lst]
 
     def insert_paragraph_before(
@@ -108,7 +108,7 @@ class Paragraph(StoryChild):
 
     @property
     def paragraph_format(self):
-        """The |ParagraphFormat| object providing access to the formatting properties
+        """The `ParagraphFormat` object providing access to the formatting properties
         for this paragraph, such as line spacing and indentation."""
         return ParagraphFormat(self._element)
 
@@ -123,7 +123,7 @@ class Paragraph(StoryChild):
 
     @property
     def runs(self) -> List[Run]:
-        """Sequence of |Run| instances corresponding to the <w:r> elements in this
+        """Sequence of `Run` instances corresponding to the `<w:r>` elements in this
         paragraph."""
         return [Run(r, self) for r in self._p.r_lst]
 
@@ -131,10 +131,10 @@ class Paragraph(StoryChild):
     def style(self) -> ParagraphStyle | None:
         """Read/Write.
 
-        |_ParagraphStyle| object representing the style assigned to this paragraph. If
+        `_ParagraphStyle` object representing the style assigned to this paragraph. If
         no explicit style is assigned to this paragraph, its value is the default
         paragraph style for the document. A paragraph style name can be assigned in lieu
-        of a paragraph style object. Assigning |None| removes any applied style, making
+        of a paragraph style object. Assigning `None` removes any applied style, making
         its effective value the default paragraph style for the document.
         """
         style_id = self._p.style

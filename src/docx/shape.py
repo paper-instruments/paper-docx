@@ -19,7 +19,7 @@ if TYPE_CHECKING:
 
 
 class InlineShapes(Parented):
-    """Sequence of |InlineShape| instances, supporting len(), iteration, and indexed access."""
+    """Sequence of `InlineShape` instances, supporting len(), iteration, and indexed access."""
 
     def __init__(self, body_elm: CT_Body, parent: StoryPart):
         super(InlineShapes, self).__init__(parent)
@@ -60,7 +60,7 @@ class InlineShape:
     def height(self) -> Length:
         """Read/write.
 
-        The display height of this inline shape as an |Emu| instance.
+        The display height of this inline shape as an `Emu` instance.
         """
         return self._inline.extent.cy
 
@@ -93,7 +93,7 @@ class InlineShape:
     def width(self):
         """Read/write.
 
-        The display width of this inline shape as an |Emu| instance.
+        The display width of this inline shape as an `Emu` instance.
         """
         return self._inline.extent.cx
 

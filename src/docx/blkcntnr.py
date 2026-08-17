@@ -48,7 +48,7 @@ class BlockItemContainer(StoryChild):
         The paragraph has `text` in a single run if present, and is given paragraph
         style `style`.
 
-        If `style` is |None|, no paragraph style is applied, which has the same effect
+        If `style` is `None`, no paragraph style is applied, which has the same effect
         as applying the 'Normal' style.
         """
         paragraph = self._add_paragraph()

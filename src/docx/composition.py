@@ -4,7 +4,7 @@ Copying formatted content between documents is style/numbering/relationship
 reconciliation — exactly the package-level, corruption-prone mechanics this
 fork exists to own. `insert_blocks_from` copies a block range from a source
 document; `append_document` appends a whole source body. Both return a
-|CompositionReport| declaring every part the operation may touch
+`CompositionReport` declaring every part the operation may touch
 plus the style/numbering/bookmark
 maps and report-only findings.
 
@@ -37,6 +37,13 @@ if TYPE_CHECKING:
     from lxml.etree import _Element
 
     from docx.document import Document
+
+__all__ = [
+    "CompositionFinding",
+    "CompositionReport",
+    "append_document",
+    "insert_blocks_from",
+]
 
 check_install()
 
