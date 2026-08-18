@@ -248,10 +248,12 @@ interact with Fix 1 — one member-level legality rule may cover both.
 **The rendering axis.** Numbering, tracked revisions, fields, `compare()`. Zero measurement, and
 a different question: not "did it open" but "did Word draw what the library claims".
 
-**Two further prefixed-archive paths**, owned by the `word-openable-packages` spec rather than
-this one: `patch_save` takes a verbatim byte-copy path on any no-op, which reproduces a prefixed
-original; and `diagnose()` reports a prefixed file as `not-a-zip`, which is false and
-unactionable. Fix 2 makes both unreachable for prefixed input, so they are defence in depth.
+**Two further prefixed-archive paths**, surfaced by the `word-openable-packages` spec and
+verified here: `patch_save` takes a verbatim byte-copy path on any no-op, which reproduces a
+prefixed original; and `diagnose()` reports a prefixed file as `not-a-zip`, which is false and
+unactionable. Fix 2 makes both unreachable for prefixed input, so they are defence in depth
+rather than correctness. **Both specs currently cover them. Which thread implements them is an
+open coordination decision, not something this spec settles** — see below.
 
 ## Relationship to the two parallel specs
 
@@ -280,9 +282,20 @@ refusing the write rather than preserving the tail; the measurement above confir
 - The byte-zero check's placement is load-bearing (above).
 - Two named tests break and must be rewritten (above).
 
-**Suggested ownership, to avoid three threads editing `_zipguard.py`:** this spec takes the load
-check and the read-side leniency fixes; `word-openable-packages` takes the write-side refusal,
-the `patch_save` gate and `diagnose()`; whichever lands first owns the two test rewrites.
+**Where the three threads collide, stated as fact rather than resolved.** Splitting the work is
+the maintainer's call; this spec does not claim or cede any of it.
+
+| contested surface | who covers it |
+|---|---|
+| `_zipguard._preflight_zip_stream` byte-zero check | this spec (Fix 2) and `word-openable-packages` (issue 4) — same rule, same file |
+| `_atomic_stream_write` nonzero-offset refusal | this spec (Fix 5), `word-oracle-fixes` (L4), `word-openable-packages` (write refusal) — all three |
+| `package.py` truncation gate | this spec (Fix 5) and `word-openable-packages` |
+| `patch_save` verbatim gate, `diagnose()` kind | `word-openable-packages`, and now recorded here |
+| the two test rewrites | all three break them |
+
+The practical constraint is that `_zipguard.py` cannot take three concurrent edits cleanly, and
+Fix 2 is the keystone the other items depend on — so it wants to land first regardless of who
+writes it. Everything else can follow in any order.
 
 ## Order
 
