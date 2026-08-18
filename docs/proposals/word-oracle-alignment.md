@@ -151,29 +151,36 @@ non-Microsoft producer.
 
 ---
 
-## Fix 5 — container-tail truncation (finding 8)
+## Fix 5 — refuse nonzero-offset stream saves (finding 8) — **REVISED**
 
-**File:** `src/docx/opc/package.py`, `_atomic_stream_write`, the bare `stream.truncate()`.
+**File:** `src/docx/opc/package.py`, `_atomic_stream_write`.
 
-Not a Word question — the caller's own bytes are destroyed before any oracle sees the file.
+This spec originally proposed gating the bare `stream.truncate()` on `start == 0`, preserving
+the caller's trailing data and keeping the capability. **That was wrong**, and two parallel
+specs caught it. Measured:
 
-| | tail preserved |
-|---|---|
-| upstream python-docx | 274,992 of 312,000 |
-| paper-docx | **0** |
+| artifact of a nonzero-offset save | central-directory offset | opens? |
+|---|---|---|
+| a fresh save, for reference | 35,865 | opens |
+| the whole container file | 35,898 | **Word REFUSES** (prefixed archive) |
+| the package sliced back out | 35,898 | **paper-docx refuses** — skewed by exactly the 33-byte prefix |
 
-`truncate()` with no argument cuts at the current position, which is after the package, whatever
-offset the write began at. Upstream never truncates, so it preserves the tail.
+So the operation has **no usable output by either route**. The container file is a prefixed
+archive Word rejects, and the extracted slice carries offsets rebased to the container, so it
+is not a valid package either. Preserving the tail would have kept a capability whose every
+output is broken.
 
-Condition truncation on the write having started at offset zero. Truncating is correct when
-overwriting a whole file and destructive when writing into the middle of someone else's.
+**Refuse a seekable destination whose position is not zero**, before staging anything, raising
+`OSError` — matching the append-mode refusal and every other destination refusal in this module.
+A destination's cursor position is a property of the argument, not of the archive, so
+`PackageLimitError` would mis-type it. A stream whose `tell()` is unsupported stays permitted:
+that is the bare write/flush sink Word confirmed OPENS.
 
-    if start == 0:
-        stream.truncate()
+Keep the truncation gate (`if start == 0`) as defence in depth, and note that
+`_copy_stream_prefix` becomes dead code once nonzero offsets are refused.
 
-Both behaviours are already covered by fixtures: `3-fork-output/03` and `/04` (overwrite a longer
-document — must stay truncated, or they grow a stale tail that Word rejects) and `/07` (container
-— must keep the tail).
+**Consequence for the data-loss defect.** It disappears rather than being fixed: once the write
+always starts at zero, unconditional truncation is correct.
 
 ---
 
@@ -241,13 +248,67 @@ interact with Fix 1 — one member-level legality rule may cover both.
 **The rendering axis.** Numbering, tracked revisions, fields, `compare()`. Zero measurement, and
 a different question: not "did it open" but "did Word draw what the library claims".
 
+**Two further prefixed-archive paths**, owned by the `word-openable-packages` spec rather than
+this one: `patch_save` takes a verbatim byte-copy path on any no-op, which reproduces a prefixed
+original; and `diagnose()` reports a prefixed file as `not-a-zip`, which is false and
+unactionable. Fix 2 makes both unreachable for prefixed input, so they are defence in depth.
+
+## Relationship to the two parallel specs
+
+Three specs were drafted independently from the same Word rounds. They agree on nine of ten
+items — same rules, same files, same reasoning — which is worth stating plainly, because
+independent convergence is the main evidence that the reading of the verdicts is right.
+
+| this spec | `word-oracle-fixes.md` | `word-openable-packages/spec.md` |
+|---|---|---|
+| Fix 1 part names | L2 | — |
+| Fix 2 offset zero | L1 | issue 4 (load check) |
+| Fix 3 prefix collision | L3 | — |
+| Fix 4 image content type | S1 | — |
+| Fix 5 nonzero-offset writes | L4 | write refusal + truncation gate |
+| Fix 6 protection gate | S2, S3 | — |
+| Fix 7 messages | M1–M4 | interface contracts |
+
+**The one disagreement was Fix 5, and this spec was wrong.** Both parallel specs argued for
+refusing the write rather than preserving the tail; the measurement above confirms them.
+
+**Corrections this reconciliation produced, beyond Fix 5:**
+
+- Line numbers cited for `_zipguard.py` in earlier notes (280, 510, 947) came from `main`, where
+  the file is 975 lines. On this branch PR #24 has cut it to 793 and those numbers land on
+  unrelated lines. Refer to functions, not lines.
+- The byte-zero check's placement is load-bearing (above).
+- Two named tests break and must be rewritten (above).
+
+**Suggested ownership, to avoid three threads editing `_zipguard.py`:** this spec takes the load
+check and the read-side leniency fixes; `word-openable-packages` takes the write-side refusal,
+the `patch_save` gate and `diagnose()`; whichever lands first owns the two test rewrites.
+
 ## Order
 
-1. Fix 5 (truncation) — data loss, self-contained, no Word dependency.
-2. Fixes 1, 2, 3 — the leniency bugs, all in `_zipguard.py`, all validated against 83 documents.
-3. Fix 4 — one branch deleted.
-4. Fix 7 — wording.
-5. Fix 6 — largest surface (23 call sites) and carries the open decision above.
+1. Fix 2 (offset zero) — the keystone. Applied alone it also closes the save-path and
+   `patch_save` outcomes, because both read back through `preflight_zip`.
+2. Fixes 1, 3 — the other leniency bugs, same file, all validated against 83 documents.
+3. Fix 5 — the write-side refusal, which after Fix 2 changes the *diagnosis* rather than the
+   outcome: without it the caller gets a complaint about a malformed archive for what is
+   actually a bad destination argument.
+4. Fix 4 — one branch deleted.
+5. Fix 7 — wording.
+6. Fix 6 — largest surface (23 call sites) and carries the open decision above.
+
+**Placement matters for Fix 2.** The byte-zero check must run at the *end* of
+`_preflight_zip_stream`, after `_scan_central_directory`. Measured by the parallel thread:
+placed early it shadows more specific diagnoses, turning two preflight refusals that correctly
+say "central directory is too small for its member count" into a generic byte-zero message.
+
+**Two existing tests encode the disproved assumption** and must be rewritten, not preserved:
+
+- `tests/paper/test_practical_opc_hardening.py::it_validates_the_real_prefix_of_a_nonzero_position_stream`
+  asserts a nonzero-offset save succeeds, preserves the prefix, and reopens. Invert it.
+- `it_restores_a_seekable_stream_after_commit_error` seeks to offset 7 only incidentally. Move it
+  to offset 0 so it still exercises commit rollback.
+
+Applying Fix 2 alone fails exactly these two and nothing else.
 
 ## Test plan
 
