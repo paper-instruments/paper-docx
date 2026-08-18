@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import datetime as dt
 import shutil
+import struct
 import zipfile
 from pathlib import Path
 
@@ -167,6 +168,53 @@ class DescribePackageDiagnosis:
         text = tmp_path / "notes.docx"
         text.write_bytes(b"just some text pretending to be a docx")
         assert diagnose(text).kind == "not-a-zip"
+
+    @staticmethod
+    def _prefixed(source: Path, prefix: bytes) -> bytes:
+        """`source` with `prefix` in front and every ZIP offset rebased."""
+        end_record = struct.Struct("<4s4H2LH")
+        central = struct.Struct("<4s6H3L5H2L")
+        clean = source.read_bytes()
+        body = bytearray(prefix + clean)
+        end_offset = clean.rfind(b"PK\x05\x06")
+        fields = list(end_record.unpack_from(clean, end_offset))
+        central_size, central_offset = fields[5], fields[6]
+        cursor = central_offset + len(prefix)
+        limit = cursor + central_size
+        while cursor < limit:
+            record = central.unpack_from(bytes(body), cursor)
+            struct.pack_into("<L", body, cursor + 42, record[16] + len(prefix))
+            cursor += central.size + record[10] + record[11] + record[12]
+        fields[6] = central_offset + len(prefix)
+        end_record.pack_into(body, end_offset + len(prefix), *fields)
+        return bytes(body)
+
+    @pytest.mark.parametrize(
+        "prefix",
+        [
+            pytest.param(b"# self-extracting stub\n" + b"#" * 40, id="prefix-not-starting-PK"),
+            pytest.param(b"PKSTUB" + b"#" * 58, id="prefix-starting-PK"),
+        ],
+    )
+    def it_diagnoses_an_archive_that_does_not_begin_at_byte_zero(
+        self, tmp_path: Path, prefix: bytes
+    ):
+        """Word refuses a prefixed package; `diagnose` must not call it healthy or non-ZIP.
+
+        Before this guard the two shapes reported differently and both wrongly: a prefix
+        starting with `PK` came back `readable=True, kind="docx"` -- the triage API vouching
+        for a file Word refuses -- and any other prefix came back `not-a-zip`, which is false
+        because the archive is present. Both now land on `unsafe-archive`; no new `kind` value
+        was introduced.
+        """
+        target = tmp_path / "prefixed.docx"
+        target.write_bytes(self._prefixed(fixture_path(MINIMAL), prefix))
+
+        report = diagnose(target)
+
+        assert not report.readable
+        assert report.kind == "unsafe-archive"
+        assert "does not begin" in report.problems[0]
 
     def it_diagnoses_macro_enabled_documents(self, tmp_path: Path):
         source = fixture_path(MINIMAL)
