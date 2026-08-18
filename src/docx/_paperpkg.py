@@ -421,19 +421,31 @@ _CFB_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
 
 def _has_end_of_central_directory(path: Path) -> bool:
-    """Whether an end-of-central-directory record is present anywhere in the tail.
+    """Whether the file ends with a structurally plausible end-of-central-directory record.
 
-    Presence is the only question: a file carrying one is a ZIP whose archive simply does not
-    start at byte 0, which is a different defect from having no ZIP structure at all. Scans the
-    same bounded tail `_zipguard._find_end_record` does, and never parses the record.
+    A file carrying one is a ZIP whose archive simply does not start at byte 0, which is a
+    different defect from having no ZIP structure at all. The record must *account for the rest
+    of the file* — its declared comment length has to reach exactly the end — which is the same
+    rule the preflight applies. Testing for the four signature bytes alone would misread any
+    non-ZIP that happens to contain them: measured, a text file with those bytes planted in its
+    tail was reported as a prefixed archive.
     """
     try:
         size = path.stat().st_size
         with path.open("rb") as stream:
-            stream.seek(max(0, size - (_END_RECORD.size + _MAX_END_COMMENT_BYTES)))
-            return _END_RECORD_SIGNATURE in stream.read()
+            window = min(size, _END_RECORD.size + _MAX_END_COMMENT_BYTES)
+            stream.seek(size - window)
+            tail = stream.read(window)
     except OSError:
         return False
+    cursor = tail.rfind(_END_RECORD_SIGNATURE)
+    while cursor >= 0:
+        if cursor + _END_RECORD.size <= len(tail):
+            comment_length = _END_RECORD.unpack_from(tail, cursor)[7]
+            if cursor + _END_RECORD.size + comment_length == len(tail):
+                return True
+        cursor = tail.rfind(_END_RECORD_SIGNATURE, 0, cursor)
+    return False
 
 
 _MAIN_PART_KINDS = {

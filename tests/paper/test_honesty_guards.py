@@ -216,6 +216,21 @@ class DescribePackageDiagnosis:
         assert report.kind == "unsafe-archive"
         assert "does not begin" in report.problems[0]
 
+    def it_does_not_mistake_stray_footer_bytes_for_a_prefixed_archive(self, tmp_path: Path):
+        """A non-ZIP carrying the footer signature by chance is still `not-a-zip`.
+
+        The prefixed-archive branch keys on an end-of-central-directory record that accounts
+        for the rest of the file, not on the four signature bytes appearing anywhere. Testing
+        for presence alone reported this file as a prefixed archive.
+        """
+        target = tmp_path / "planted.docx"
+        target.write_bytes(b"NOTAZIP" * 500 + b"PK\x05\x06" + b"\x00" * 18 + b"trailing text")
+
+        report = diagnose(target)
+
+        assert not report.readable
+        assert report.kind == "not-a-zip"
+
     def it_diagnoses_macro_enabled_documents(self, tmp_path: Path):
         source = fixture_path(MINIMAL)
         docm = tmp_path / "macros.docm"
