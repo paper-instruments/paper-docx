@@ -282,8 +282,6 @@ rst_epilog = """
 
 .. |CompareFinding| replace:: :class:`.CompareFinding`
 
-.. |ScrubReport| replace:: :class:`.ScrubReport`
-
 .. |ProtectionStatus| replace:: :class:`.ProtectionStatus`
 
 .. |CompositionReport| replace:: :class:`.CompositionReport`

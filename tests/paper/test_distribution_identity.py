@@ -21,7 +21,6 @@ PAPER_ONLY_MODULES = (
     "docx.numbering",
     "docx.protection",
     "docx.revision",
-    "docx.scrubbing",
     "docx.search",
     "docx.story",
     "docx.tableops",

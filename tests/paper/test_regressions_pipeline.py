@@ -148,10 +148,6 @@ class DescribeResolutionRegressions:
         with pytest.raises(UnsupportedStructureError, match="[Ff]allback"):
             document.revisions.accept_all()
         assert document.element.xml == before
-        with pytest.raises(UnsupportedStructureError, match="[Ff]allback"):
-            document.finalize()
-        with pytest.raises(UnsupportedStructureError):
-            document.scrub()  # metadata guard sees fallback markup too
 
     def it_enumerates_a_body_level_section_property_change(self):
         document = docx.Document(str(fixture_path(MINIMAL)))
@@ -178,60 +174,6 @@ class DescribeResolutionRegressions:
         paragraph.append(parse_xml(f"<w:moveToRangeEnd {W} w:id='40'/>"))
         with pytest.raises(UnsupportedStructureError, match="pair"):
             document.revisions.accept_all()
-
-
-class DescribeScrubRegressions:
-    def it_never_fabricates_missing_metadata_or_settings_parts(self, tmp_path):
-        import zipfile
-
-        source = fixture_path(MINIMAL)
-        stripped = tmp_path / "bare.docx"
-        with zipfile.ZipFile(source) as zin, zipfile.ZipFile(stripped, "w") as zout:
-            for name in zin.namelist():
-                if name in ("docProps/core.xml", "word/settings.xml"):
-                    continue
-                blob = zin.read(name)
-                if name == "_rels/.rels":
-                    import re
-
-                    blob = re.sub(rb"<Relationship [^>]*core-properties[^>]*/>", b"", blob)
-                if name == "word/_rels/document.xml.rels":
-                    import re
-
-                    blob = re.sub(rb"<Relationship [^>]*settings[^>]*/>", b"", blob)
-                zout.writestr(name, blob)
-        document = docx.Document(str(stripped))
-        report = document.scrub(rsids=True)
-        assert report.metadata_fields_cleared == []
-        assert report.track_changes_setting_removed is False
-        out = tmp_path / "scrubbed.docx"
-        document.save(str(out))
-        with zipfile.ZipFile(out) as zf:
-            names = set(zf.namelist())
-        assert "docProps/core.xml" not in names  # nothing fabricated
-        assert "word/settings.xml" not in names
-
-    def it_reports_cascade_removed_comment_side_parts(self, tmp_path):
-        from docx.commentops import reply
-
-        document = docx.Document(
-            str(fixture_path("generated/feature-isolated/comments.docx"))
-        )
-        comment = list(document.comments)[0]
-        reply(document, comment, "threading part appears", author="Sweep")
-        source = tmp_path / "with-thread.docx"
-        document.save(str(source))
-
-        from docx.package import diff_package
-
-        reopened = docx.Document(str(source))
-        reopened.finalize()
-        report = reopened.scrub()
-        out = tmp_path / "scrubbed.docx"
-        reopened.save(str(out))
-        diff = diff_package(str(source), str(out))
-        assert set(diff.removed) == set(report.removed_parts)
-        assert any("commentsExtended" in p for p in report.removed_parts)
 
 
 class DescribeCompareRegressions:

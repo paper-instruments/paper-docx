@@ -88,13 +88,11 @@ change, it raises a typed refusal instead of returning an incomplete result.
 - **`docx.formatting`** resolves effective formatting through document defaults,
   styles, and direct formatting, with provenance for each value.
 
-### Reviewing and finalizing
+### Reviewing
 
 - **`doc.revisions`** enumerates and resolves tracked changes across every part:
   insertions, deletions, run and paragraph format changes, table-row revisions,
   and moves. Unresolvable markup is listed by name.
-- **`doc.finalize()` / `doc.scrub()`** accepts or rejects all revisions, then
-  removes reviewing residue and reports exactly what was removed.
 - **`docx.protection`** respects Restrict-Editing. Mutating operations refuse on
   a protected document unless the caller explicitly overrides; the setting is
   preserved in the document.

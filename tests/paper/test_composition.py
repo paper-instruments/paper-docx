@@ -249,7 +249,7 @@ class DescribeInsertBlocksFrom:
             "quite modern", tracked=True, author="Alice Editor"
         )
         destination = docx.Document(str(fixture_path(MINIMAL)))
-        with pytest.raises(UnsupportedStructureError, match="finalize"):
+        with pytest.raises(UnsupportedStructureError, match="accept or reject"):
             insert_blocks_from(
                 destination,
                 source,

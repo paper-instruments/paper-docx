@@ -173,13 +173,6 @@ APPROVED_SIGNATURES = [
     ("docx.controls", "iter_controls", "(document)"),
     ("docx.revision", "Revisions.remaining_unsupported", "(self)"),
     # -- composition, bookmarks, fields, formatting --------------------------
-    ("docx.document", "Document.finalize", "(self, *, revisions='accept')"),
-    (
-        "docx.document",
-        "Document.scrub",
-        "(self, *, comments=True, metadata=True, track_changes_setting=True,"
-        " rsids=False, hidden_text=False)",
-    ),
     ("docx.protection", "protection_status", "(document)"),
     ("docx.protection", "acknowledge_protection", "(document)"),
     (

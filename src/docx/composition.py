@@ -14,8 +14,9 @@ Semantics: styles reconcile by
 numbering always REMAPS to fresh restarted definitions; images copy as new
 parts with fresh rIds; external hyperlinks are recreated; bookmarks rename
 on collision with REF instructions inside the range remapped. Source
-revisions or comments inside the range refuse (finalize/scrub the source
-first); embedded OLE objects and note references refuse (declared).
+revisions or comments inside the range refuse (accept or reject the
+source revisions first; comments in the range also refuse); embedded OLE
+objects and note references refuse (declared).
 """
 
 from __future__ import annotations
@@ -80,8 +81,8 @@ _REFUSED_TAGS = {
     _DATA_BINDING: ("a data-bound content control whose custom XML binding cannot be carried"),
     qn("w:footnoteReference"): "a footnote reference (its note cannot be carried)",
     qn("w:endnoteReference"): "an endnote reference (its note cannot be carried)",
-    qn("w:commentRangeStart"): "a comment anchor (scrub the source's comments first)",
-    qn("w:commentReference"): "a comment anchor (scrub the source's comments first)",
+    qn("w:commentRangeStart"): "a comment anchor (composition cannot carry comments)",
+    qn("w:commentReference"): "a comment anchor (composition cannot carry comments)",
     qn("w:subDoc"): "a subdocument reference",
 }
 
@@ -514,7 +515,7 @@ def _refuse_unsupported_content(range_elements: "List[_Element]") -> None:
             if node.tag in _MARKUP_SCAN_TAGS:
                 raise UnsupportedStructureError(
                     "the source range carries tracked-revision markup;"
-                    " finalize(revisions=...) the source first, then compose"
+                    " accept or reject the source revisions first, then compose"
                 )
             reason = _REFUSED_TAGS.get(node.tag)
             if reason is not None:

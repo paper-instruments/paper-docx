@@ -8,17 +8,19 @@ Provenance for “was this asked for” is `paper-original-plans-and-specs-2026-
 
 ## Change order
 
-Drop the zip-bomb caps. Keep `PackageLimitError` for a broken zip, and the rest of Place Yes. Fix the Defects table. Then the Missing table. Word fixtures stay parked.
+Drop the zip-bomb caps and the two bundled deliver verbs. Keep `PackageLimitError` for a broken zip, and the rest of Place Yes. Fix the Defects table. Then the Missing table. Word fixtures stay parked.
 
 **Drop**
 
 - ~~Every zip-bomb size/count/ratio cap.~~ **Done.** Names gone: `MAX_COMPRESSED_BYTES`, `MAX_MEMBER_COUNT`, `MAX_CENTRAL_DIRECTORY_BYTES`, `MAX_XML_MEMBER_BYTES`, `MAX_BINARY_MEMBER_BYTES`, `MAX_TOTAL_EXPANDED_BYTES`, `MAX_COMPRESSION_RATIO`, `RATIO_ENFORCEMENT_FLOOR_BYTES`. A large but valid `.docx` opens.
 - ~~Stop raising `PackageLimitError` for those caps.~~ **Done.** That class still means corrupt, encrypted, or malformed zip.
+- ~~`Document.scrub` and `Document.finalize`.~~ **Done.** Sugar. Delivery is `Document.revisions.accept_all` / `reject_all`, stock `core_properties`, and the comment APIs. No leftover-markup wrapper on top of accept/reject.
 
 **Keep**
 
 - `PackageLimitError` when the file is not a usable Word zip: corrupt, encrypted, or malformed.
 - Typed refuse on that broken zip, atomic save, roll back a failed edit.
+- Stream `save()`: stage first. Snapshot and restore when the destination can roll back. Write through when it cannot (`"wb"`, pipes). Do not delete the snapshot path. The paper-pptx `"wb"` / pipe crash does not apply here.
 - Every **Place Yes** row.
 
 **Fix**
@@ -27,6 +29,7 @@ Drop the zip-bomb caps. Keep `PackageLimitError` for a broken zip, and the rest 
 - ~~Rollback on `blocks` / `fields` / bookmarks / `Comment.author` / `initials`~~ **Done.** Author/initials use cheap XML rollback.
 - ~~Composition `assert ... or True`~~ **Done.**
 - ~~Mixed-install identity check on Paper-only modules, plus a transitive-clobber CI install~~ **Done.** After upstream overwrites `docx/__init__.py`, `from docx import Document` still loads stock python-docx; run the doctor for that path.
+- Open a `.docx` that has extra bytes after a valid zip end record (signed or watermarked). Take the last parseable end record, like stdlib `zipfile`. Still refuse when there is no end record.
 
 **Missing**
 
@@ -66,8 +69,8 @@ Read **What it does** first. The API column is only the name in the library.
 | On open and save: refuse a broken ZIP with a typed error, write atomically, and roll back a failed edit instead of leaving a half-written file. | zipguard, atomic `save`, transactions, `PaperRefusal` | Package | Yes | Load/save plumbing. Keep. The zip-bomb *size caps* are gone (see Change order). A member that inflates past the size it declared still refuses. |
 | Say why a file will not open: encrypted, template, macros, not Word, damaged ZIP. | `docx.package.diagnose` | Package | Yes | Stock raises untyped errors on bad input. |
 | Show which ZIP parts or visible text changed between two files, or what pending revisions would change if accepted. | `diff_package`, `text_diff`, `pending_changes` | Package | Yes | Proof of what an edit did. Library belongs; not a ritual after every call. |
-| Strip comments and author metadata for a clean outgoing copy. Optional: RSIDs and hidden text. Does not remove Restrict Editing. | `Document.scrub` | Deliver | Yes | Send-clean step, not an everyday edit: strip comments and author names before the file leaves. Keep; already shipped. |
-| Accept or reject every tracked change, then check that none remain, or refuse and undo. | `Document.finalize` | Deliver | Yes | Accept All (or Reject All), then prove the file is not still redlined. If leftover markup remains, refuse and roll back. That check is not something you can do after `accept_all`. Comments and author names are `scrub`, a separate call. |
+| Strip comments and author metadata for a clean outgoing copy. Optional: RSIDs and hidden text. Does not remove Restrict Editing. | `Document.scrub` | Deliver | No | Bundled send-clean verb. Author names are stock `core_properties`. Comments have add, reply, and resolve, not delete. RSIDs and hidden text are not a package job. No bundled deliver verb. |
+| Accept or reject every tracked change, then check that none remain, or refuse and undo. | `Document.finalize` | Deliver | No | Wrapper around `revisions.accept_all` / `reject_all`. Those already refuse unresolvable types. The leftover-markup postcheck is not a second public verb. |
 | See whether Restrict Editing is on, and refuse Paper edits until you override in memory for this session. Cannot turn protection on or strip it from the file. | `docx.protection` | Deliver | Yes | The original plan asked to notice a lock and refuse, never to strip it. A setter to lock a file for a recipient was not asked for (see Missing). |
 | Point at text and ask what Word is actually showing: bold, italic, font, size, color, highlight, alignment, paragraph style. Those can live on the text, on a style, or on the document default; this walks all three and says which one won. If a phrase is half bold and half not, it says mixed. It does not answer spacing, indent, borders, table coloring, or list-number look; those come back as “we did not compute this” instead of a guess. | `docx.formatting` | Edit existing | Yes | The original plan asked for this inspect, and asked it to name what it cannot resolve rather than guess. The short list plus “not computed” is what was asked for, not a half-built inspect. A helper to match nearby formatting when inserting exists, but copy/insert do not call it yet. |
 | Check that `import docx` is this fork, not a mixed install with python-docx. | `paper-docx-doctor` | Package | Yes | Both packages own the import name `docx`. Keep the doctor. Paper-only modules also refuse a mixed install. CI covers both install orders, leftover uninstall, and a dummy package that pulls `python-docx` as a dependency. |
@@ -81,7 +84,7 @@ Jobs the agent still cannot do through the package, so it would unzip and patch 
 
 | What the agent needs to do | Use case | Why the package does not cover it | Found in | Plans |
 | --- | --- | --- | --- | --- |
-| Delete one comment and leave the rest | Review | You can add a comment, reply, mark it resolved, or strip every comment when delivering. You cannot remove a single comment. That still means deleting the range markers and the comments.xml entry by hand. | Code: `commentops` has add/reply/resolve/thread, no delete. | **Not asked.** Original plan is add, reply, resolve only. |
+| Delete one comment and leave the rest | Review | You can add a comment, reply, or mark it resolved. You cannot remove a comment, one or all. That still means deleting the range markers and the comments.xml entry by hand. | Code: `commentops` has add/reply/resolve/thread, no delete. | **Not asked.** Original plan is add, reply, resolve only. |
 | Add a comment that current Word will show and round-trip | Review | Word stores comment identity in extra package parts, not only the comment text. This fork writes the two older parts (`comments.xml` and `commentsExtended.xml`). Without the two newer ones (`commentsIds.xml`, `commentsExtensible.xml`), a comment can fail to appear or fail to round-trip after Word opens the file. | Anthropic `skills/docx/SKILL.md` (helper writes six parts). Code: we only create `commentsExtended`. | **Not asked.** Original plan is the older extra comments part only. The six-part list is from the Anthropic skill, not this folder. |
 | Lock a file for the recipient (read-only, comments only, or forms only) | Deliver | You can see that Restrict Editing is already on, and Paper will refuse to edit (or you can override that refusal in memory for this session). You cannot turn protection *on* for delivery. Authoring a locked file still means writing the lock yourself. | Codex `set_protection.py`. Code: `protection.py` has no setter. | **Not asked.** Plan: report it, never strip it, refuse edits while it is on. No setter. |
 | Replace one existing picture, keep size and position | Edit existing | You can insert a new picture (stock) or copy pictures along when combining documents. You cannot swap the bytes of one picture already in the file without sharing that image part with other shapes. Picture form controls also refuse to be filled. | Anthropic skill (insert/replace images). Codex images task. Code: no replace API; `controls` refuses `picture`. | **Later, if someone asks.** Image swap was parked until a real demand. Not in the v0.11 schedule. |
@@ -108,6 +111,7 @@ These are not new Word jobs. They are holes in APIs that already exist. Source: 
 | No desktop-Word sample files (parked) | Tests use generated files, LibreOffice files, and one Google Docs export. Word-authored tracked changes are still unproven. Needs someone with desktop Word; not this change. | [#12](https://github.com/paper-instruments/paper-docx/pull/12); `tests/paper/fixtures/README.md` |
 | ~~Composition test always passes~~ **Done.**                              | `assert "Heading2" not in report.imported_styles` is a real assertion.                                                                                                                                                                                       | [#12](https://github.com/paper-instruments/paper-docx/pull/12)                |
 | ~~Zip size/count/ratio caps refuse large but valid files~~ **Done.**      | Caps removed. `PackageLimitError` remains for corrupt, encrypted, or malformed zip. A member that inflates past the size it declared is refused while inflating, not after the whole blob is in memory. | `src/docx/_zipguard.py`                                                                          |
+| Extra bytes after a valid zip end record refuse the file | Signing and watermarking tools append after a complete zip. Stock and stdlib open those files. `_find_end_record` requires the end record to consume the whole tail, so we raise `PackageLimitError`. Not a product call; leftover of "unambiguous ZIP reads." Recorded, not implemented. | `src/docx/_zipguard.py` `_find_end_record` |
 
 
 Left in [#12](https://github.com/paper-instruments/paper-docx/pull/12) and not copied here: README claim matrix, Ruff/Pyright CI, ZIP fuzzing, determinism hashes, upstream-sync process. Those are docs/process, not package capability.

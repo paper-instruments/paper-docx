@@ -458,65 +458,6 @@ class DescribeNumberingAudit:
         assert ensure_bullet_definition(document) == replacement_num_id
 
 
-class DescribeHiddenTextScrubbing:
-    def it_removes_style_inherited_vanish_but_honors_direct_false(self):
-        document = docx.Document()
-        style = document.styles.add_style("HiddenAudit", WD_STYLE_TYPE.PARAGRAPH)
-        style.font.hidden = True
-        paragraph = document.add_paragraph(style=style)
-        paragraph.add_run("remove me")
-        visible = paragraph.add_run("keep me")
-        visible.font.hidden = False
-
-        report = document.scrub(
-            comments=False,
-            metadata=False,
-            track_changes_setting=False,
-            hidden_text=True,
-        )
-        assert report.hidden_runs_removed == 1
-        assert "remove me" not in paragraph._p.xml
-        assert "keep me" in paragraph._p.xml
-
-
-class DescribeMetadataScrubbing:
-    def it_clears_core_timestamps_and_revision(self):
-        document = docx.Document()
-        core = document.core_properties
-        core.created = dt.datetime(2020, 1, 2, 3, 4)
-        core.modified = dt.datetime(2021, 2, 3, 4, 5)
-        core.last_printed = dt.datetime(2022, 3, 4, 5, 6)
-        core.revision = 42
-
-        report = document.scrub(
-            comments=False,
-            track_changes_setting=False,
-        )
-
-        assert core.created is None
-        assert core.modified is None
-        assert core.last_printed is None
-        assert core.revision == 0
-        for name in ("created", "modified", "last_printed", "revision"):
-            assert f"core:{name}" in report.metadata_fields_cleared
-
-    def it_refuses_malformed_app_metadata_before_removing_comments(self):
-        from docx.opc.constants import RELATIONSHIP_TYPE as RT
-
-        document = docx.Document()
-        paragraph = document.add_paragraph("commented")
-        document.add_comment(paragraph.runs, text="keep", author="Audit")
-        app_part = document.part.package.part_related_by(RT.EXTENDED_PROPERTIES)
-        app_part._blob = b"<Properties>"  # noqa: SLF001 - malformed fixture
-        before = document.element.xml
-
-        with pytest.raises(UnsupportedStructureError, match="app.xml is malformed"):
-            document.scrub()
-
-        assert document.element.xml == before
-        assert len(document.comments) == 1
-
-
 class DescribeFormatOnlyProtection:
     def it_reports_and_enforces_formatting_only_protection(self):
         from docx.protection import acknowledge_protection, protection_status
@@ -539,15 +480,7 @@ class DescribeFormatOnlyProtection:
             find_one(document, "protected formatting").replace("changed")
 
         acknowledge_protection(document)
-        report = document.scrub(
-            comments=False, metadata=False, track_changes_setting=False
-        )
-        assert report.document_protection == {
-            "edit": None,
-            "enforced": True,
-            "note": "reported, never removed (docx.protection)",
-            "formatting": True,
-        }
+        find_one(document, "protected formatting").replace("changed")
 
 
 class DescribeFormattingDisclosure:

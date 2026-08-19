@@ -17,7 +17,6 @@ from docx.errors import DocumentProtectedError, TargetNotFoundError, Unsupported
 from docx.oxml import OxmlElement, parse_xml
 from docx.oxml.ns import nsdecls, qn
 from docx.search import Span, find_one, replace_all
-from docx.shared import Inches
 
 
 class DescribePracticalReviewHardening:
@@ -145,45 +144,6 @@ class DescribePracticalReviewHardening:
         with pytest.raises(UnsupportedStructureError, match="locked"):
             control.set_value("changed")
 
-    def it_refuses_hidden_scrub_that_would_hollow_a_bookmark(self):
-        document = docx.Document()
-        paragraph = document.add_paragraph()
-        paragraph._p.append(parse_xml(f'<w:bookmarkStart {nsdecls("w")} w:id="1" w:name="Term"/>'))
-        run = paragraph.add_run("hidden")
-        run.font.hidden = True
-        paragraph._p.append(parse_xml(f'<w:bookmarkEnd {nsdecls("w")} w:id="1"/>'))
-
-        with pytest.raises(UnsupportedStructureError, match="hollow out.*bookmark"):
-            document.scrub(
-                comments=False,
-                metadata=False,
-                track_changes_setting=False,
-                hidden_text=True,
-            )
-        assert paragraph.text == "hidden"
-
-    def it_refuses_a_comment_collection_after_scrub(self):
-        document = docx.Document()
-        document.add_paragraph("target")
-        comments = document.comments
-        comments.add_comment("review", author="A")
-        document.scrub(metadata=False, track_changes_setting=False)
-
-        with pytest.raises(TargetNotFoundError, match="stale"):
-            comments.add_comment("late", author="A")
-
-    def it_refuses_a_cached_comment_after_scrub(self):
-        document = docx.Document()
-        comment = document.comments.add_comment("review", author="A")
-        document.scrub(metadata=False, track_changes_setting=False)
-
-        with pytest.raises(TargetNotFoundError, match="stale"):
-            comment.add_paragraph("late")
-        with pytest.raises(TargetNotFoundError, match="stale"):
-            comment.add_table(1, 1, Inches(1))
-        with pytest.raises(TargetNotFoundError, match="stale"):
-            comment.author = "Late Author"
-
     def it_applies_document_protection_to_inherited_comment_mutators(self):
         document = docx.Document()
         comments = document.comments
@@ -242,68 +202,3 @@ class DescribePracticalReviewHardening:
             reply(document, comment, "late", author="B")
 
         assert len(document.comments) == 1
-
-    def it_honors_control_locks_when_scrubbing_hidden_text(self):
-        document = docx.Document()
-        document.element.body.insert(
-            0,
-            parse_xml(
-                f'<w:p {nsdecls("w")}><w:sdt><w:sdtPr>'
-                '<w:text/><w:lock w:val="contentLocked"/></w:sdtPr>'
-                '<w:sdtContent><w:r><w:rPr><w:vanish/></w:rPr>'
-                '<w:t>hidden</w:t></w:r></w:sdtContent></w:sdt></w:p>'
-            ),
-        )
-
-        with pytest.raises(UnsupportedStructureError, match="locked"):
-            document.scrub(
-                comments=False,
-                metadata=False,
-                track_changes_setting=False,
-                hidden_text=True,
-            )
-
-    def it_refuses_hidden_scrub_inside_alternate_content(self):
-        document = docx.Document()
-        document.element.body.insert(
-            0,
-            parse_xml(
-                f'<w:p {nsdecls("w", "w14")} '
-                'xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006">'
-                '<mc:AlternateContent>'
-                '<mc:Choice Requires="w14"><w:r><w:rPr><w:vanish/></w:rPr>'
-                '<w:t>choice hidden</w:t></w:r></mc:Choice>'
-                '<mc:Fallback><w:r><w:rPr><w:vanish/></w:rPr>'
-                '<w:t>fallback hidden</w:t></w:r></mc:Fallback>'
-                '</mc:AlternateContent></w:p>'
-            ),
-        )
-
-        with pytest.raises(UnsupportedStructureError, match="AlternateContent"):
-            document.scrub(
-                comments=False,
-                metadata=False,
-                track_changes_setting=False,
-                hidden_text=True,
-            )
-
-        xml = document.element.xml
-        assert "choice hidden" in xml
-        assert "fallback hidden" in xml
-
-    def it_does_not_let_an_empty_run_mask_bookmark_hollowing(self):
-        document = docx.Document()
-        paragraph = document.add_paragraph()
-        paragraph._p.append(parse_xml(f'<w:bookmarkStart {nsdecls("w")} w:id="1" w:name="Term"/>'))
-        hidden = paragraph.add_run("hidden")
-        hidden.font.hidden = True
-        paragraph.add_run("")
-        paragraph._p.append(parse_xml(f'<w:bookmarkEnd {nsdecls("w")} w:id="1"/>'))
-
-        with pytest.raises(UnsupportedStructureError, match="hollow out.*bookmark"):
-            document.scrub(
-                comments=False,
-                metadata=False,
-                track_changes_setting=False,
-                hidden_text=True,
-            )
