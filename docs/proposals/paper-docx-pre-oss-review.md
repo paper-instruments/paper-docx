@@ -38,7 +38,7 @@ Drop the zip-bomb caps and the two bundled deliver verbs. Keep `PackageLimitErro
 - ~~Lock a file for the recipient~~ **Done.** `set_protection`.
 - ~~Replace one existing picture~~ **Done.** `Drawing.replace_picture`. Picture form controls still refuse.
 - ~~Create or retarget a hyperlink~~ **Done.** `add_hyperlink`, `Hyperlink.address`.
-- Auto-number caption field
+- ~~Auto-number caption field~~ **Done.** `add_caption`.
 - Add a footnote or endnote
 - Fill a data-bound form control
 - Append and keep the source letterhead
@@ -63,7 +63,7 @@ Read **What it does** first. The API column is only the name in the library.
 | Apply a real Word numbered or bulleted list, not fake Unicode bullets. Restart numbering when needed. | `docx.numbering` | Structured | Yes | Needed when inserting blocks into existing lists. |
 | Fill a form control: text, checkbox, dropdown, or date. | `docx.controls` | Structured | Yes | Stock cannot fill content controls safely. Data-bound controls were asked to refuse, not to fill. Picture controls also refuse (see Missing). |
 | Put a bookmark on a phrase, list bookmarks, or remove the markers (the text stays). | `docx.bookmarks` | Structured | Yes | Anchors for cross-references and TOC in existing files. |
-| Insert a page number, date, cross-reference, or table of contents. The displayed value is computed when Word opens the file, not here. | `docx.fields` | Structured | Yes | Stock is weak; agents otherwise hand-edit field XML. Page numbers, dates, cross-references, and TOC were asked for. Auto-number captions (Figure 1, 2, …) were not (see Missing). |
+| Insert a page number, date, cross-reference, table of contents, or auto-number caption. The displayed value is computed when Word opens the file, not here. | `docx.fields` | Structured | Yes | Stock is weak; agents otherwise hand-edit field XML. Captions use `add_caption` (SEQ). |
 | Copy a range, or a whole document, into another file, keeping styles, lists, and images. | `docx.composition` | Combine | Yes | Cross-file copy is where styles and relationships corrupt. Headers stay those of the destination file; keeping the source letterhead was left for later. Will not copy comments, pending revisions, or footnotes. |
 | Save an edited file without rewriting ZIP parts that did not change. | `docx.package.patch_save` | Package | Yes | Stock save rewrites the whole ZIP, which noisily diffs and can break unrelated parts. |
 | On open and save: refuse a broken ZIP with a typed error, write atomically, and roll back a failed edit instead of leaving a half-written file. | zipguard, atomic `save`, transactions, `PaperRefusal` | Package | Yes | Load/save plumbing. Keep. The zip-bomb *size caps* are gone (see Change order). A member that inflates past the size it declared still refuses. |
@@ -89,7 +89,7 @@ Jobs the agent could not do through the package. Stacked follow-ups add these AP
 | ~~Lock a file for the recipient (read-only, comments only, or forms only)~~ **Done.** | Deliver | Could report Restrict Editing and refuse edits. Could not turn it on. | `set_protection` | **Not asked.** Plan: report it, never strip it, refuse edits while it is on. No setter. |
 | ~~Replace one existing picture, keep size and position~~ **Done.** | Edit existing | Insert (stock) or copy on combine. No in-place swap that avoids sharing the image part. Picture form controls still refuse. | `Drawing.replace_picture` | **Later, if someone asks.** Image swap was parked until a real demand. |
 | ~~Turn a phrase into a hyperlink, or change where an existing link goes~~ **Done.** | Edit existing, review | URL was read-only. Create/retarget was XML. | `add_hyperlink`, `Hyperlink.address` | **Later, if someone asks.** The plan asked to edit text *inside* an existing link, not to create or retarget one. |
-| Caption a figure or table so numbers update (Figure 1, Figure 2, …) | Structured | Bookmark plus REF is not a SEQ caption field. | | **Not asked.** Fields in the plan are page numbers, date, cross-references, and TOC. |
+| ~~Caption a figure or table so numbers update (Figure 1, Figure 2, …)~~ **Done.** | Structured | Bookmark plus REF is not a SEQ caption field. | `add_caption` | **Not asked.** Fields in the plan are page numbers, date, cross-references, and TOC. |
 | Add a footnote or endnote | Edit existing | Existing notes could be read and edited. New notes were not created. | | **Explicitly out.** Read is in. Creating notes was deferred until a legal or academic customer asked. |
 | Fill a form field whose value lives in Word's hidden custom XML | Structured | Surface fill would vanish on Word open. The package used to refuse. | | **Asked as refuse.** Intentional no in the original plan. |
 | Append another document and keep *its* letterhead | Combine | Default append keeps destination headers. | | **Asked as future.** Destination headers on purpose; keeping the source letterhead was left for later. |

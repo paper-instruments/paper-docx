@@ -206,6 +206,11 @@ APPROVED_SIGNATURES = [
         "(paragraph, *, bookmark, kind='text')",
     ),
     ("docx.fields", "insert_toc_after", "(document, anchor, *, levels=(1, 3))"),
+    (
+        "docx.fields",
+        "add_caption",
+        "(paragraph, *, label='Figure', description='')",
+    ),
     ("docx.links", "add_hyperlink", "(document, span, address)"),
     ("docx.drawing", "Drawing.replace_picture", "(self, image_descriptor)"),
     ("docx.formatting", "format_of", "(target)"),
