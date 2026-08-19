@@ -10,7 +10,9 @@ import pytest
 from lxml import etree
 
 import docx
+from docx.bookmarks import create_bookmark
 from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
+from docx.composition import CompositionReport, _copy_letterhead, append_document
 from docx.controls import _part_root, get_control, set_control_value
 from docx.drawing import Drawing
 from docx.errors import (
@@ -20,8 +22,10 @@ from docx.errors import (
     UnsupportedStructureError,
 )
 from docx.fields import add_caption
+from docx.enum.style import WD_STYLE_TYPE
 from docx.links import add_hyperlink
 from docx.notes import add_endnote, add_footnote
+from docx.numbering import apply_numbering, ensure_decimal_definition, list_numbering
 from docx.opc.constants import CONTENT_TYPE as CT
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.opc.packuri import PackURI
@@ -734,3 +738,252 @@ class DescribeDataBoundControls:
                 store = part._element
         ns = {"ns0": "http://example.com/form"}
         assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"
+
+
+class DescribeSourceLetterhead:
+    def it_copies_source_headers_when_requested(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.sections[0].header.paragraphs[0].text = "Source letterhead"
+        append_document(destination, source, headers="source")
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert "Source letterhead" in reopened.sections[-1].header.paragraphs[0].text
+
+    def it_copies_header_images_onto_the_header_part(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.sections[0].header.paragraphs[0].add_run().add_picture(io.BytesIO(_bmp(0, 128, 0)))
+        append_document(destination, source, headers="source")
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        header = reopened.sections[-1].header
+        blips = header._element.findall(".//" + qn("a:blip"))
+        assert blips
+        r_id = blips[0].get(qn("r:embed"))
+        assert r_id in header.part.rels
+        assert header.part.rels[r_id].reltype == RT.IMAGE
+
+    def it_copies_header_hyperlinks_onto_the_header_part(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.sections[0].header.paragraphs[0].text = "SourceHeaderLink"
+        span = find_one(source, "SourceHeaderLink", story="word/header1.xml")
+        add_hyperlink(source, span, "https://example.com/letterhead")
+        append_document(destination, source, headers="source")
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        header = reopened.sections[-1].header
+        addresses = [
+            hyperlink.address
+            for paragraph in header.paragraphs
+            for hyperlink in paragraph.hyperlinks
+        ]
+        assert "https://example.com/letterhead" in addresses
+        r_ids = [
+            node.get(qn("r:id"))
+            for node in header._element.findall(".//" + qn("w:hyperlink"))
+        ]
+        assert r_ids and r_ids[0]
+        assert r_ids[0] in header.part.rels
+        assert header.part.rels[r_ids[0]].reltype == RT.HYPERLINK
+        assert header.part.rels[r_ids[0]].target_ref == "https://example.com/letterhead"
+
+    def it_turns_on_even_page_headers_when_the_source_uses_them(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.settings.odd_and_even_pages_header_footer = True
+        source.sections[0].even_page_header.paragraphs[0].text = "Even letterhead"
+        append_document(destination, source, headers="source")
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert reopened.settings.odd_and_even_pages_header_footer
+        assert "Even letterhead" in reopened.sections[-1].even_page_header.paragraphs[0].text
+
+    def it_copies_an_even_header_the_last_source_section_inherits(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.settings.odd_and_even_pages_header_footer = True
+        source.sections[0].even_page_header.paragraphs[0].text = "Inherited even"
+        source.add_section()
+        assert source.sections[-1].even_page_header.is_linked_to_previous
+        _copy_letterhead(
+            destination, source, CompositionReport(), len(destination.sections)
+        )
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert "Inherited even" in reopened.sections[-1].even_page_header.paragraphs[0].text
+
+    def it_refuses_even_odd_when_the_destination_has_more_sections(self):
+        destination = _doc()
+        destination.add_section()
+        source = _doc()
+        source.settings.odd_and_even_pages_header_footer = True
+        source.sections[0].even_page_header.paragraphs[0].text = "Even letterhead"
+        with pytest.raises(UnsupportedStructureError, match="document-wide"):
+            append_document(destination, source, headers="source")
+
+    def it_allows_even_odd_when_only_the_source_gained_sections(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        source.settings.odd_and_even_pages_header_footer = True
+        source.sections[0].even_page_header.paragraphs[0].text = "Even letterhead"
+        source.add_section()
+        for child in list(source.sections[0]._sectPr):
+            if child.tag in (qn("w:headerReference"), qn("w:footerReference")):
+                source.sections[0]._sectPr.remove(child)
+        append_document(destination, source, headers="source")
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert reopened.settings.odd_and_even_pages_header_footer
+
+    def it_imports_a_custom_header_style(self, tmp_path: Path):
+        destination = _doc()
+        source = _doc()
+        style = source.styles.add_style("LetterheadBrand", WD_STYLE_TYPE.PARAGRAPH)
+        style.font.italic = True
+        header = source.sections[0].header.paragraphs[0]
+        header.style = style
+        header.text = "Source letterhead"
+        report = append_document(destination, source, headers="source")
+        assert "LetterheadBrand" in report.imported_styles
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert reopened.sections[-1].header.paragraphs[0].style.name == "LetterheadBrand"
+
+    def it_remaps_header_numbering(self, tmp_path: Path):
+        destination = _doc()
+        ensure_decimal_definition(destination)
+        source = _doc()
+        source_num_id = ensure_decimal_definition(source)
+        header = source.sections[0].header.paragraphs[0]
+        header.text = "Header item"
+        apply_numbering(header, num_id=source_num_id)
+        report = append_document(destination, source, headers="source")
+        assert source_num_id in report.numbering_map
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        copied = [
+            item
+            for item in list_numbering(reopened).numbered_paragraphs
+            if item.text == "Header item"
+        ]
+        assert copied
+        assert copied[0].num_id == report.numbering_map[source_num_id]
+
+    def it_reuses_a_body_numbering_remap_in_the_header(self, tmp_path: Path):
+        destination = _doc()
+        ensure_decimal_definition(destination)
+        source = _doc()
+        source_num_id = ensure_decimal_definition(source)
+        apply_numbering(source.add_paragraph("Body item"), num_id=source_num_id)
+        header = source.sections[0].header.paragraphs[0]
+        header.text = "Header item"
+        apply_numbering(header, num_id=source_num_id)
+        report = append_document(destination, source, headers="source")
+        new_id = report.numbering_map[source_num_id]
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        numbered = list_numbering(reopened).numbered_paragraphs
+        body_item = next(item for item in numbered if "Body item" in item.text)
+        header_item = next(item for item in numbered if item.text == "Header item")
+        assert body_item.num_id == header_item.num_id == new_id
+
+    def it_refuses_a_note_mark_in_the_source_letterhead(self):
+        destination = _doc()
+        source = _doc()
+        source.sections[0].header.paragraphs[0].text = "Source letterhead"
+        source.sections[0].header.paragraphs[0].add_run()._r.append(
+            parse_xml(f'<w:footnoteReference {nsdecls("w")} w:id="1"/>')
+        )
+        with pytest.raises(UnsupportedStructureError, match="footnote"):
+            append_document(destination, source, headers="source")
+
+    def it_renames_a_header_bookmark_that_collides_with_the_destination(self):
+        destination = _doc()
+        create_bookmark(destination, find_one(destination, "perfectly ordinary"), "SharedMark")
+        source = _doc()
+        source.sections[0].header.paragraphs[0].text = "HeaderMark"
+        create_bookmark(
+            source,
+            find_one(source, "HeaderMark", story="word/header1.xml"),
+            "SharedMark",
+        )
+        report = append_document(destination, source, headers="source")
+        assert report.bookmarks_renamed["SharedMark"] != "SharedMark"
+
+    def it_reuses_a_body_style_remap_in_the_header(self, tmp_path: Path):
+        destination = _doc()
+        dest_style = destination.styles.add_style("HouseTerm", WD_STYLE_TYPE.PARAGRAPH)
+        dest_style.font.bold = True
+        source = _doc()
+        source_style = source.styles.add_style("HouseTerm", WD_STYLE_TYPE.PARAGRAPH)
+        source_style.font.italic = True
+        source.add_paragraph("Body branded", style="HouseTerm")
+        header = source.sections[0].header.paragraphs[0]
+        header.style = source_style
+        header.text = "Header branded"
+        report = append_document(
+            destination, source, headers="source", styles="import_renamed"
+        )
+        assert report.renamed_styles == {"HouseTerm": "HouseTerm (imported)"}
+        assert [style.name for style in destination.styles].count(
+            "HouseTerm (imported)"
+        ) == 1
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        body = next(p for p in reopened.paragraphs if "Body branded" in p.text)
+        copied_header = reopened.sections[-1].header.paragraphs[0]
+        assert body.style.name == copied_header.style.name == "HouseTerm (imported)"
+
+    def it_remaps_header_refs_to_body_bookmark_renames(self):
+        destination = _doc()
+        create_bookmark(
+            destination, find_one(destination, "perfectly ordinary"), "SharedMark"
+        )
+        source = _doc()
+        source.add_paragraph("Source body mark")
+        create_bookmark(source, find_one(source, "Source body mark"), "SharedMark")
+        header = source.sections[0].header.paragraphs[0]
+        header._p.append(
+            parse_xml(
+                f'<w:fldSimple {nsdecls("w")} w:instr=" REF SharedMark \\h ">'
+                "<w:r><w:t>see mark</w:t></w:r></w:fldSimple>"
+            )
+        )
+        header._p.append(
+            parse_xml(
+                f'<w:hyperlink {nsdecls("w")} w:anchor="SharedMark">'
+                "<w:r><w:t>jump</w:t></w:r></w:hyperlink>"
+            )
+        )
+        report = append_document(destination, source, headers="source")
+        renamed = report.bookmarks_renamed["SharedMark"]
+        assert renamed != "SharedMark"
+        header_xml = destination.sections[-1].header._element.xml
+        assert f" REF {renamed} " in header_xml
+        assert f'w:anchor="{renamed}"' in header_xml
+
+    def it_does_not_apply_source_first_page_headers_to_destination_pages(
+        self, tmp_path: Path
+    ):
+        destination = _doc()
+        destination.sections[0].header.paragraphs[0].text = "Dest running"
+        source = _doc()
+        source.sections[0].header.paragraphs[0].text = "Source running"
+        source.sections[0].different_first_page_header_footer = True
+        source.sections[0].first_page_header.paragraphs[0].text = "Source first page"
+        report = append_document(destination, source, headers="source")
+        assert any(
+            finding.kind == "letterhead_first_page_skipped"
+            for finding in report.findings
+        )
+        reopened = save_and_reopen(destination, tmp_path / "out.docx")
+        assert not reopened.sections[-1].different_first_page_header_footer
+        header_text = reopened.sections[-1].header.paragraphs[0].text
+        assert "Source running" in header_text
+        assert "Source first page" not in header_text
+
+    def it_arms_letterhead_fields_for_update(self):
+        destination = _doc()
+        source = _doc()
+        source.sections[0].header.paragraphs[0]._p.append(
+            parse_xml(
+                f'<w:fldSimple {nsdecls("w")} w:instr=" PAGE ">'
+                "<w:r><w:t>1</w:t></w:r></w:fldSimple>"
+            )
+        )
+        append_document(destination, source, headers="source")
+        update = destination.settings.element.find(qn("w:updateFields"))
+        assert update is not None
+        assert update.get(qn("w:val")) == "true"

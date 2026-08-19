@@ -30,6 +30,7 @@ from docx._guard import check_install
 from docx._ownership import require_anchor_owner
 from docx._transaction import rollback_on_error
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
+from docx.fields import _set_update_fields_on_open
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
 from docx.protection import _refuse_if_protected
@@ -54,6 +55,7 @@ _NAME = qn("w:name")
 _VAL = qn("w:val")
 _INSTR_TEXT = qn("w:instrText")
 _FLD_SIMPLE = qn("w:fldSimple")
+_FLD_CHAR = qn("w:fldChar")
 _INSTR = qn("w:instr")
 _BLIP = qn("a:blip")
 # VML (legacy image markup); its prefix is not in the upstream nsmap
@@ -85,6 +87,14 @@ _REFUSED_TAGS = {
     qn("w:commentReference"): "a comment anchor (composition cannot carry comments)",
     qn("w:subDoc"): "a subdocument reference",
 }
+
+
+def _contains_fields(elements) -> bool:
+    return any(
+        True
+        for element in elements
+        for _node in element.iter(_FLD_SIMPLE, _FLD_CHAR)
+    )
 
 
 @dataclass(frozen=True)
@@ -176,17 +186,23 @@ def append_document(
     *,
     section: str = "new_page",
     styles: str = "match_by_name",
+    headers: str = "destination",
 ) -> CompositionReport:
     """Append `source`'s whole body to `document`.
 
-    Keeps the destination's headers/footers and authors no new
+    Keeps the destination's headers/footers by default and authors no new
     `w:sectPr`: `section="new_page"` prefixes the appended content with a
-    page break; `"continuous"` appends flush. (Keeping the source's headers
-    is a declared future mode.)
+    page break; `"continuous"` appends flush. Pass `headers="source"` to
+    copy the source letterhead onto the destination's last section.
+    First-page headers cannot target the appended content (they apply to
+    that section's first page, which already holds destination body) and
+    are skipped.
     """
     _validate_styles_mode(styles)
     if section not in ("new_page", "continuous"):
         raise ValueError(f"section must be 'new_page' or 'continuous', got {section!r}")
+    if headers not in ("destination", "source"):
+        raise ValueError(f"headers must be 'destination' or 'source', got {headers!r}")
     _refuse_if_protected(document, "append a document")
     range_elements = [child for child in source.element.body if child.tag != _SECT_PR]
     if not range_elements:
@@ -194,6 +210,7 @@ def append_document(
     destination_blocks = [child for child in document.element.body if child.tag in _BODY_BLOCK_TAGS]
     if not destination_blocks:
         raise TargetNotFoundError("the destination document body has no blocks")
+    dest_section_count = len(document.sections)
     with rollback_on_error(document):
         report = _compose(
             document,
@@ -211,12 +228,100 @@ def append_document(
             run.append(page_break)
             break_paragraph.append(run)
             destination_blocks[-1].addnext(break_paragraph)
+        if headers == "source":
+            _copy_letterhead(document, source, report, dest_section_count, styles)
         return report
 
 
 def _validate_styles_mode(styles: str) -> None:
     if styles not in ("match_by_name", "import_renamed"):
         raise ValueError(f"styles must be 'match_by_name' or 'import_renamed', got {styles!r}")
+
+
+def _copy_letterhead(
+    document: "Document",
+    source: "Document",
+    report: CompositionReport,
+    dest_section_count: int,
+    styles_mode: str = "match_by_name",
+) -> None:
+    dest_section = document.sections[-1]
+    src_section = source.sections[-1]
+    source_even = source.settings.odd_and_even_pages_header_footer
+    dest_even = document.settings.odd_and_even_pages_header_footer
+    if source_even != dest_even and dest_section_count > 1:
+        raise UnsupportedStructureError(
+            "even/odd headers are a document-wide setting; destination has"
+            " more than one section. Nothing was changed"
+        )
+    document.settings.odd_and_even_pages_header_footer = source_even
+    if src_section.different_first_page_header_footer:
+        report.findings.append(
+            CompositionFinding(
+                kind="letterhead_first_page_skipped",
+                detail=(
+                    "first-page headers apply to the destination section's"
+                    " first page, not the appended content; the source"
+                    " first-page letterhead was not copied"
+                ),
+            )
+        )
+    dest_section.different_first_page_header_footer = False
+    pairs = (
+        (src_section.header, dest_section.header),
+        (src_section.footer, dest_section.footer),
+        (src_section.even_page_header, dest_section.even_page_header),
+        (src_section.even_page_footer, dest_section.even_page_footer),
+    )
+    letterhead_has_fields = False
+    for src_hf, dest_hf in pairs:
+        src_defined = _defined_header_footer(src_hf)
+        if src_defined is None:
+            continue
+        dest_hf.is_linked_to_previous = False
+        source_children = list(src_defined._element)  # noqa: SLF001
+        _refuse_unsupported_content(source_children)
+        _refuse_malformed_numeric_ids(document, source_children)
+        _preflight_relationships(src_defined.part, source_children)
+        _refuse_unloadable_media(src_defined.part, source_children)
+        chained = _chained_source_definitions(source, source_children)
+        numbering_plan = _preflight_numbering(
+            document, source, source_children + chained
+        )
+        dest_root = dest_hf._element  # noqa: SLF001
+        for child in list(dest_root):
+            dest_root.remove(child)
+        clones = [copy.deepcopy(child) for child in source_children]
+        if _contains_fields(clones):
+            letterhead_has_fields = True
+        imported_definitions = _reconcile_styles(
+            document, source, clones, styles_mode, report
+        )
+        _remap_numbering(
+            document, clones + imported_definitions, numbering_plan, report
+        )
+        _copy_media(dest_hf.part, src_defined.part, clones, report)
+        _recreate_hyperlinks(dest_hf.part, src_defined.part, clones, report)
+        _reconcile_bookmarks(document, clones, report)
+        _reallocate_sdt_ids(document, clones)
+        for clone in clones:
+            dest_root.append(clone)
+    if letterhead_has_fields:
+        _set_update_fields_on_open(document)
+
+
+def _defined_header_footer(hf):
+    """The header/footer that Word actually shows for this slot.
+
+    Walk `is_linked_to_previous` without touching `_element`, which would
+    create a part on the source document.
+    """
+    current = hf
+    while current is not None:
+        if not current.is_linked_to_previous:
+            return current
+        current = current._prior_headerfooter  # noqa: SLF001
+    return None
 
 
 def _source_range(source: "Document", start_anchor, end_anchor, count: int) -> "List[_Element]":
@@ -299,9 +404,7 @@ def _compose(
     )
 
     report = CompositionReport()
-    has_fields = any(
-        True for element in range_elements for _node in element.iter(_FLD_SIMPLE, qn("w:fldChar"))
-    )
+    has_fields = _contains_fields(range_elements)
     # ALL refusal conditions run before any mutation (refusal atomicity):
     # importing styles/numbering/media first would leave orphaned
     # definitions behind when the destination anchor turns out invalid
@@ -319,10 +422,10 @@ def _compose(
         _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
     _refuse_malformed_numeric_ids(document, range_elements)
     _preflight_bookmark_references(source, range_elements)
-    _preflight_relationships(source, range_elements)
+    _preflight_relationships(source.part, range_elements)
     chained_definitions = _chained_source_definitions(source, range_elements)
     numbering_plan = _preflight_numbering(document, source, range_elements + chained_definitions)
-    _refuse_unloadable_media(source, range_elements)
+    _refuse_unloadable_media(source.part, range_elements)
 
     clones = [copy.deepcopy(element) for element in range_elements]
     imported_definitions = _reconcile_styles(document, source, clones, styles_mode, report)
@@ -334,16 +437,14 @@ def _compose(
         numbering_plan,
         report,
     )
-    _copy_media(document, source, clones, report)
-    _recreate_hyperlinks(document, source, clones, report)
+    _copy_media(document.part, source.part, clones, report)
+    _recreate_hyperlinks(document.part, source.part, clones, report)
     _reconcile_bookmarks(document, clones, report)
     _reallocate_sdt_ids(document, clones)
 
     _pad_adjacent_tables(anchor_p, clones)
     _insert_after(anchor_p, clones)
     if has_fields:
-        from docx.fields import _set_update_fields_on_open
-
         _set_update_fields_on_open(document)
     report.inserted_blocks = len(clones)
     report.declared_parts = [
@@ -373,7 +474,7 @@ def _chained_source_definitions(source: "Document", elements: "List[_Element]") 
     ]
 
 
-def _preflight_relationships(source: "Document", range_elements: "List[_Element]") -> None:
+def _preflight_relationships(source_part, range_elements: "List[_Element]") -> None:
     """Refuse every relationship the composition pipeline cannot remap."""
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
@@ -385,7 +486,7 @@ def _preflight_relationships(source: "Document", range_elements: "List[_Element]
                     or attribute == _OFFICE_REL_ID
                 ):
                     continue
-                rel = source.part.rels.get(r_id)
+                rel = source_part.rels.get(r_id)
                 if node.tag == _BLIP and attribute == _R_EMBED:
                     if rel is not None and rel.reltype == RT.IMAGE and not rel.is_external:
                         continue
@@ -470,7 +571,7 @@ def _refuse_relationship(node, attribute, r_id, rel, expected=None) -> None:
     )
 
 
-def _refuse_unloadable_media(source: "Document", range_elements: "List[_Element]") -> None:
+def _refuse_unloadable_media(source_part, range_elements: "List[_Element]") -> None:
     """Pre-mutation check: every image in the range must be re-embeddable,
     or _copy_media would raise AFTER styles/numbering were already imported
     (refusal atomicity)."""
@@ -483,7 +584,7 @@ def _refuse_unloadable_media(source: "Document", range_elements: "List[_Element]
             r_id = node.get(attr)
             if not r_id:
                 continue
-            rel = source.part.rels.get(r_id)
+            rel = source_part.rels.get(r_id)
             if rel is None or rel.is_external:
                 raise UnsupportedStructureError(
                     f"image relationship {r_id!r} changed after composition"
@@ -664,6 +765,9 @@ def _reconcile_styles(
     to_import: "List[Tuple[str, _Element]]" = []
     taken_ids = set(destination_by_id)  # incl. ids allocated THIS batch
     for style_id in wanted:
+        if style_id in report.style_map:
+            style_map[style_id] = report.style_map[style_id]
+            continue
         definition = source_by_id[style_id]
         name_element = definition.find(qn("w:name"))
         name = name_element.get(_VAL) if name_element is not None else style_id
@@ -705,7 +809,7 @@ def _reconcile_styles(
                 value = node.get(_VAL)
                 if value in style_map and style_map[value] != value:
                     node.set(_VAL, style_map[value])
-    report.style_map = style_map
+    report.style_map.update(style_map)
     if report.renamed_styles:
         _remap_styleref_fields(clones, report.renamed_styles)
     return [definition for _new_id, definition in to_import]
@@ -968,6 +1072,11 @@ def _remap_numbering(
     for remap in plan.remaps:
         if remap.source_num_id not in referenced:
             continue
+        if remap.source_num_id in report.numbering_map:
+            numbering_map[remap.source_num_id] = report.numbering_map[
+                remap.source_num_id
+            ]
+            continue
         abstract_clone = copy.deepcopy(remap.source_abstract)
         abstract_clone.set(qn("w:abstractNumId"), str(remap.destination_abstract_id))
         # nsid/tmpl uniqueness is advisory; leaving them is Word-tolerated
@@ -991,7 +1100,7 @@ def _remap_numbering(
             value = num_id_element.get(_VAL)
             if value and int(value) in numbering_map:
                 num_id_element.set(_VAL, str(numbering_map[int(value)]))
-    report.numbering_map = numbering_map
+    report.numbering_map.update(numbering_map)
 
 
 # ---------------------------------------------------------------------------
@@ -1000,8 +1109,8 @@ def _remap_numbering(
 
 
 def _copy_media(
-    document: "Document",
-    source: "Document",
+    dest_part,
+    source_part,
     clones: "List[_Element]",
     report: CompositionReport,
 ) -> None:
@@ -1015,24 +1124,24 @@ def _copy_media(
             if not r_id:
                 continue
             if r_id not in rel_map:
-                rel = source.part.rels.get(r_id)
+                rel = source_part.rels.get(r_id)
                 if rel is None or rel.is_external or rel.reltype != RT.IMAGE:
                     raise UnsupportedStructureError(
                         f"image relationship {r_id!r} changed after composition"
                         " preflight. Nothing was changed"
                     )
                 blob = rel.target_part.blob
-                new_r_id, _image = document.part.get_or_add_image(io.BytesIO(blob))
+                new_r_id, _image = dest_part.get_or_add_image(io.BytesIO(blob))
                 rel_map[r_id] = new_r_id
                 report.media_copied.append(
-                    str(document.part.rels[new_r_id].target_part.partname).lstrip("/")
+                    str(dest_part.rels[new_r_id].target_part.partname).lstrip("/")
                 )
             node.set(attr, rel_map[r_id])
 
 
 def _recreate_hyperlinks(
-    document: "Document",
-    source: "Document",
+    dest_part,
+    source_part,
     clones: "List[_Element]",
     report: CompositionReport,
 ) -> None:
@@ -1043,13 +1152,13 @@ def _recreate_hyperlinks(
             r_id = hyperlink.get(_R_ID)
             if not r_id:
                 continue  # internal anchor link: carried as-is
-            rel = source.part.rels.get(r_id)
+            rel = source_part.rels.get(r_id)
             if rel is None or not rel.is_external or rel.reltype != RT.HYPERLINK:
                 raise UnsupportedStructureError(
                     f"hyperlink relationship {r_id!r} changed after composition"
                     " preflight. Nothing was changed"
                 )
-            new_r_id = document.part.relate_to(rel.target_ref, RT.HYPERLINK, is_external=True)
+            new_r_id = dest_part.relate_to(rel.target_ref, RT.HYPERLINK, is_external=True)
             hyperlink.set(_R_ID, new_r_id)
 
 
@@ -1131,9 +1240,9 @@ def _reconcile_bookmarks(
                         ),
                     )
                 )
-    if renames:
-        _remap_field_refs(clones, renames)
-    report.bookmarks_renamed = renames
+    report.bookmarks_renamed.update(renames)
+    if report.bookmarks_renamed:
+        _remap_field_refs(clones, report.bookmarks_renamed)
 
 
 def _fresh_bookmark_name(existing_folded: set, base: str) -> str:

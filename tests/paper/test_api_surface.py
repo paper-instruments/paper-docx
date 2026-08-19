@@ -192,7 +192,8 @@ APPROVED_SIGNATURES = [
     (
         "docx.composition",
         "append_document",
-        "(document, source, *, section='new_page', styles='match_by_name')",
+        "(document, source, *, section='new_page', styles='match_by_name',"
+        " headers='destination')",
     ),
     ("docx.bookmarks", "list_bookmarks", "(document)"),
     ("docx.bookmarks", "create_bookmark", "(document, span, name)"),

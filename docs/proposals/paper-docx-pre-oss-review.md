@@ -41,7 +41,7 @@ Drop the zip-bomb caps and the two bundled deliver verbs. Keep `PackageLimitErro
 - ~~Auto-number caption field~~ **Done.** `add_caption`.
 - ~~Add a footnote or endnote~~ **Done.** `add_footnote`, `add_endnote`.
 - ~~Fill a data-bound form control~~ **Done.** `set_control_value` writes the custom XML store.
-- Append and keep the source letterhead
+- ~~Append and keep the source letterhead~~ **Done.** `append_document(..., headers="source")`.
 
 **Parked**
 
@@ -64,7 +64,7 @@ Read **What it does** first. The API column is only the name in the library.
 | Fill a form control: text, checkbox, dropdown, or date. | `docx.controls` | Structured | Yes | Stock cannot fill content controls safely. Data-bound controls write the custom XML store. Picture controls still refuse. |
 | Put a bookmark on a phrase, list bookmarks, or remove the markers (the text stays). | `docx.bookmarks` | Structured | Yes | Anchors for cross-references and TOC in existing files. |
 | Insert a page number, date, cross-reference, table of contents, or auto-number caption. The displayed value is computed when Word opens the file, not here. | `docx.fields` | Structured | Yes | Stock is weak; agents otherwise hand-edit field XML. Captions use `add_caption` (SEQ). |
-| Copy a range, or a whole document, into another file, keeping styles, lists, and images. | `docx.composition` | Combine | Yes | Cross-file copy is where styles and relationships corrupt. Headers stay those of the destination file; keeping the source letterhead was left for later. Will not copy comments, pending revisions, or footnotes. |
+| Copy a range, or a whole document, into another file, keeping styles, lists, and images. | `docx.composition` | Combine | Yes | Cross-file copy is where styles and relationships corrupt. Default append keeps destination headers; `headers="source"` copies the source letterhead. Will not copy comments, pending revisions, or footnotes. |
 | Save an edited file without rewriting ZIP parts that did not change. | `docx.package.patch_save` | Package | Yes | Stock save rewrites the whole ZIP, which noisily diffs and can break unrelated parts. |
 | On open and save: refuse a broken ZIP with a typed error, write atomically, and roll back a failed edit instead of leaving a half-written file. | zipguard, atomic `save`, transactions, `PaperRefusal` | Package | Yes | Load/save plumbing. Keep. The zip-bomb *size caps* are gone (see Change order). A member that inflates past the size it declared still refuses. |
 | Say why a file will not open: encrypted, template, macros, not Word, damaged ZIP. | `docx.package.diagnose` | Package | Yes | Stock raises untyped errors on bad input. |
@@ -80,7 +80,7 @@ Read **What it does** first. The API column is only the name in the library.
 
 ## Missing
 
-Jobs the agent could not do through the package. Stacked follow-ups add these APIs. **Plans** is vs `paper-original-plans-and-specs-2026-08-13/paper-docx` and is unchanged.
+Jobs the agent could not do through the package. This follow-up adds the APIs. **Plans** is vs `paper-original-plans-and-specs-2026-08-13/paper-docx` and is unchanged.
 
 | What the agent needs to do | Use case | Why it was a hole | API | Plans |
 | --- | --- | --- | --- | --- |
@@ -92,7 +92,7 @@ Jobs the agent could not do through the package. Stacked follow-ups add these AP
 | ~~Caption a figure or table so numbers update (Figure 1, Figure 2, …)~~ **Done.** | Structured | Bookmark plus REF is not a SEQ caption field. | `add_caption` | **Not asked.** Fields in the plan are page numbers, date, cross-references, and TOC. |
 | ~~Add a footnote or endnote~~ **Done.** | Edit existing | Existing notes could be read and edited. New notes were not created. | `add_footnote`, `add_endnote` | **Explicitly out.** Read is in. Creating notes was deferred until a legal or academic customer asked. |
 | ~~Fill a form field whose value lives in Word's hidden custom XML~~ **Done.** | Structured | Surface fill would vanish on Word open. The package used to refuse. | `set_control_value` writes the custom XML store. | **Asked as refuse.** Intentional no in the original plan; this follow-up fills the store. |
-| Append another document and keep *its* letterhead | Combine | Default append keeps destination headers. | | **Asked as future.** Destination headers on purpose; keeping the source letterhead was left for later. |
+| ~~Append another document and keep *its* letterhead~~ **Done.** | Combine | Default append keeps destination headers. | `append_document(..., headers="source")` | **Asked as future.** Destination headers on purpose; keeping the source letterhead was left for later. |
 
 Not a package hole (stock, QA outside the library, or a different product): insert image (`Run.add_picture`), edit header/footer text (stock + story/search), page/section breaks (stock `add_section`), fill existing non-bound form controls, visual PNG render, flatten-runs, redaction, a11y audit, watermarks, Google Docs title sanitizer, `.doc` conversion. Public document-QA was asked to stay out of this library.
 
