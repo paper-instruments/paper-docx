@@ -64,7 +64,7 @@ result.document.paragraphs[0].text
 
 - **`docx.story`** traverses the body, headers, footers, footnotes, endnotes, comments, tracked insertions, content controls, and text boxes. Callers can view the document as it stands, before pending revisions, or all at once.
 - **`docx.search`** finds normalized text across Word's run fragmentation. A returned `Span` can replace the matched text while preserving unaffected runs, emit the replacement as a tracked change, or anchor a comment.
-- **`docx.blocks`** inserts, deletes, or replaces whole paragraphs relative to a text anchor, plainly or as a tracked change.
+- **`docx.blocks`** inserts, deletes, or replaces whole paragraphs relative to a text anchor, as plain edits or as a tracked change.
 - **`docx.tableops` / `docx.numbering`** provide cell, row, and list edits that refuse on unsafe structures such as merged cells, nested tables, or undefined numbering.
 - **`docx.controls`** fills content controls with the correct value type and clears placeholder state so Word treats them as filled.
 - **`docx.bookmarks` / `docx.fields`** create bookmarks over a span and author page numbers, dates, cross-references, captions, and tables of contents as fields with placeholder results.
@@ -74,9 +74,9 @@ result.document.paragraphs[0].text
 
 ### Reviewing
 
-- **`doc.revisions`** enumerates and resolves tracked changes across every part: insertions, deletions, run and paragraph format changes, table-row revisions, and moves. Unresolvable markup is listed by name.
+- **`doc.revisions`** enumerates and resolves tracked changes across every part: insertions, deletions, run and paragraph format changes, table-row revisions, and moves. Lists unresolvable markup by name.
 - **`docx.comments` / `docx.commentops`** read comments and delete one by identity, keeping the modern comment identity parts consistent.
-- **`docx.protection`** reads, sets, and respects Restrict-Editing. Mutating operations refuse on a protected document unless the caller explicitly overrides, and the setting is preserved in the document.
+- **`docx.protection`** reads, sets, and respects Restrict-Editing. Mutating operations refuse on a protected document unless the caller explicitly overrides; the protection setting stays in the document.
 
 ### Working across documents
 
@@ -120,7 +120,7 @@ In a controlled deployment, a constraint containing `python-docx<0` makes pip re
 
 ## Documentation
 
-The Sphinx docs extend the upstream python-docx documentation to cover the fork's additions: start with `docs/user/paper-additions.rst` and the `docs/api/paper-*.rst` reference pages. Everything inherited from python-docx works as documented at the [python-docx documentation](https://python-docx.readthedocs.io/).
+The Sphinx docs extend the upstream python-docx documentation to cover the fork's additions: start with `docs/user/paper-additions.rst` and the `docs/api/paper-*.rst` reference pages. Inherited python-docx behavior works as documented at the [python-docx documentation](https://python-docx.readthedocs.io/).
 
 ## Testing
 
