@@ -1534,9 +1534,9 @@ def replace_all(
     """Replace every match of `needle` in one pass, and return a `ReplaceAllResult`.
 
     One scan finds all matches, then replacements apply in reverse document order within each
-    story, so no pending match shifts. A refusal aborts the batch: replacements already
-    applied are rolled back, making the call all-or-nothing. Matches already equal to
-    `new_text` are skipped.
+    story, so no pending match shifts. A refusal on one match is recorded in `refused` and the
+    rest proceed; a stale span aborts the batch instead, rolling back every replacement already
+    applied. Matches already equal to `new_text` are skipped.
     """
     from docx.errors import PaperRefusal
 
