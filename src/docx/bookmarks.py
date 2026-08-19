@@ -224,7 +224,7 @@ def create_bookmark(document: "Document", span: "Span", name: str) -> BookmarkIn
     start_marker.set(_NAME, name)
     end_marker = OxmlElement("w:bookmarkEnd")
     end_marker.set(_ID, str(bookmark_id))
-    with rollback_on_error(document):
+    with rollback_on_error(document, span):
         span._isolate_edge_runs()  # noqa: SLF001
         first_run = span._atoms[0].run  # noqa: SLF001
         last_run = span._atoms[-1].run  # noqa: SLF001
