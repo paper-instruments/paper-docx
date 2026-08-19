@@ -22,7 +22,7 @@ from docx.opc.packuri import PackURI
 from docx.opc.part import XmlPart
 from docx.oxml.ns import nsdecls, qn
 from docx.oxml.parser import parse_xml
-from docx.protection import _refuse_if_protected
+from docx.protection import OP_COMMENT, _refuse_if_protected
 from docx.story import _story_elements
 
 _W_DECL = nsdecls("w")
@@ -159,7 +159,8 @@ def _preflight_comment_range(
     document: "Document", first_run: "_Element", last_run: "_Element", *, operation: str
 ) -> None:
     """Validate only the selected run interval before adding range markers."""
-    _refuse_if_protected(document, operation)
+    # Every caller of this funnel is anchoring a comment; hardcode the class.
+    _refuse_if_protected(document, operation, operation_class=OP_COMMENT)
     nodes = tuple(document.element.iter())
     positions = {id(node): index for index, node in enumerate(nodes)}
     first = positions.get(id(first_run))
@@ -551,7 +552,7 @@ def is_resolved(document: "Document", comment: "Comment") -> bool:
 def resolve(document: "Document", comment: "Comment", *, resolved: bool = True) -> None:
     """Mark `comment` resolved (or reopened) the way Word does."""
     comment_elm = _comment_element(document, comment)
-    _refuse_if_protected(document, "resolve a comment")
+    _refuse_if_protected(document, "resolve a comment", operation_class=OP_COMMENT)
     # Validate a pre-existing extension part before adding a paraId to the
     # comment. An opaque extension must refuse without touching comments.xml.
     _preflight_comments_extended_write(document)
@@ -676,7 +677,7 @@ def reply(
     if date is not None and not isinstance(date, dt.datetime):
         raise TypeError("date must be a datetime or None")
     parent_elm = _comment_element(document, comment)
-    _refuse_if_protected(document, "reply to a comment")
+    _refuse_if_protected(document, "reply to a comment", operation_class=OP_COMMENT)
     start, end, reference_run = _anchor_elements(document, comment.comment_id)
     if start is None or end is None or reference_run is None:
         raise TargetNotFoundError(
@@ -806,7 +807,7 @@ def _remove_comment_anchors(document: "Document", comment_id: int) -> None:
 def delete_comment(document: "Document", comment: "Comment") -> None:
     """Remove one comment and its replies. Anchored document text stays."""
     _comment_element(document, comment)
-    _refuse_if_protected(document, "delete a comment")
+    _refuse_if_protected(document, "delete a comment", operation_class=OP_COMMENT)
     _preflight_comment_add(document)
     _preflight_comments_extended_write(document)
     with rollback_on_error(document):

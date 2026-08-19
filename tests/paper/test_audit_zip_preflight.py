@@ -10,7 +10,7 @@ import pytest
 
 import docx
 from docx import _paperpkg
-from docx.errors import PackageLimitError
+from docx.errors import MalformedPackageError
 from docx.opc import phys_pkg
 
 _END_RECORD = struct.Struct("<4s4H2LH")
@@ -115,7 +115,7 @@ class DescribeCentralDirectoryPreflight:
 
         monkeypatch.setattr(_paperpkg.zipfile, "ZipFile", UnexpectedZipFile)
 
-        with pytest.raises(PackageLimitError, match="too small for its member count"):
+        with pytest.raises(MalformedPackageError, match="too small for its member count"):
             _paperpkg._read_zip(path)
 
         assert constructions == 0
@@ -137,7 +137,7 @@ class DescribeCentralDirectoryPreflight:
 
         monkeypatch.setattr(phys_pkg, "ZipFile", UnexpectedZipFile)
 
-        with pytest.raises(PackageLimitError, match="too small for its member count"):
+        with pytest.raises(MalformedPackageError, match="too small for its member count"):
             docx.Document(path)
 
         assert constructions == 0
@@ -163,7 +163,7 @@ class DescribeCentralDirectoryPreflight:
 
         monkeypatch.setattr(_paperpkg.zipfile, "ZipFile", UnexpectedZipFile)
 
-        with pytest.raises(PackageLimitError, match="member count"):
+        with pytest.raises(MalformedPackageError, match="member count"):
             _paperpkg._read_zip(path)
 
         assert constructions == 0
@@ -213,7 +213,9 @@ class DescribeArchiveMustBeginAtByteZero:
         target = tmp_path / "prefixed.docx"
         target.write_bytes(_prefixed_archive(self._clean(tmp_path), b"# self-extracting stub\n"))
 
-        with pytest.raises(PackageLimitError, match="does not begin with a ZIP local file header"):
+        with pytest.raises(
+            MalformedPackageError, match="does not begin with a ZIP local file header"
+        ):
             docx.Document(str(target))
 
     def it_opens_the_same_document_without_the_prefix(self, tmp_path: Path):
@@ -246,5 +248,7 @@ class DescribeArchiveMustBeginAtByteZero:
         original = tmp_path / "prefixed.docx"
         original.write_bytes(_prefixed_archive(self._clean(tmp_path), b"#" * 64))
 
-        with pytest.raises(PackageLimitError, match="does not begin with a ZIP local file header"):
+        with pytest.raises(
+            MalformedPackageError, match="does not begin with a ZIP local file header"
+        ):
             _paperpkg.patch_save(original, docx.Document(), tmp_path / "out.docx")

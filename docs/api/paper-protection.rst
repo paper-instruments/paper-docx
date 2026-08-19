@@ -5,10 +5,12 @@ Document protection
 ===================
 
 *paper-docx addition.* Word's Restrict-Editing setting
-(``w:documentProtection``) is advisory, not security. Every paper-docx mutating
-API raises |DocumentProtectedError| on an enforced setting;
-``acknowledge_protection`` is the one explicit override. The setting itself is
-preserved, and upstream APIs are untouched.
+(``w:documentProtection``) is advisory, not security. paper-docx mutating APIs
+raise |DocumentProtectedError| wherever Word's own UI would refuse the edit: the
+gate mirrors Word's per-mode rules, so a comments-only restriction still permits
+commenting while it blocks body edits. ``acknowledge_protection`` is the one
+explicit override. The setting itself is preserved, and upstream APIs are
+untouched.
 
 .. currentmodule:: docx.protection
 

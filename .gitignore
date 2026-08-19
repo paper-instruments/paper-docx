@@ -10,3 +10,4 @@ Session.vim
 /.tox/
 /reference/
 .DS_Store
+.worktrees/

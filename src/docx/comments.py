@@ -5,7 +5,7 @@
 from __future__ import annotations
 
 import datetime as dt
-from typing import TYPE_CHECKING, Callable, Iterator, Optional, cast
+from typing import TYPE_CHECKING, Iterator, Optional, cast
 
 from docx._transaction import rollback_on_error, rollback_xml_on_error
 from docx.blkcntnr import BlockItemContainer
@@ -61,10 +61,12 @@ def _document_for_comments_part(comments_part: "CommentsPart") -> "Optional[Docu
 
 
 def _refuse_document_protection(document: "Document", operation: str) -> None:
-    from docx.protection import _refuse_if_protected  # pyright: ignore[reportUnknownVariableType]
+    """Gate every comment mutator. Comment class, hardcoded: every caller of
+    this forwarder is a comment operation, and Word permits commenting under
+    `comments`, `trackedChanges` and formatting-only protection."""
+    from docx.protection import OP_COMMENT, _refuse_if_protected
 
-    refuse = cast("Callable[[Document, str], None]", _refuse_if_protected)
-    refuse(document, operation)
+    _refuse_if_protected(document, operation, operation_class=OP_COMMENT)
 
 
 class Comments:

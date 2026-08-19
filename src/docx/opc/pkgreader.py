@@ -5,7 +5,7 @@ from lxml import etree
 from docx._contenttypes import content_type_matches
 from docx._rels import is_relationship_type, is_xml_id
 from docx._zipguard import _parse_content_types
-from docx.errors import PackageLimitError
+from docx.errors import MalformedPackageError
 from docx.opc.constants import CONTENT_TYPE as CT
 from docx.opc.constants import RELATIONSHIP_TARGET_MODE as RTM
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
@@ -88,14 +88,14 @@ class PackageReader:
                 try:
                     phys_reader.partname_for(partname)
                 except KeyError as exc:
-                    raise PackageLimitError(
+                    raise MalformedPackageError(
                         f"relationship {srel.rId!r} targets missing package part"
                         f" {partname!s}"
                     ) from exc
                 try:
                     content_type = content_types[partname]
                 except KeyError as exc:
-                    raise PackageLimitError(
+                    raise MalformedPackageError(
                         f"relationship {srel.rId!r} targets {partname!s}, which has no"
                         " declared content type"
                     ) from exc
@@ -261,6 +261,25 @@ class _SerializedRelationship:
         return self._target_partname
 
 
+def _duplicate_relationship_id_message(
+    base_uri, relationship_id, first_target, second_target
+) -> str:
+    """Word refuses both shapes; the caller's next step differs, so name which it is."""
+    if first_target == second_target:
+        return (
+            f"relationships for {base_uri!r} declare Id {relationship_id!r} twice for the"
+            f" same target {first_target!r}; a relationships part may use each Id only"
+            " once, so Word refuses to open the package even though the two declarations"
+            " agree. Delete the repeated Relationship element and keep one"
+        )
+    return (
+        f"relationships for {base_uri!r} point Id {relationship_id!r} at two different"
+        f" targets, {first_target!r} and {second_target!r}; nothing in the package says"
+        " which target the Id means, so Word refuses to open it. Give the second"
+        " relationship an Id of its own and repoint whatever refers to it"
+    )
+
+
 class _SerializedRelationships:
     """Read-only sequence of |_SerializedRelationship| instances corresponding to the
     relationships item XML passed to constructor."""
@@ -285,31 +304,36 @@ class _SerializedRelationships:
             if isinstance(rels_item_xml, (bytes, str)):
                 _validate_relationship_records(rels_item_xml, baseURI)
             rels_elm = parse_xml(rels_item_xml)
-            seen_ids = set()
+            seen_ids = {}
             for rel_elm in rels_elm.Relationship_lst:
                 serialized = _SerializedRelationship(baseURI, rel_elm)
                 if isinstance(serialized.rId, str) and not is_xml_id(serialized.rId):
-                    raise PackageLimitError(
+                    raise MalformedPackageError(
                         f"relationship Id {serialized.rId!r} is not a valid XML ID"
                     )
                 if isinstance(serialized.rId, str) and serialized.rId in seen_ids:
-                    raise PackageLimitError(
-                        f"relationships for {baseURI!r} contain duplicate Id {serialized.rId!r}"
+                    raise MalformedPackageError(
+                        _duplicate_relationship_id_message(
+                            baseURI,
+                            serialized.rId,
+                            seen_ids[serialized.rId],
+                            serialized.target_ref,
+                        )
                     )
                 if isinstance(serialized.rId, str):
-                    seen_ids.add(serialized.rId)
+                    seen_ids[serialized.rId] = serialized.target_ref
                 if isinstance(serialized.target_mode, str) and serialized.target_mode not in (
                     RTM.INTERNAL,
                     RTM.EXTERNAL,
                 ):
-                    raise PackageLimitError(
+                    raise MalformedPackageError(
                         f"relationship {serialized.rId!r} has invalid TargetMode"
                     )
                 if not serialized.is_external:
                     try:
                         serialized.target_partname
                     except (IndexError, TypeError, ValueError) as exc:
-                        raise PackageLimitError(
+                        raise MalformedPackageError(
                             f"relationship {serialized.rId!r} has an invalid target"
                         ) from exc
                 srels._srels.append(serialized)
@@ -326,10 +350,10 @@ def _validate_relationship_records(blob, base_uri) -> None:
     try:
         root = etree.fromstring(blob, parser)
     except etree.XMLSyntaxError as exc:
-        raise PackageLimitError(f"relationships for {base_uri!r} are malformed") from exc
+        raise MalformedPackageError(f"relationships for {base_uri!r} are malformed") from exc
     docinfo = root.getroottree().docinfo
     if docinfo.doctype or docinfo.internalDTD is not None:
-        raise PackageLimitError(
+        raise MalformedPackageError(
             f"relationships for {base_uri!r} contain a prohibited DTD"
         )
     relationships_tag = (
@@ -339,29 +363,36 @@ def _validate_relationship_records(blob, base_uri) -> None:
         "{http://schemas.openxmlformats.org/package/2006/relationships}Relationship"
     )
     if root.tag != relationships_tag:
-        raise PackageLimitError(
+        raise MalformedPackageError(
             f"relationships for {base_uri!r} have an unexpected root element"
         )
-    seen = set()
+    seen = {}
     for child in root:
         if not isinstance(child.tag, str):
             continue
         if child.tag != relationship_tag:
-            raise PackageLimitError(
+            raise MalformedPackageError(
                 f"relationships for {base_uri!r} contain an unexpected element"
             )
         relationship_id = child.get("Id")
         if not is_xml_id(relationship_id):
-            raise PackageLimitError(f"relationship Id {relationship_id!r} is not a valid XML ID")
-        if relationship_id in seen:
-            raise PackageLimitError(
-                f"relationships for {base_uri!r} contain duplicate Id {relationship_id!r}"
+            raise MalformedPackageError(
+                f"relationship Id {relationship_id!r} is not a valid XML ID"
             )
-        seen.add(relationship_id)
+        target = child.get("Target")
+        if relationship_id in seen:
+            raise MalformedPackageError(
+                _duplicate_relationship_id_message(
+                    base_uri, relationship_id, seen[relationship_id], target
+                )
+            )
+        seen[relationship_id] = target
         if not child.get("Type") or not child.get("Target"):
-            raise PackageLimitError(f"relationship {relationship_id!r} is missing Type or Target")
+            raise MalformedPackageError(
+                f"relationship {relationship_id!r} is missing Type or Target"
+            )
         if child.get("TargetMode", RTM.INTERNAL) not in (RTM.INTERNAL, RTM.EXTERNAL):
-            raise PackageLimitError(f"relationship {relationship_id!r} has invalid TargetMode")
+            raise MalformedPackageError(f"relationship {relationship_id!r} has invalid TargetMode")
 
 
 def _validate_package_relationships(relationships) -> None:
@@ -372,32 +403,20 @@ def _validate_package_relationships(relationships) -> None:
         if is_relationship_type(relationship.reltype, RT.OFFICE_DOCUMENT)
     ]
     if len(office_documents) > 1:
-        raise PackageLimitError(
+        raise MalformedPackageError(
             "package contains multiple officeDocument relationships"
         )
     if office_documents and office_documents[0].is_external:
-        raise PackageLimitError("package officeDocument relationship is external")
+        raise MalformedPackageError("package officeDocument relationship is external")
 
 
-_OFFICE_DOCUMENT_CONTENT_TYPES = (
-    CT.WML_DOCUMENT_MAIN,
-    "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml",
-    "application/vnd.ms-word.document.macroEnabled.main+xml",
-    "application/vnd.ms-word.template.macroEnabledTemplate.main+xml",
-    CT.PML_PRESENTATION_MAIN,
-    CT.PML_SLIDESHOW_MAIN,
-    CT.PML_TEMPLATE_MAIN,
-    "application/vnd.ms-powerpoint.presentation.macroEnabled.main+xml",
-    "application/vnd.ms-powerpoint.slideshow.macroEnabled.main+xml",
-    "application/vnd.ms-powerpoint.template.macroEnabled.main+xml",
-    CT.SML_SHEET_MAIN,
-    CT.SML_TEMPLATE_MAIN,
-    "application/vnd.ms-excel.sheet.macroEnabled.main+xml",
-    "application/vnd.ms-excel.template.macroEnabled.main+xml",
-)
 _KNOWN_RELATIONSHIP_CONTENT_TYPES = (
     (RT.CORE_PROPERTIES, (CT.OPC_CORE_PROPERTIES,)),
-    (RT.OFFICE_DOCUMENT, _OFFICE_DOCUMENT_CONTENT_TYPES),
+    # -- RT.OFFICE_DOCUMENT is deliberately absent. `api.Document` already checks the
+    # -- main part's content type and raises ValueError naming the file and the type it
+    # -- found; that check is upstream's, byte-identical, and a caller migrating from
+    # -- python-docx may rely on it. Validating the same condition during package load
+    # -- only pre-empted it with a different exception type.
     (RT.STYLES, (CT.WML_STYLES, CT.SML_STYLES)),
     (RT.SETTINGS, (CT.WML_SETTINGS,)),
     (RT.NUMBERING, (CT.WML_NUMBERING,)),
@@ -412,19 +431,18 @@ _KNOWN_RELATIONSHIP_CONTENT_TYPES = (
 
 
 def _validate_relationship_target_content_type(reltype, content_type, partname) -> None:
-    """Reject a known role pointing at a part with an incompatible media type."""
-    if is_relationship_type(reltype, RT.IMAGE):
-        if content_type.partition(";")[0].strip().casefold().startswith("image/"):
-            return
-        raise PackageLimitError(
-            f"image relationship targets {partname!s} with invalid content type {content_type!r}"
-        )
+    """Reject a known role pointing at a part with an incompatible media type.
+
+    Only core parts carry a content-type requirement. Word opens a displayed image
+    declared ``application/octet-stream``, so media parts are deliberately unconstrained
+    and have no entry in the table below.
+    """
     for expected_reltype, expected_types in _KNOWN_RELATIONSHIP_CONTENT_TYPES:
         if not is_relationship_type(reltype, expected_reltype):
             continue
         if any(content_type_matches(content_type, item) for item in expected_types):
             return
-        raise PackageLimitError(
+        raise MalformedPackageError(
             f"relationship type {reltype!r} targets {partname!s} with invalid content type"
             f" {content_type!r}"
         )

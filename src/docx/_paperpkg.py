@@ -45,7 +45,7 @@ from docx._zipguard import (
     preflight_zip,
     read_compressed_bytes,
 )
-from docx.errors import PackageLimitError
+from docx.errors import MalformedPackageError
 
 if TYPE_CHECKING:
     from docx.document import Document
@@ -521,7 +521,7 @@ def diagnose(path: _PathLike) -> PackageDiagnosis:
         return result(False, "not-a-zip", "not a ZIP archive, so not an OPC package")
     try:
         parts, _ = _read_zip(file_path)
-    except PackageLimitError as exc:
+    except MalformedPackageError as exc:
         return result(False, "unsafe-archive", str(exc))
     except zipfile.BadZipFile as exc:
         return result(False, "corrupt-zip", f"ZIP structure is damaged: {exc}")

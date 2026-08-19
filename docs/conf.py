@@ -212,7 +212,7 @@ rst_epilog = """
 
 .. |PaperRefusal| replace:: :exc:`.PaperRefusal`
 
-.. |PackageLimitError| replace:: :exc:`.PackageLimitError`
+.. |MalformedPackageError| replace:: :exc:`.MalformedPackageError`
 
 .. |AmbiguousTargetError| replace:: :exc:`.AmbiguousTargetError`
 

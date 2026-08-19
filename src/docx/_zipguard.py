@@ -15,7 +15,6 @@ from __future__ import annotations
 import os
 import stat
 import struct
-import unicodedata
 import zlib
 from contextlib import suppress
 from typing import BinaryIO, Dict, List, Optional, Tuple, Union, cast
@@ -23,7 +22,7 @@ from zipfile import ZIP_DEFLATED, ZIP_STORED, ZipFile, ZipInfo
 
 from lxml import etree
 
-from docx.errors import PackageLimitError
+from docx.errors import MalformedPackageError
 
 _READ_CHUNK_BYTES = 64 * 1024
 _LOCAL_HEADER = struct.Struct("<4s5H3L2H")
@@ -39,6 +38,7 @@ _ZIP64_LOCATOR_SIGNATURE = b"PK\x06\x07"
 _MAX_END_COMMENT_BYTES = 65_535
 
 _CONTENT_TYPES_NAME = "[Content_Types].xml"
+_CONTENT_TYPES_FOLDED = _CONTENT_TYPES_NAME.casefold()
 _CONTENT_TYPES_NAMESPACE = (
     "http://schemas.openxmlformats.org/package/2006/content-types"
 )
@@ -61,6 +61,10 @@ _FLAG_UTF8_NAME = 0x0800
 _SUPPORTED_COMPRESSION = (ZIP_STORED, ZIP_DEFLATED)
 _HEX_DIGITS = frozenset("0123456789ABCDEF")
 _URI_UNRESERVED = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+# RFC 3986 ``pchar`` minus ``pct-encoded``: unreserved / sub-delims / ":" / "@",
+# plus "/" as the segment separator. ``%`` is deliberately absent — it is legal
+# only as the head of a ``%XX`` triplet, which the walk consumes as a unit.
+_URI_PATH_LITERAL = _URI_UNRESERVED | frozenset(b"!$&'()*+,;=:@/")
 
 
 def compressed_size(source: object) -> Optional[int]:
@@ -135,7 +139,7 @@ def _preflight_zip_stream(stream: BinaryIO) -> None:
         stream.seek(0, os.SEEK_END)
         archive_size_value = cast(object, stream.tell())
     except (AttributeError, OSError, TypeError, ValueError) as exc:
-        raise PackageLimitError("ZIP package input must be a seekable binary stream") from exc
+        raise MalformedPackageError("ZIP package input must be a seekable binary stream") from exc
 
     try:
         if not isinstance(archive_size_value, int) or isinstance(archive_size_value, bool):
@@ -156,7 +160,7 @@ def _preflight_zip_stream(stream: BinaryIO) -> None:
             _comment_length,
         ) = end_fields
         if disk_number != 0 or central_disk != 0:
-            raise PackageLimitError("multi-disk ZIP packages are not supported")
+            raise MalformedPackageError("multi-disk ZIP packages are not supported")
 
         zip64_required = (
             disk_entries == 0xFFFF
@@ -175,17 +179,17 @@ def _preflight_zip_stream(stream: BinaryIO) -> None:
             ) = _read_zip64_end_record(stream, end_offset, end_fields)
 
         if disk_entries != total_entries:
-            raise PackageLimitError("ZIP central-directory counts disagree across disks")
+            raise MalformedPackageError("ZIP central-directory counts disagree across disks")
         if central_offset < 0 or central_size < 0:
-            raise PackageLimitError("ZIP central-directory metadata is negative")
+            raise MalformedPackageError("ZIP central-directory metadata is negative")
         if central_offset + central_size != central_end:
-            raise PackageLimitError(
+            raise MalformedPackageError(
                 "ZIP central-directory offset and size do not identify one unambiguous region"
             )
         if total_entries == 0 and central_size != 0:
-            raise PackageLimitError("empty ZIP package has a non-empty central directory")
+            raise MalformedPackageError("empty ZIP package has a non-empty central directory")
         if total_entries and central_size < total_entries * _CENTRAL_HEADER.size:
-            raise PackageLimitError("ZIP central directory is too small for its member count")
+            raise MalformedPackageError("ZIP central directory is too small for its member count")
 
         _scan_central_directory(
             stream,
@@ -201,7 +205,7 @@ def _preflight_zip_stream(stream: BinaryIO) -> None:
         stream.seek(0, os.SEEK_SET)
         leading = stream.read(4)
         if leading not in (_LOCAL_HEADER_SIGNATURE, _END_RECORD_SIGNATURE):
-            raise PackageLimitError(
+            raise MalformedPackageError(
                 "the package does not begin with a ZIP local file header, so bytes precede"
                 " the archive; Word cannot open a .docx with anything in front of the"
                 " package. Extract the archive to a file of its own and open that"
@@ -216,7 +220,7 @@ def _find_end_record(stream: BinaryIO, archive_size: int) -> Tuple[int, Tuple[in
     stream.seek(archive_size - tail_size, os.SEEK_SET)
     tail = stream.read(tail_size)
     if len(tail) != tail_size:
-        raise PackageLimitError("ZIP package ends before its declared physical size")
+        raise MalformedPackageError("ZIP package ends before its declared physical size")
 
     candidates: List[Tuple[int, Tuple[int, ...]]] = []
     cursor = 0
@@ -233,9 +237,15 @@ def _find_end_record(stream: BinaryIO, archive_size: int) -> Tuple[int, Tuple[in
             candidates.append((archive_size - tail_size + index, fields))
 
     if not candidates:
-        raise PackageLimitError("ZIP package has no valid end-of-central-directory record")
+        raise MalformedPackageError(
+            "the file does not end with an archive footer, so nothing marks where the"
+            " package stops: usually bytes were appended after the archive, or the file"
+            " was truncated in transfer. Word cannot open a .docx unless the archive is"
+            " exactly the file. Re-saving the document fixes an appended tail; a"
+            " truncated file needs a fresh copy"
+        )
     if len(candidates) != 1:
-        raise PackageLimitError("ZIP package has ambiguous end-of-central-directory records")
+        raise MalformedPackageError("ZIP package has ambiguous end-of-central-directory records")
     return candidates[0]
 
 
@@ -246,23 +256,23 @@ def _read_zip64_end_record(
 ) -> Tuple[int, int, int, int, int]:
     locator_offset = end_offset - _ZIP64_LOCATOR.size
     if locator_offset < 0:
-        raise PackageLimitError("ZIP64 package is missing its locator")
+        raise MalformedPackageError("ZIP64 package is missing its locator")
     stream.seek(locator_offset, os.SEEK_SET)
     locator_data = stream.read(_ZIP64_LOCATOR.size)
     if len(locator_data) != _ZIP64_LOCATOR.size:
-        raise PackageLimitError("ZIP64 locator is truncated")
+        raise MalformedPackageError("ZIP64 locator is truncated")
     signature, record_disk, record_offset, disk_count = _ZIP64_LOCATOR.unpack(locator_data)
     if signature != _ZIP64_LOCATOR_SIGNATURE:
-        raise PackageLimitError("ZIP64 package is missing its locator")
+        raise MalformedPackageError("ZIP64 package is missing its locator")
     if record_disk != 0 or disk_count != 1:
-        raise PackageLimitError("multi-disk ZIP64 packages are not supported")
+        raise MalformedPackageError("multi-disk ZIP64 packages are not supported")
     if record_offset < 0 or record_offset + _ZIP64_END_RECORD.size != locator_offset:
-        raise PackageLimitError("ZIP64 end record has an ambiguous offset or size")
+        raise MalformedPackageError("ZIP64 end record has an ambiguous offset or size")
 
     stream.seek(record_offset, os.SEEK_SET)
     record_data = stream.read(_ZIP64_END_RECORD.size)
     if len(record_data) != _ZIP64_END_RECORD.size:
-        raise PackageLimitError("ZIP64 end record is truncated")
+        raise MalformedPackageError("ZIP64 end record is truncated")
     (
         signature,
         record_size,
@@ -276,9 +286,9 @@ def _read_zip64_end_record(
         central_offset,
     ) = _ZIP64_END_RECORD.unpack(record_data)
     if signature != _ZIP64_END_RECORD_SIGNATURE or record_size != 44:
-        raise PackageLimitError("ZIP64 end record has an unsupported or ambiguous shape")
+        raise MalformedPackageError("ZIP64 end record has an unsupported or ambiguous shape")
     if disk_number != 0 or central_disk != 0 or disk_entries != total_entries:
-        raise PackageLimitError("multi-disk ZIP64 packages are not supported")
+        raise MalformedPackageError("multi-disk ZIP64 packages are not supported")
 
     legacy_disk_entries = legacy_fields[3]
     legacy_total_entries = legacy_fields[4]
@@ -308,7 +318,7 @@ def _validate_zip64_legacy_value(
     label: str,
 ) -> None:
     if legacy != sentinel and legacy != actual:
-        raise PackageLimitError(f"ZIP64 {label} disagrees with the legacy end record")
+        raise MalformedPackageError(f"ZIP64 {label} disagrees with the legacy end record")
 
 
 def _scan_central_directory(
@@ -322,27 +332,29 @@ def _scan_central_directory(
     actual_count = 0
     while cursor < central_end:
         if cursor + _CENTRAL_HEADER.size > central_end:
-            raise PackageLimitError("ZIP central directory ends inside a member record")
+            raise MalformedPackageError("ZIP central directory ends inside a member record")
         stream.seek(cursor, os.SEEK_SET)
         header = stream.read(_CENTRAL_HEADER.size)
         if len(header) != _CENTRAL_HEADER.size:
-            raise PackageLimitError("ZIP central-directory member record is truncated")
+            raise MalformedPackageError("ZIP central-directory member record is truncated")
         fields = _CENTRAL_HEADER.unpack(header)
         if fields[0] != _CENTRAL_HEADER_SIGNATURE:
-            raise PackageLimitError("ZIP central directory contains an unsupported record")
+            raise MalformedPackageError("ZIP central directory contains an unsupported record")
         name_length, extra_length, comment_length = fields[10:13]
         if fields[13] != 0:
-            raise PackageLimitError("multi-disk ZIP member records are not supported")
+            raise MalformedPackageError("multi-disk ZIP member records are not supported")
         record_size = _CENTRAL_HEADER.size + name_length + extra_length + comment_length
         if cursor + record_size > central_end:
-            raise PackageLimitError("ZIP central-directory member record exceeds its region")
+            raise MalformedPackageError("ZIP central-directory member record exceeds its region")
         cursor += record_size
         actual_count += 1
         if actual_count > expected_count:
-            raise PackageLimitError("ZIP central-directory member count exceeds its end record")
+            raise MalformedPackageError("ZIP central-directory member count exceeds its end record")
 
     if cursor != central_end or actual_count != expected_count:
-        raise PackageLimitError("ZIP central-directory member count disagrees with its end record")
+        raise MalformedPackageError(
+            "ZIP central-directory member count disagrees with its end record"
+        )
 
 
 class GuardedZipReader:
@@ -382,6 +394,7 @@ class GuardedZipReader:
         return dict(self._parts), list(self.order)
 
     def _validate_metadata(self) -> None:
+        self._refuse_directory_prefix_collisions()
         seen_names: set[str] = set()
         seen_equivalent_names: set[str] = set()
         seen_offsets: set[int] = set()
@@ -389,7 +402,7 @@ class GuardedZipReader:
             # directory entries occupy archive space: they participate in the
             # overlap accounting even though they are not members
             if info.header_offset < 0 or info.header_offset in seen_offsets:
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     f"ZIP directory entry {info.orig_filename!r} has an invalid"
                     " or shared local-header offset"
                 )
@@ -397,65 +410,91 @@ class GuardedZipReader:
         for info in self._infos:
             name = info.orig_filename
             if name != info.filename:
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     f"ZIP member name {name!r} contains a noncanonical NUL suffix"
                 )
             _validate_member_name(name)
 
             if name in seen_names:
-                raise PackageLimitError(f"ZIP contains duplicate member name {name!r}")
+                raise MalformedPackageError(f"ZIP contains duplicate member name {name!r}")
             equivalent_name = name.casefold()
             if equivalent_name in seen_equivalent_names:
-                raise PackageLimitError(f"ZIP contains case-ambiguous member name {name!r}")
+                raise MalformedPackageError(f"ZIP contains case-ambiguous member name {name!r}")
             seen_names.add(name)
             seen_equivalent_names.add(equivalent_name)
 
             if info.header_offset < 0 or info.header_offset in seen_offsets:
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     f"ZIP member {name!r} has an invalid or shared local-header offset"
                 )
             seen_offsets.add(info.header_offset)
 
             if info.flag_bits & (_FLAG_ENCRYPTED | _FLAG_STRONG_ENCRYPTION):
-                raise PackageLimitError(f"ZIP member {name!r} is encrypted")
+                raise MalformedPackageError(f"ZIP member {name!r} is encrypted")
             if info.flag_bits & _FLAG_PATCHED_DATA:
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     f"ZIP member {name!r} uses unsupported patched-data encoding"
                 )
             if info.compress_type not in _SUPPORTED_COMPRESSION:
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     f"ZIP member {name!r} uses unsupported compression method {info.compress_type}"
                 )
             if info.is_dir() or info.external_attr & 0x10:
-                raise PackageLimitError(f"ZIP member {name!r} is a directory entry")
+                raise MalformedPackageError(f"ZIP member {name!r} is a directory entry")
 
             unix_mode = (info.external_attr >> 16) & 0xFFFF
             file_type = stat.S_IFMT(unix_mode)
             if file_type not in (0, stat.S_IFREG):
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     f"ZIP member {name!r} uses unsupported filesystem entry type"
                 )
 
             if info.file_size < 0 or info.compress_size < 0:
-                raise PackageLimitError(f"ZIP member {name!r} has a negative size")
+                raise MalformedPackageError(f"ZIP member {name!r} has a negative size")
             if info.compress_type == ZIP_STORED and info.file_size != info.compress_size:
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     f"stored ZIP member {name!r} has inconsistent size metadata"
                 )
+
+    def _refuse_directory_prefix_collisions(self) -> None:
+        """Refuse a member whose name is a directory prefix of another member.
+
+        Word refuses a zero-length member named ``word`` sitting beside members
+        under ``word/`` whatever the member's attributes, so the name is the
+        defect. This runs as a pre-pass over the whole member-name set: the
+        collision is only visible from the deeper name, and the shallow member
+        is written first, so a per-member check would report whichever defect
+        the archive order happened to surface. Directory records are not in
+        ``self._infos`` and so are out of scope here, which is correct --
+        zero-length ``word/`` folder records open in Word.
+        """
+        member_names = {info.orig_filename for info in self._infos}
+        for info in self._infos:
+            name = info.orig_filename
+            boundary = name.find("/")
+            while boundary != -1:
+                prefix = name[:boundary]
+                if prefix in member_names:
+                    raise MalformedPackageError(
+                        f"ZIP member {prefix!r} is also a directory prefix of member"
+                        f" {name!r}: one name cannot denote both a file and a"
+                        f" directory. Remove the member named {prefix!r}."
+                    )
+                boundary = name.find("/", boundary + 1)
 
     def _read_all_members(self) -> Dict[str, bytes]:
         if not self._infos and not self._directory_infos:
             return {}
         stream = self._zip_file.fp
         if stream is None:
-            raise PackageLimitError("ZIP package stream is closed")
+            raise MalformedPackageError("ZIP package stream is closed")
 
         start_dir = self._zip_file.start_dir
         archive_size = compressed_size(stream)
         if start_dir < 0:
-            raise PackageLimitError("ZIP central-directory offset is invalid")
+            raise MalformedPackageError("ZIP central-directory offset is invalid")
         if archive_size is not None and start_dir > archive_size:
-            raise PackageLimitError("ZIP central directory lies beyond the package")
+            raise MalformedPackageError("ZIP central directory lies beyond the package")
 
         sorted_infos = sorted(
             self._infos + self._directory_infos, key=lambda info: info.header_offset
@@ -509,14 +548,14 @@ class GuardedZipReader:
     def _validate_local_header(self, info: ZipInfo, boundary: int) -> int:
         stream = self._zip_file.fp
         if stream is None:
-            raise PackageLimitError("ZIP package stream is closed")
+            raise MalformedPackageError("ZIP package stream is closed")
         if info.header_offset + _LOCAL_HEADER.size > boundary:
-            raise PackageLimitError(f"ZIP member {info.filename!r} has an overlapping header")
+            raise MalformedPackageError(f"ZIP member {info.filename!r} has an overlapping header")
 
         stream.seek(info.header_offset, os.SEEK_SET)
         header = stream.read(_LOCAL_HEADER.size)
         if len(header) != _LOCAL_HEADER.size:
-            raise PackageLimitError(f"ZIP member {info.filename!r} has a truncated header")
+            raise MalformedPackageError(f"ZIP member {info.filename!r} has a truncated header")
         (
             signature,
             _extract_version,
@@ -531,15 +570,15 @@ class GuardedZipReader:
             extra_length,
         ) = _LOCAL_HEADER.unpack(header)
         if signature != _LOCAL_HEADER_SIGNATURE:
-            raise PackageLimitError(f"ZIP member {info.filename!r} has an invalid header")
+            raise MalformedPackageError(f"ZIP member {info.filename!r} has an invalid header")
         if flags != info.flag_bits or compression != info.compress_type:
-            raise PackageLimitError(
+            raise MalformedPackageError(
                 f"ZIP member {info.filename!r} has inconsistent local-header metadata"
             )
 
         raw_name = stream.read(name_length)
         if len(raw_name) != name_length:
-            raise PackageLimitError(f"ZIP member {info.filename!r} has a truncated name")
+            raise MalformedPackageError(f"ZIP member {info.filename!r} has a truncated name")
         try:
             local_name = raw_name.decode(
                 "utf-8"
@@ -547,11 +586,11 @@ class GuardedZipReader:
                 else (getattr(self._zip_file, "metadata_encoding", None) or "cp437")
             )
         except UnicodeDecodeError as exc:
-            raise PackageLimitError(
+            raise MalformedPackageError(
                 f"ZIP member {info.filename!r} has an invalid encoded name"
             ) from exc
         if local_name != info.orig_filename:
-            raise PackageLimitError(
+            raise MalformedPackageError(
                 f"ZIP member {info.filename!r} has conflicting local and central names"
             )
 
@@ -564,39 +603,43 @@ class GuardedZipReader:
             valid_compressed = compressed in (info.compress_size, 0xFFFFFFFF)
             valid_expanded = expanded in (info.file_size, 0xFFFFFFFF)
         if not (valid_crc and valid_compressed and valid_expanded):
-            raise PackageLimitError(
+            raise MalformedPackageError(
                 f"ZIP member {info.filename!r} has inconsistent local size or CRC metadata"
             )
 
         data_start = info.header_offset + _LOCAL_HEADER.size + name_length + extra_length
         data_end = data_start + info.compress_size
         if data_start > boundary or data_end > boundary:
-            raise PackageLimitError(f"ZIP member {info.filename!r} overlaps another ZIP record")
+            raise MalformedPackageError(f"ZIP member {info.filename!r} overlaps another ZIP record")
         self._validate_data_descriptor(info, data_end, boundary)
         return data_start
 
     def _validate_data_descriptor(self, info: ZipInfo, data_end: int, boundary: int) -> None:
         stream = self._zip_file.fp
         if stream is None:
-            raise PackageLimitError("ZIP package stream is closed")
+            raise MalformedPackageError("ZIP package stream is closed")
         descriptor_size = boundary - data_end
         if not info.flag_bits & _FLAG_DATA_DESCRIPTOR:
             if descriptor_size:
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     f"ZIP member {info.filename!r} has undeclared trailing data"
                 )
             return
         if descriptor_size not in (12, 16, 20, 24):
-            raise PackageLimitError(f"ZIP member {info.filename!r} has an invalid data descriptor")
+            raise MalformedPackageError(
+                f"ZIP member {info.filename!r} has an invalid data descriptor"
+            )
 
         stream.seek(data_end, os.SEEK_SET)
         descriptor = stream.read(descriptor_size)
         if len(descriptor) != descriptor_size:
-            raise PackageLimitError(f"ZIP member {info.filename!r} has a truncated data descriptor")
+            raise MalformedPackageError(
+                f"ZIP member {info.filename!r} has a truncated data descriptor"
+            )
         has_signature = descriptor_size in (16, 24)
         if has_signature:
             if descriptor[:4] != b"PK\x07\x08":
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     f"ZIP member {info.filename!r} has an invalid data descriptor"
                 )
             descriptor = descriptor[4:]
@@ -609,14 +652,14 @@ class GuardedZipReader:
             info.compress_size,
             info.file_size,
         ):
-            raise PackageLimitError(
+            raise MalformedPackageError(
                 f"ZIP member {info.filename!r} has inconsistent data-descriptor metadata"
             )
 
     def _inflate_member(self, info: ZipInfo, data_start: int) -> bytes:
         stream = self._zip_file.fp
         if stream is None:
-            raise PackageLimitError("ZIP package stream is closed")
+            raise MalformedPackageError("ZIP package stream is closed")
         stream.seek(data_start, os.SEEK_SET)
 
         chunks: List[bytes] = []
@@ -629,7 +672,7 @@ class GuardedZipReader:
                 return
             actual_size += len(data)
             if actual_size > info.file_size:
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     f"ZIP member {info.filename!r} inflates past its declared size"
                 )
             crc = zlib.crc32(data, crc)
@@ -640,7 +683,7 @@ class GuardedZipReader:
             while remaining:
                 raw = stream.read(min(_READ_CHUNK_BYTES, remaining))
                 if not raw:
-                    raise PackageLimitError(
+                    raise MalformedPackageError(
                         f"ZIP member {info.filename!r} has truncated stored data"
                     )
                 remaining -= len(raw)
@@ -651,21 +694,21 @@ class GuardedZipReader:
                 while remaining:
                     raw = stream.read(min(_READ_CHUNK_BYTES, remaining))
                     if not raw:
-                        raise PackageLimitError(
+                        raise MalformedPackageError(
                             f"ZIP member {info.filename!r} has truncated compressed data"
                         )
                     remaining -= len(raw)
                     pending = raw
                     while pending:
                         if decompressor.eof:
-                            raise PackageLimitError(
+                            raise MalformedPackageError(
                                 f"ZIP member {info.filename!r} has trailing compressed data"
                             )
                         output = decompressor.decompress(pending, _READ_CHUNK_BYTES)
                         pending = decompressor.unconsumed_tail
                         consume(output)
                         if decompressor.unused_data:
-                            raise PackageLimitError(
+                            raise MalformedPackageError(
                                 f"ZIP member {info.filename!r} has trailing compressed data"
                             )
 
@@ -675,21 +718,21 @@ class GuardedZipReader:
                     if not output:
                         break
             except zlib.error as exc:
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     f"ZIP member {info.filename!r} has invalid deflate data"
                 ) from exc
             if not decompressor.eof:
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     f"ZIP member {info.filename!r} compressed data ends before deflate EOF"
                 )
 
         if actual_size != info.file_size:
-            raise PackageLimitError(
+            raise MalformedPackageError(
                 f"ZIP member {info.filename!r} actual expanded size {actual_size} bytes "
                 f"does not match declared size {info.file_size} bytes"
             )
         if crc & 0xFFFFFFFF != info.CRC:
-            raise PackageLimitError(f"ZIP member {info.filename!r} fails its CRC check")
+            raise MalformedPackageError(f"ZIP member {info.filename!r} fails its CRC check")
         return b"".join(chunks)
 
 
@@ -697,12 +740,12 @@ def _parse_content_types(data: bytes) -> Tuple[Dict[str, str], Dict[str, str]]:
     try:
         root = etree.fromstring(data, _CONTENT_TYPES_PARSER)
     except etree.XMLSyntaxError as exc:
-        raise PackageLimitError("[Content_Types].xml is malformed") from exc
+        raise MalformedPackageError("[Content_Types].xml is malformed") from exc
     docinfo = root.getroottree().docinfo
     if docinfo.doctype or docinfo.internalDTD is not None:
-        raise PackageLimitError("[Content_Types].xml contains a prohibited DTD")
+        raise MalformedPackageError("[Content_Types].xml contains a prohibited DTD")
     if root.tag != _CONTENT_TYPES_TAG:
-        raise PackageLimitError("[Content_Types].xml has an unexpected root element")
+        raise MalformedPackageError("[Content_Types].xml has an unexpected root element")
 
     defaults: Dict[str, str] = {}
     overrides: Dict[str, str] = {}
@@ -720,13 +763,17 @@ def _parse_content_types(data: bytes) -> Tuple[Dict[str, str], Dict[str, str]]:
                 or not content_type
                 or content_type != content_type.strip()
             ):
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     "[Content_Types].xml contains an invalid Default declaration"
                 )
             key = extension.lower()
             if key in defaults:
-                raise PackageLimitError(
-                    "[Content_Types].xml contains an ambiguous Default declaration"
+                raise MalformedPackageError(
+                    f"[Content_Types].xml declares the extension {extension!r} in more"
+                    " than one Default element; an extension may carry only one Default"
+                    " declaration, so the package does not bind it to a single content"
+                    " type and Word refuses to open it. Delete the duplicate Default so"
+                    f" {extension!r} is declared exactly once"
                 )
             defaults[key] = content_type
             continue
@@ -741,17 +788,17 @@ def _parse_content_types(data: bytes) -> Tuple[Dict[str, str], Dict[str, str]]:
                 or not content_type
                 or content_type != content_type.strip()
             ):
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     "[Content_Types].xml contains an invalid Override declaration"
                 )
             key = part_name.casefold()
             if key in overrides:
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     "[Content_Types].xml contains an ambiguous Override declaration"
                 )
             overrides[key] = content_type
             continue
-        raise PackageLimitError(
+        raise MalformedPackageError(
             "[Content_Types].xml contains an unsupported declaration"
         )
     return defaults, overrides
@@ -761,46 +808,76 @@ def _validate_directory_entry(info: "ZipInfo") -> None:
     """A folder record may occupy archive space but must be inert."""
     name = info.orig_filename
     if name != info.filename:
-        raise PackageLimitError(
+        raise MalformedPackageError(
             f"ZIP directory entry {name!r} contains a noncanonical NUL suffix"
         )
     if info.flag_bits & (_FLAG_ENCRYPTED | _FLAG_STRONG_ENCRYPTION | _FLAG_PATCHED_DATA):
-        raise PackageLimitError(
+        raise MalformedPackageError(
             f"ZIP directory entry {name!r} uses unsupported encoding flags"
         )
     if info.file_size or info.compress_size:
-        raise PackageLimitError(f"ZIP directory entry {name!r} carries data")
+        raise MalformedPackageError(f"ZIP directory entry {name!r} carries data")
 
 
 def _validate_member_name(name: str) -> None:
     if not name:
-        raise PackageLimitError("ZIP contains an empty member name")
-    if name != unicodedata.normalize("NFC", name):
-        raise PackageLimitError(f"ZIP member name {name!r} is not Unicode-normalized")
+        raise MalformedPackageError("ZIP contains an empty member name")
     if name.startswith("/") or name.endswith("/") or "\\" in name:
-        raise PackageLimitError(f"ZIP member name {name!r} is noncanonical")
+        raise MalformedPackageError(f"ZIP member name {name!r} is noncanonical")
     if "?" in name or "#" in name:
-        raise PackageLimitError(f"ZIP member name {name!r} contains a URI query or fragment")
+        raise MalformedPackageError(f"ZIP member name {name!r} contains a URI query or fragment")
     if any(ord(char) < 0x20 or ord(char) == 0x7F for char in name):
-        raise PackageLimitError(f"ZIP member name {name!r} contains a control character")
+        raise MalformedPackageError(f"ZIP member name {name!r} contains a control character")
 
     segments = name.split("/")
     if any(segment in ("", ".", "..") for segment in segments):
-        raise PackageLimitError(f"ZIP member name {name!r} has a noncanonical path segment")
+        raise MalformedPackageError(f"ZIP member name {name!r} has a noncanonical path segment")
     first_segment = segments[0]
     if len(first_segment) >= 2 and first_segment[0].isalpha() and first_segment[1] == ":":
-        raise PackageLimitError(f"ZIP member name {name!r} has a drive-qualified path")
+        raise MalformedPackageError(f"ZIP member name {name!r} has a drive-qualified path")
 
+    if name.casefold() == _CONTENT_TYPES_FOLDED:
+        # Reserved package item rather than an OPC part name: "[" and "]" are
+        # not legal URI-path characters, and this is the only member carrying
+        # them. Word opens every package that has it, so it is exempt from the
+        # character rule below. Case-variant spellings are the same package item
+        # here as they are for the case-ambiguity check, and must reach their own
+        # content-types diagnosis rather than be renamed a character defect.
+        return
+
+    # One pass over the name, consuming "%XX" as a unit. It must stay a single
+    # pass: "%" is not a legal literal, so a separate literal check would refuse
+    # percent-escaped ASCII names such as "word/media/my%20image.png", which
+    # Word opens.
     index = 0
     while index < len(name):
-        if name[index] != "%":
+        char = name[index]
+        if char != "%":
+            code = ord(char)
+            if code > 0x7F:
+                raise MalformedPackageError(
+                    f"ZIP member name {name!r} contains the non-ASCII character {char!r}; "
+                    "an OPC part name may contain only ASCII characters legal in a URI path"
+                )
+            if code not in _URI_PATH_LITERAL:
+                raise MalformedPackageError(
+                    f"ZIP member name {name!r} contains the character {char!r}, which is not "
+                    "legal in an OPC part name; percent-escape it or rename the part"
+                )
             index += 1
             continue
         if index + 2 >= len(name) or any(
-            char not in _HEX_DIGITS for char in name[index + 1 : index + 3]
+            digit not in _HEX_DIGITS for digit in name[index + 1 : index + 3]
         ):
-            raise PackageLimitError(f"ZIP member name {name!r} has a noncanonical percent escape")
+            raise MalformedPackageError(
+                f"ZIP member name {name!r} has a noncanonical percent escape"
+            )
         value = int(name[index + 1 : index + 3], 16)
         if value in _URI_UNRESERVED or value in (0x00, 0x2F, 0x5C, 0x7F) or value < 0x20:
-            raise PackageLimitError(f"ZIP member name {name!r} has an unsafe percent escape")
+            raise MalformedPackageError(f"ZIP member name {name!r} has an unsafe percent escape")
+        if value >= 0x80:
+            raise MalformedPackageError(
+                f"ZIP member name {name!r} percent-escapes the non-ASCII byte 0x{value:02X}; "
+                "an OPC part name may escape only ASCII characters"
+            )
         index += 3

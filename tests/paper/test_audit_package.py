@@ -16,7 +16,7 @@ import pytest
 
 import docx
 from docx._zipguard import GuardedZipReader
-from docx.errors import PackageLimitError, PaperRefusal
+from docx.errors import MalformedPackageError, PaperRefusal
 from docx.package import diagnose, diff_package, patch_save
 
 from .harness.paths import fixture_path
@@ -102,7 +102,7 @@ class DescribeZipStructureGuard:
             with zipfile.ZipFile(path, "w") as archive:
                 archive.writestr(info, b"elsewhere.xml")
 
-        with pytest.raises(PackageLimitError):
+        with pytest.raises(MalformedPackageError):
             _guarded_read(path)
 
     def it_rejects_case_ambiguous_names(self, tmp_path: Path):
@@ -111,7 +111,7 @@ class DescribeZipStructureGuard:
             path,
             (("word/document.xml", b"<one/>"), ("WORD/document.xml", b"<two/>")),
         )
-        with pytest.raises(PackageLimitError, match="case-ambiguous"):
+        with pytest.raises(MalformedPackageError, match="case-ambiguous"):
             _guarded_read(path)
 
 
@@ -140,7 +140,7 @@ class DescribeZipInflationHonesty:
         )
         _understate_expanded_size(path, declared_size=32)
 
-        with pytest.raises(PackageLimitError, match="declared size"):
+        with pytest.raises(MalformedPackageError, match="declared size"):
             _guarded_read(path)
 
     def it_rejects_undeclared_stored_bytes_even_with_matching_forged_crc(self, tmp_path: Path):
@@ -148,7 +148,7 @@ class DescribeZipInflationHonesty:
         _write_archive(path, (("word/media/data.bin", b"abcdefgh"),))
         _understate_stored_member(path, declared_data=b"abcd")
 
-        with pytest.raises(PackageLimitError, match="undeclared trailing data"):
+        with pytest.raises(MalformedPackageError, match="undeclared trailing data"):
             _guarded_read(path)
 
 
@@ -164,12 +164,12 @@ class DescribeGuardedPackageApis:
         out.write_bytes(sentinel)
         out.chmod(0o640)
 
-        assert issubclass(PackageLimitError, PaperRefusal)
-        with pytest.raises(PackageLimitError):
+        assert issubclass(MalformedPackageError, PaperRefusal)
+        with pytest.raises(MalformedPackageError):
             docx.Document(str(unsafe))
-        with pytest.raises(PackageLimitError):
+        with pytest.raises(MalformedPackageError):
             diff_package(source, unsafe)
-        with pytest.raises(PackageLimitError):
+        with pytest.raises(MalformedPackageError):
             patch_save(unsafe, document, out)
 
         assert out.read_bytes() == sentinel
@@ -333,7 +333,7 @@ class DescribeDirectoryEntries:
             )
             for name in zin.namelist():
                 zout.writestr(name, zin.read(name))
-        with pytest.raises(PackageLimitError, match="carries data"):
+        with pytest.raises(MalformedPackageError, match="carries data"):
             docx.Document(str(path))
 
     def and_it_validates_local_records_in_a_directory_only_archive(
@@ -347,5 +347,5 @@ class DescribeDirectoryEntries:
         data[local_offset : local_offset + 4] = b"BAD!"
         path.write_bytes(data)
 
-        with pytest.raises(PackageLimitError, match="invalid header"):
+        with pytest.raises(MalformedPackageError, match="invalid header"):
             _guarded_read(path)
