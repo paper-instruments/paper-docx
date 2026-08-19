@@ -6,25 +6,30 @@ them type-correctly: text controls get their runs replaced (placeholder
 state cleared), checkboxes flip `w14:checked` AND their
 glyph, dropdowns/combos validate against their `w:listItem` choices, dates
 set `w:fullDate` alongside the display text. Data-bound controls
-(`w:dataBinding`) refuse: their value lives in a custom XML part Word
-re-syncs on open, so editing the surface text would silently vanish.
+(`w:dataBinding`) write the custom XML store Word re-syncs on open, then
+update the visible surface.
 """
 
 from __future__ import annotations
 
 import datetime as dt
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterator, List, Optional, Tuple, Union
 
+from lxml import etree
+
 from docx._guard import check_install
+from docx._transaction import rollback_on_error
 from docx.errors import (
     AmbiguousTargetError,
     BoundaryViolationError,
     TargetNotFoundError,
     UnsupportedStructureError,
 )
+from docx.opc.constants import CONTENT_TYPE as CT
 from docx.oxml.ns import qn
-from docx.oxml.parser import OxmlElement
+from docx.oxml.parser import OxmlElement, parse_xml
 from docx.protection import _refuse_if_protected
 from docx.search import _validate_writable_text
 from docx.story import _first_choice_children, _story_elements
@@ -61,6 +66,12 @@ _BLOCK_CONTROL_PARENTS = frozenset(
 )
 _SHOWING_PLC_HDR = qn("w:showingPlcHdr")
 _DATA_BINDING = qn("w:dataBinding")
+_STORE_ITEM_ID = qn("w:storeItemID")
+_XPATH = qn("w:xpath")
+_PREFIX_MAPPINGS = qn("w:prefixMappings")
+_DS_NS = "http://schemas.openxmlformats.org/officeDocument/2006/customXml"
+_DS_ITEM_ID = f"{{{_DS_NS}}}itemID"
+_XSI_NIL = "{http://www.w3.org/2001/XMLSchema-instance}nil"
 _LOCK = qn("w:lock")
 _DROPDOWN = qn("w:dropDownList")
 _COMBO = qn("w:comboBox")
@@ -457,11 +468,21 @@ class Control:
         self._validate_ownership()
         _refuse_if_protected(self._document, "set a control value")
         if self.is_data_bound:
-            raise UnsupportedStructureError(
-                "control is data-bound (w:dataBinding): its value lives in a"
-                " custom XML part Word re-syncs on open; editing the surface"
-                " text would silently vanish"
-            )
+            control_type = self.control_type
+            if control_type not in ("text", "rich_text"):
+                raise UnsupportedStructureError(
+                    f"data-bound {control_type} controls are not settable;"
+                    " nothing was changed"
+                )
+            if not isinstance(value, str):
+                raise ValueError("data-bound controls take a string value")
+            _validate_writable_text(value, argument="value")
+            _refuse_locked_control_content(self._sdt)
+            binding = self._sdt_pr.find(_DATA_BINDING)
+            with rollback_on_error(self._document):
+                _write_bound_store(self._document, binding, value)
+                self._set_text(value)
+            return
         _refuse_control_write_restrictions(self._sdt)
         control_type = self.control_type
         if control_type == "checkbox":
@@ -616,15 +637,162 @@ def _validate_span_surface_edit(sdt: "_Element") -> None:
         )
 
 
-def _refuse_control_write_restrictions(sdt: "_Element") -> None:
-    """Honor binding and content locks without rejecting typed controls."""
+def _prefix_map(raw: Optional[str]) -> dict:
+    if not raw:
+        return {}
+    mapping = {}
+    for match in re.finditer(
+        r"xmlns(?::([A-Za-z_][\w.-]*))?\s*=\s*['\"]([^'\"]+)['\"]", raw
+    ):
+        mapping[match.group(1) or "_"] = match.group(2)
+    return mapping
+
+
+def _binding_namespaces(root, binding: "_Element") -> dict:
+    nsmap = _prefix_map(binding.get(_PREFIX_MAPPINGS))
+    if nsmap:
+        return nsmap
+    nsmap = {prefix: uri for prefix, uri in (root.nsmap or {}).items() if prefix}
+    default = (root.nsmap or {}).get(None)
+    if default is not None:
+        nsmap["_"] = default
+    return nsmap
+
+
+def _evaluate_store_xpath(root, xpath: str, namespaces):
+    """Run one stored binding expression, refusing anything that cannot name a node.
+
+    The expression comes from `w:dataBinding/@w:xpath`, so it is document content rather than
+    a caller argument: a malformed or non-node-set expression is bad input and has to speak as
+    a typed refusal like every other defect this function rejects. Unguarded, lxml surfaced
+    `XPathEvalError` for bad syntax and `TypeError` for an expression returning a number or a
+    boolean, neither of which a caller catching |PaperRefusal| can handle.
+
+    Word treats a binding it cannot evaluate as an *unbound* control: it opens the document
+    without complaint and shows the body placeholder. So the message says the binding is
+    unusable, never that the document is damaged.
+    """
+    try:
+        result = root.xpath(xpath, namespaces=namespaces)
+    except etree.XPathError as exc:
+        raise UnsupportedStructureError(
+            f"the data-bound control's xpath {xpath!r} is not a valid XPath expression, so the"
+            " bound value cannot be located. The document itself is intact — Word treats such"
+            " a binding as unbound. Repair the w:dataBinding expression, or set the control's"
+            " value in a document whose binding resolves; nothing was changed"
+        ) from exc
+    if not isinstance(result, list):
+        raise UnsupportedStructureError(
+            f"the data-bound control's xpath {xpath!r} evaluates to"
+            f" {type(result).__name__}, not to a node, so there is nothing in the custom XML"
+            " store to write to. Point the binding at an element or attribute; nothing was"
+            " changed"
+        )
+    return result
+
+
+def _eval_store_xpath(root, xpath: str, nsmap: dict):
+    namespaces = nsmap or None
+    nodes = _evaluate_store_xpath(root, xpath, namespaces)
+    if nodes:
+        return nodes
+    if "_" not in nsmap or re.search(r"(^|/)[A-Za-z_][\w.-]*:", xpath):
+        return nodes
+    qualified = re.sub(
+        r"(^|/)([A-Za-z_][\w.-]*)",
+        lambda match: f"{match.group(1)}_:{match.group(2)}",
+        xpath,
+    )
+    return _evaluate_store_xpath(root, qualified, nsmap)
+
+
+def _part_root(part):
+    element = getattr(part, "_element", None)
+    if element is not None:
+        return element
+    if "xml" not in (part.content_type or "").lower():
+        return None
+    blob = getattr(part, "blob", None)
+    if not blob:
+        return None
+    return parse_xml(blob)
+
+
+def _write_bound_node(node, value: str) -> None:
+    if isinstance(node, etree._Element):
+        if _XSI_NIL in node.attrib:
+            del node.attrib[_XSI_NIL]
+        node.text = value
+        return
+    parent = node.getparent() if hasattr(node, "getparent") else None
+    attrname = getattr(node, "attrname", None)
+    if parent is not None and attrname and getattr(node, "is_attribute", False):
+        parent.set(attrname, value)
+        return
+    raise UnsupportedStructureError(
+        "xpath matched a non-element store target; nothing was changed"
+    )
+
+
+def _write_bound_store(document: "Document", binding: "_Element", value: str) -> None:
+    store_id = binding.get(_STORE_ITEM_ID)
+    xpath = binding.get(_XPATH)
+    if not store_id or not xpath:
+        raise UnsupportedStructureError(
+            "data-bound control is missing storeItemID or xpath; nothing was changed"
+        )
+    props_part = None
+    for part in document.part.package.iter_parts():
+        if part.content_type != CT.OFC_CUSTOM_XML_PROPERTIES:
+            continue
+        root = _part_root(part)
+        if root is None:
+            continue
+        if root.get(_DS_ITEM_ID) == store_id:
+            props_part = part
+            break
+    if props_part is None:
+        raise TargetNotFoundError(
+            f"no custom XML store with itemID {store_id!r}; nothing was changed"
+        )
+    item_part = None
+    for owner in document.part.package.iter_parts():
+        rels = getattr(owner, "rels", None)
+        if not rels:
+            continue
+        for rel in rels.values():
+            if rel.is_external:
+                continue
+            if rel.target_part is props_part:
+                item_part = owner
+                break
+        if item_part is not None:
+            break
+    if item_part is None or item_part is props_part:
+        raise TargetNotFoundError(
+            "custom XML properties have no item payload; nothing was changed"
+        )
+    item_root = _part_root(item_part)
+    if item_root is None:
+        raise UnsupportedStructureError(
+            "custom XML item is not writable XML; nothing was changed"
+        )
+    nodes = _eval_store_xpath(item_root, xpath, _binding_namespaces(item_root, binding))
+    if not nodes:
+        raise TargetNotFoundError(
+            f"xpath {xpath!r} matched no node in the custom XML store"
+        )
+    _write_bound_node(nodes[0], value)
+    if getattr(item_part, "_element", None) is None:
+        item_part._blob = etree.tostring(
+            item_root, xml_declaration=True, encoding="UTF-8"
+        )
+
+
+def _refuse_locked_control_content(sdt: "_Element") -> None:
     sdt_pr = sdt.find(_SDT_PR)
     if sdt_pr is None:
         return
-    if sdt_pr.find(_DATA_BINDING) is not None:
-        raise UnsupportedStructureError(
-            "control is data-bound; edits could be discarded on sync"
-        )
     locks = sdt_pr.findall(_LOCK)
     if len(locks) > 1:
         raise UnsupportedStructureError(
@@ -634,6 +802,18 @@ def _refuse_control_write_restrictions(sdt: "_Element") -> None:
         raise UnsupportedStructureError(
             "control content is locked; nothing was changed"
         )
+
+
+def _refuse_control_write_restrictions(sdt: "_Element") -> None:
+    """Honor binding and content locks without rejecting typed controls."""
+    sdt_pr = sdt.find(_SDT_PR)
+    if sdt_pr is None:
+        return
+    if sdt_pr.find(_DATA_BINDING) is not None:
+        raise UnsupportedStructureError(
+            "control is data-bound; edits could be discarded on sync"
+        )
+    _refuse_locked_control_content(sdt)
 
 
 def _iter_sdts(element: "_Element") -> "Iterator[_Element]":

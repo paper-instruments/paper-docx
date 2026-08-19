@@ -7,9 +7,11 @@ import struct
 from pathlib import Path
 
 import pytest
+from lxml import etree
 
 import docx
 from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
+from docx.controls import _part_root, get_control, set_control_value
 from docx.drawing import Drawing
 from docx.errors import (
     BoundaryViolationError,
@@ -20,7 +22,10 @@ from docx.errors import (
 from docx.fields import add_caption
 from docx.links import add_hyperlink
 from docx.notes import add_endnote, add_footnote
+from docx.opc.constants import CONTENT_TYPE as CT
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from docx.opc.packuri import PackURI
+from docx.opc.part import XmlPart
 from docx.oxml.ns import nsdecls, qn
 from docx.oxml.parser import OxmlElement, parse_xml
 from docx.protection import acknowledge_protection, set_protection
@@ -30,6 +35,7 @@ from .harness.contract import save_and_reopen
 from .harness.paths import fixture_path
 
 MINIMAL = "generated/minimal-clean/minimal.docx"
+STORE_ID = "{11111111-1111-1111-1111-111111111111}"
 
 
 def _doc(relpath: str = MINIMAL):
@@ -46,6 +52,57 @@ def _bmp(red: int, green: int, blue: int) -> bytes:
 
 def _blip_embed(drawing: Drawing) -> str:
     return drawing._drawing.xpath(".//pic:blipFill/a:blip/@r:embed")[0]
+
+
+def _attach_bound_control(
+    document,
+    tag: str,
+    *,
+    locked: bool = False,
+    extra_pr: str = "",
+    xpath: str = "/ns0:root/ns0:name",
+    prefix_mappings: str | None = "xmlns:ns0='http://example.com/form'",
+    item_xml: str = (
+        '<ns0:root xmlns:ns0="http://example.com/form">'
+        "<ns0:name>old</ns0:name></ns0:root>"
+    ),
+) -> None:
+    item = parse_xml(item_xml)
+    item_part = XmlPart(
+        PackURI("/customXml/item2.xml"),
+        "application/xml",
+        item,
+        document.part.package,
+    )
+    props = parse_xml(
+        '<ds:datastoreItem xmlns:ds="http://schemas.openxmlformats.org/'
+        'officeDocument/2006/customXml"'
+        f' ds:itemID="{STORE_ID}"/>'
+    )
+    props_part = XmlPart(
+        PackURI("/customXml/itemProps2.xml"),
+        CT.OFC_CUSTOM_XML_PROPERTIES,
+        props,
+        document.part.package,
+    )
+    document.part.relate_to(item_part, RT.CUSTOM_XML)
+    item_part.relate_to(props_part, RT.CUSTOM_XML_PROPS)
+    lock = '<w:lock w:val="contentLocked"/>' if locked else ""
+    mapping_attr = (
+        f" w:prefixMappings=\"{prefix_mappings}\"" if prefix_mappings is not None else ""
+    )
+    document.element.body.insert(
+        len(document.element.body) - 1,
+        parse_xml(
+            f'<w:p {nsdecls("w", "w14")}>'
+            f'<w:sdt><w:sdtPr><w:tag w:val="{tag}"/>{lock}{extra_pr}'
+            f"<w:dataBinding{mapping_attr}"
+            f' w:xpath="{xpath}"'
+            f' w:storeItemID="{STORE_ID}"/></w:sdtPr>'
+            "<w:sdtContent><w:r><w:t>old</w:t></w:r></w:sdtContent>"
+            "</w:sdt></w:p>"
+        ),
+    )
 
 
 class DescribeCommentDeleteAndIdentity:
@@ -473,3 +530,207 @@ class DescribeNotes:
         )
         with pytest.raises(UnsupportedStructureError, match="plain-text"):
             add_footnote(document, find_one(document, "PlainTextNote"), "nope")
+
+
+class DescribeDataBoundControls:
+    # -- A binding's xpath is document content, not a caller argument, so every way it can be
+    # -- unusable has to speak as a typed refusal. Word treats a binding it cannot evaluate as
+    # -- an unbound control -- it opens the document and shows the body placeholder -- so these
+    # -- refusals must not claim the document is damaged.
+    @pytest.mark.parametrize(
+        "xpath",
+        [
+            "/ns0:root/[[[",                    # malformed syntax
+            "bogus-fn(/ns0:root)",              # unregistered function
+            "count(/ns0:root/ns0:name)",        # evaluates to a number
+            "string(/ns0:root/ns0:name)",       # evaluates to a string
+            "boolean(/ns0:root)",               # evaluates to a boolean
+        ],
+    )
+    def it_refuses_an_xpath_that_cannot_name_a_node(self, xpath: str):
+        document = _doc()
+        _attach_bound_control(document, "bound", xpath=xpath)
+        before = etree.tostring(document.element)
+
+        with pytest.raises(UnsupportedStructureError, match="nothing was changed"):
+            set_control_value(document, "new", tag="bound")
+
+        assert etree.tostring(document.element) == before
+        assert get_control(document, tag="bound").value == "old"
+
+    def it_says_the_binding_is_unusable_without_calling_the_document_damaged(self):
+        document = _doc()
+        _attach_bound_control(document, "bound", xpath="/ns0:root/[[[")
+
+        with pytest.raises(UnsupportedStructureError) as exc:
+            set_control_value(document, "new", tag="bound")
+
+        message = str(exc.value)
+        assert "not a valid XPath expression" in message
+        assert "/ns0:root/[[[" in message
+        # -- Word opens these documents without complaint, so the message must not imply
+        # -- corruption or send the caller to repair the file
+        assert "corrupt" not in message.lower()
+        assert "w:dataBinding expression" in message
+
+    def it_writes_the_custom_xml_store(self, tmp_path: Path):
+        document = _doc()
+        _attach_bound_control(document, "bound")
+        set_control_value(document, "new", tag="bound")
+        assert get_control(document, tag="bound").value == "new"
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        store = None
+        for part in reopened.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                element = getattr(part, "_element", None)
+                store = element if element is not None else parse_xml(part.blob)
+        assert store is not None
+        ns = {"ns0": "http://example.com/form"}
+        assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"
+
+    def it_writes_the_store_when_the_package_has_binary_parts(self, tmp_path: Path):
+        document = _doc()
+        document.add_paragraph().add_run().add_picture(io.BytesIO(_bmp(255, 0, 0)))
+        _attach_bound_control(document, "bound")
+        set_control_value(document, "new", tag="bound")
+        assert get_control(document, tag="bound").value == "new"
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        store = None
+        for part in reopened.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                element = getattr(part, "_element", None)
+                store = element if element is not None else parse_xml(part.blob)
+        assert store is not None
+        ns = {"ns0": "http://example.com/form"}
+        assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"
+
+    def it_refuses_a_locked_data_bound_control(self):
+        document = _doc()
+        _attach_bound_control(document, "bound-locked", locked=True)
+        with pytest.raises(UnsupportedStructureError, match="locked"):
+            set_control_value(document, "new", tag="bound-locked")
+        assert get_control(document, tag="bound-locked").value == "old"
+
+    def it_clears_xsi_nil_when_writing_the_store(self):
+        document = _doc()
+        _attach_bound_control(document, "bound")
+        store = None
+        for part in document.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                store = part._element
+        ns = {"ns0": "http://example.com/form"}
+        node = store.xpath("/ns0:root/ns0:name", namespaces=ns)[0]
+        node.set("{http://www.w3.org/2001/XMLSchema-instance}nil", "true")
+        set_control_value(document, "new", tag="bound")
+        assert node.get("{http://www.w3.org/2001/XMLSchema-instance}nil") is None
+        assert node.text == "new"
+
+    def it_refuses_a_data_bound_checkbox(self):
+        document = _doc()
+        _attach_bound_control(
+            document,
+            "bound-box",
+            extra_pr='<w14:checkbox><w14:checked w14:val="0"/></w14:checkbox>',
+        )
+        with pytest.raises(UnsupportedStructureError, match="checkbox"):
+            set_control_value(document, "true", tag="bound-box")
+        assert get_control(document, tag="bound-box").value is False
+
+    def it_refuses_a_data_bound_picture(self):
+        document = _doc()
+        _attach_bound_control(document, "bound-pic", extra_pr="<w:picture/>")
+        with pytest.raises(UnsupportedStructureError, match="picture"):
+            set_control_value(document, "new", tag="bound-pic")
+
+    def it_writes_an_attribute_binding(self):
+        document = _doc()
+        _attach_bound_control(
+            document,
+            "bound-attr",
+            xpath="/ns0:root/ns0:name/@status",
+            item_xml=(
+                '<ns0:root xmlns:ns0="http://example.com/form">'
+                '<ns0:name status="old">keep</ns0:name></ns0:root>'
+            ),
+        )
+        set_control_value(document, "new", tag="bound-attr")
+        store = None
+        for part in document.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                store = part._element
+        ns = {"ns0": "http://example.com/form"}
+        node = store.xpath("/ns0:root/ns0:name", namespaces=ns)[0]
+        assert node.get("status") == "new"
+        assert node.text == "keep"
+
+    def it_writes_the_store_after_reopen(self, tmp_path: Path):
+        document = _doc()
+        _attach_bound_control(document, "bound")
+        reopened = save_and_reopen(document, tmp_path / "in.docx")
+        set_control_value(reopened, "new", tag="bound")
+        saved = save_and_reopen(reopened, tmp_path / "out.docx")
+        store = None
+        for part in saved.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                element = getattr(part, "_element", None)
+                store = element if element is not None else parse_xml(part.blob)
+        assert store is not None
+        ns = {"ns0": "http://example.com/form"}
+        assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"
+
+    def it_parses_blob_stores_without_resolving_entities(self):
+        class _BlobPart:
+            content_type = "application/xml"
+            blob = b'<!DOCTYPE root [<!ENTITY e "EXPANDED">]><root>&e;</root>'
+
+        root = _part_root(_BlobPart())
+        assert (root.text or "") != "EXPANDED"
+
+    def it_writes_the_store_using_the_item_namespaces(self):
+        document = _doc()
+        _attach_bound_control(document, "bound", prefix_mappings=None)
+        set_control_value(document, "new", tag="bound")
+        store = None
+        for part in document.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                store = part._element
+        ns = {"ns0": "http://example.com/form"}
+        assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"
+
+    def it_writes_the_store_using_the_default_namespace(self):
+        document = _doc()
+        _attach_bound_control(
+            document,
+            "bound-default",
+            prefix_mappings=None,
+            xpath="/root/name",
+            item_xml=(
+                '<root xmlns="http://example.com/form"><name>old</name></root>'
+            ),
+        )
+        set_control_value(document, "new", tag="bound-default")
+        store = None
+        for part in document.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                store = part._element
+        ns = {"ns0": "http://example.com/form"}
+        assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"
+
+    def it_writes_the_store_when_prefix_mappings_declare_a_default_ns(self):
+        document = _doc()
+        _attach_bound_control(
+            document,
+            "bound-default-map",
+            prefix_mappings="xmlns='http://example.com/form'",
+            xpath="/root/name",
+            item_xml=(
+                '<root xmlns="http://example.com/form"><name>old</name></root>'
+            ),
+        )
+        set_control_value(document, "new", tag="bound-default-map")
+        store = None
+        for part in document.part.package.iter_parts():
+            if str(part.partname) == "/customXml/item2.xml":
+                store = part._element
+        ns = {"ns0": "http://example.com/form"}
+        assert store.xpath("/ns0:root/ns0:name", namespaces=ns)[0].text == "new"

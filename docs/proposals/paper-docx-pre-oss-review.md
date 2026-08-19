@@ -40,7 +40,7 @@ Drop the zip-bomb caps and the two bundled deliver verbs. Keep `PackageLimitErro
 - ~~Create or retarget a hyperlink~~ **Done.** `add_hyperlink`, `Hyperlink.address`.
 - ~~Auto-number caption field~~ **Done.** `add_caption`.
 - ~~Add a footnote or endnote~~ **Done.** `add_footnote`, `add_endnote`.
-- Fill a data-bound form control
+- ~~Fill a data-bound form control~~ **Done.** `set_control_value` writes the custom XML store.
 - Append and keep the source letterhead
 
 **Parked**
@@ -61,7 +61,7 @@ Read **What it does** first. The API column is only the name in the library.
 | Diff two `.docx` files into a Word redline of the text. | `docx.package.compare` | Review | Yes | Review job, not every session: two files in, a redline a person opens in Word. Images, fields, controls, and formatting-only diffs refuse. |
 | Change one table cell, or insert/delete a row, without breaking a merged header. | `docx.tableops` | Structured | Yes | Stock cell/row edits scramble real tables. |
 | Apply a real Word numbered or bulleted list, not fake Unicode bullets. Restart numbering when needed. | `docx.numbering` | Structured | Yes | Needed when inserting blocks into existing lists. |
-| Fill a form control: text, checkbox, dropdown, or date. | `docx.controls` | Structured | Yes | Stock cannot fill content controls safely. Data-bound controls were asked to refuse, not to fill. Picture controls also refuse (see Missing). |
+| Fill a form control: text, checkbox, dropdown, or date. | `docx.controls` | Structured | Yes | Stock cannot fill content controls safely. Data-bound controls write the custom XML store. Picture controls still refuse. |
 | Put a bookmark on a phrase, list bookmarks, or remove the markers (the text stays). | `docx.bookmarks` | Structured | Yes | Anchors for cross-references and TOC in existing files. |
 | Insert a page number, date, cross-reference, table of contents, or auto-number caption. The displayed value is computed when Word opens the file, not here. | `docx.fields` | Structured | Yes | Stock is weak; agents otherwise hand-edit field XML. Captions use `add_caption` (SEQ). |
 | Copy a range, or a whole document, into another file, keeping styles, lists, and images. | `docx.composition` | Combine | Yes | Cross-file copy is where styles and relationships corrupt. Headers stay those of the destination file; keeping the source letterhead was left for later. Will not copy comments, pending revisions, or footnotes. |
@@ -91,7 +91,7 @@ Jobs the agent could not do through the package. Stacked follow-ups add these AP
 | ~~Turn a phrase into a hyperlink, or change where an existing link goes~~ **Done.** | Edit existing, review | URL was read-only. Create/retarget was XML. | `add_hyperlink`, `Hyperlink.address` | **Later, if someone asks.** The plan asked to edit text *inside* an existing link, not to create or retarget one. |
 | ~~Caption a figure or table so numbers update (Figure 1, Figure 2, …)~~ **Done.** | Structured | Bookmark plus REF is not a SEQ caption field. | `add_caption` | **Not asked.** Fields in the plan are page numbers, date, cross-references, and TOC. |
 | ~~Add a footnote or endnote~~ **Done.** | Edit existing | Existing notes could be read and edited. New notes were not created. | `add_footnote`, `add_endnote` | **Explicitly out.** Read is in. Creating notes was deferred until a legal or academic customer asked. |
-| Fill a form field whose value lives in Word's hidden custom XML | Structured | Surface fill would vanish on Word open. The package used to refuse. | | **Asked as refuse.** Intentional no in the original plan. |
+| ~~Fill a form field whose value lives in Word's hidden custom XML~~ **Done.** | Structured | Surface fill would vanish on Word open. The package used to refuse. | `set_control_value` writes the custom XML store. | **Asked as refuse.** Intentional no in the original plan; this follow-up fills the store. |
 | Append another document and keep *its* letterhead | Combine | Default append keeps destination headers. | | **Asked as future.** Destination headers on purpose; keeping the source letterhead was left for later. |
 
 Not a package hole (stock, QA outside the library, or a different product): insert image (`Run.add_picture`), edit header/footer text (stock + story/search), page/section breaks (stock `add_section`), fill existing non-bound form controls, visual PNG render, flatten-runs, redaction, a11y audit, watermarks, Google Docs title sanitizer, `.doc` conversion. Public document-QA was asked to stay out of this library.
