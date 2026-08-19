@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Callable, Iterator, Optional, cast
 
 from docx._transaction import rollback_on_error, rollback_xml_on_error
 from docx.blkcntnr import BlockItemContainer
+from docx.commentops import _ensure_comment_identity
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 
 if TYPE_CHECKING:
@@ -133,7 +134,9 @@ class Comments:
 
         if document is not None:
             with rollback_on_error(document, self):
-                return add()
+                comment = add()
+                _ensure_comment_identity(document, comment._comment_elm)
+                return comment
         with rollback_xml_on_error(self._comments_elm):
             return add()
 

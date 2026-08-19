@@ -66,6 +66,14 @@ PartFactory.part_type_for[
     "application/vnd.openxmlformats-officedocument.wordprocessingml"
     ".commentsExtended+xml"
 ] = _PaperXmlPart
+PartFactory.part_type_for[
+    "application/vnd.openxmlformats-officedocument.wordprocessingml"
+    ".commentsIds+xml"
+] = _PaperXmlPart
+PartFactory.part_type_for[
+    "application/vnd.openxmlformats-officedocument.wordprocessingml"
+    ".commentsExtensible+xml"
+] = _PaperXmlPart
 
 del (
     CT,

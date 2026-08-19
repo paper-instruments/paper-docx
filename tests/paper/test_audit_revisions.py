@@ -12,6 +12,7 @@ import pytest
 import docx
 from docx.commentops import (
     COMMENTS_EXTENDED_RELATIONSHIP_TYPE,
+    COMMENTS_IDS_RELATIONSHIP_TYPE,
     reply,
     resolve,
 )
@@ -22,6 +23,7 @@ from docx.opc.packuri import PackURI
 from docx.opc.part import Part
 from docx.oxml import parse_xml
 from docx.oxml.ns import nsdecls, qn
+from docx.shared import Inches
 
 from .harness.paths import fixture_path
 
@@ -327,6 +329,17 @@ class DescribeDiscardCleanup:
         }
         assert first_para_id not in remaining_para_ids
         assert second_para_id in remaining_para_ids
+        ids_root = document.part.part_related_by(
+            COMMENTS_IDS_RELATIONSHIP_TYPE
+        )._element  # noqa: SLF001
+        remaining_identity = {
+            entry.get(
+                "{http://schemas.microsoft.com/office/word/2016/wordml/cid}paraId"
+            )
+            for entry in ids_root
+        }
+        assert first_para_id not in remaining_identity
+        assert second_para_id in remaining_identity
 
         output = tmp_path / "comments.docx"
         document.save(str(output))
@@ -337,6 +350,41 @@ class DescribeDiscardCleanup:
         assert first_para_id not in {
             entry.get(f"{{{_W15_NS}}}paraId") for entry in reopened_extended
         }
+
+    def it_removes_identity_rows_keyed_on_a_nested_last_paragraph(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph("nested comment")
+        comment = document.add_comment(
+            paragraph.runs, text="discard me", author="Audit"
+        )
+        comment.add_table(1, 1, Inches(1))
+        comments_root = document.part.part_related_by(RT.COMMENTS)._element  # noqa: SLF001
+        comment_elm = next(
+            node
+            for node in comments_root
+            if int(node.get(qn("w:id"))) == comment.comment_id
+        )
+        last_para_id = list(comment_elm.iter(qn("w:p")))[-1].get(qn("w14:paraId"))
+        top_para_id = comment_elm.findall(qn("w:p"))[-1].get(qn("w14:paraId"))
+        assert last_para_id and last_para_id != top_para_id
+        reference = next(
+            node
+            for node in document.element.iter(qn("w:commentReference"))
+            if node.get(qn("w:id")) == str(comment.comment_id)
+        )
+        _wrap_in_insertion(reference.getparent(), 41)
+
+        assert document.revisions.reject_all() == 1
+        ids_root = document.part.part_related_by(
+            COMMENTS_IDS_RELATIONSHIP_TYPE
+        )._element  # noqa: SLF001
+        remaining_identity = {
+            entry.get(
+                "{http://schemas.microsoft.com/office/word/2016/wordml/cid}paraId"
+            )
+            for entry in ids_root
+        }
+        assert last_para_id not in remaining_identity
 
     def it_removes_an_entire_discarded_comment_thread(self):
         from docx.blocks import tracked_delete_paragraphs

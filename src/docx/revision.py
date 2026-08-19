@@ -22,6 +22,7 @@ from typing import TYPE_CHECKING, Iterator, List, Optional, Sequence, Tuple
 
 from docx._guard import check_install
 from docx._transaction import rollback_on_error
+from docx.commentops import _last_paragraph, _remove_comment_identity_rows
 from docx.errors import UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.protection import _refuse_if_protected
@@ -1388,13 +1389,17 @@ def _cleanup_comment_anchors(document: "Optional[Document]", comment_ids) -> Non
     for comment in list(comments_root):
         if _comment_id(comment) not in wanted:
             continue
-        paragraphs = comment.findall(_P)
-        if paragraphs:
-            para_id = paragraphs[-1].get(_W14_PARA_ID)
+        try:
+            last = _last_paragraph(comment)
+        except UnsupportedStructureError:
+            last = None
+        if last is not None:
+            para_id = last.get(_W14_PARA_ID)
             if para_id is not None:
                 paragraph_ids.add(para_id)
         _discard_element(comment, document)
     _cleanup_comments_extended(document, paragraph_ids)
+    _remove_comment_identity_rows(document, paragraph_ids)
 
 
 def _discard_element(

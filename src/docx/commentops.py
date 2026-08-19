@@ -18,9 +18,12 @@ from docx._ownership import require_comment_owner
 from docx._textatoms import DEL_TEXT, INSTR_TEXT, is_direct_run_child, project_run_child
 from docx._transaction import rollback_on_error
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
+from docx.opc.packuri import PackURI
+from docx.opc.part import XmlPart
 from docx.oxml.ns import nsdecls, qn
 from docx.oxml.parser import parse_xml
 from docx.protection import _refuse_if_protected
+from docx.story import _story_elements
 
 _W_DECL = nsdecls("w")
 
@@ -63,6 +66,37 @@ _COMMENTS_EX_TEMPLATE = (
 
 _COMMENTS_PARTNAME = "/word/comments.xml"
 _COMMENTS_EXTENDED_PARTNAME = "/word/commentsExtended.xml"
+_COMMENTS_IDS_PARTNAME = "/word/commentsIds.xml"
+_COMMENTS_EXTENSIBLE_PARTNAME = "/word/commentsExtensible.xml"
+
+_W16CID_NS = "http://schemas.microsoft.com/office/word/2016/wordml/cid"
+_W16CEX_NS = "http://schemas.microsoft.com/office/word/2018/wordml/cex"
+_COMMENT_ID = f"{{{_W16CID_NS}}}commentId"
+_PARA_ID_CID = f"{{{_W16CID_NS}}}paraId"
+_DURABLE_ID = f"{{{_W16CID_NS}}}durableId"
+_COMMENT_EXTENSIBLE = f"{{{_W16CEX_NS}}}commentExtensible"
+_DURABLE_ID_CEX = f"{{{_W16CEX_NS}}}durableId"
+
+COMMENTS_IDS_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsIds+xml"
+)
+COMMENTS_IDS_RELATIONSHIP_TYPE = (
+    "http://schemas.microsoft.com/office/2016/09/relationships/commentsIds"
+)
+COMMENTS_EXTENSIBLE_CONTENT_TYPE = (
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.commentsExtensible+xml"
+)
+COMMENTS_EXTENSIBLE_RELATIONSHIP_TYPE = (
+    "http://schemas.microsoft.com/office/2018/08/relationships/commentsExtensible"
+)
+
+_COMMENTS_IDS_TEMPLATE = (
+    '<w16cid:commentsIds xmlns:w16cid="http://schemas.microsoft.com/office/word/2016/wordml/cid"/>'
+)
+_COMMENTS_EXTENSIBLE_TEMPLATE = (
+    '<w16cex:commentsExtensible'
+    ' xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex"/>'
+)
 
 
 def _part_with_name(document: "Document", partname: str):
@@ -268,9 +302,6 @@ def _comments_extended_root(document: "Document", *, create: bool) -> "Optional[
             "a package part already occupies /word/commentsExtended.xml"
             " without the commentsExtended relationship; nothing was changed"
         )
-    from docx.opc.packuri import PackURI
-    from docx.opc.part import XmlPart
-
     root = parse_xml(_COMMENTS_EX_TEMPLATE)
     new_part = XmlPart(
         PackURI("/word/commentsExtended.xml"),
@@ -282,6 +313,105 @@ def _comments_extended_root(document: "Document", *, create: bool) -> "Optional[
     return root
 
 
+def _xml_part_root(
+    document: "Document",
+    *,
+    relationship_type: str,
+    partname: str,
+    content_type: str,
+    template: str,
+    expected_tag: str,
+    create: bool,
+) -> "Optional[_Element]":
+    part = document.part
+    try:
+        existing = part.part_related_by(relationship_type)
+    except KeyError:
+        existing = None
+    except ValueError:
+        raise UnsupportedStructureError(
+            f"multiple {partname} relationships make comment identity"
+            " ambiguous; nothing was changed"
+        ) from None
+    if existing is not None:
+        element = getattr(existing, "_element", None)
+        if element is None or element.tag != expected_tag:
+            raise UnsupportedStructureError(
+                f"{partname} has an unexpected root; nothing was changed"
+            )
+        return element
+    if not create:
+        return None
+    if _part_with_name(document, partname) is not None:
+        raise UnsupportedStructureError(
+            f"a package part already occupies {partname} without the"
+            " expected relationship; nothing was changed"
+        )
+    root = parse_xml(template)
+    new_part = XmlPart(PackURI(partname), content_type, root, part.package)
+    part.relate_to(new_part, relationship_type)
+    return root
+
+
+def _ensure_comment_identity(document: "Document", comment_elm: "_Element") -> None:
+    """Write modern Word comment identity parts so the comment round-trips."""
+    para_id = _ensure_para_id(document, _last_paragraph(comment_elm))
+    ids_root = _xml_part_root(
+        document,
+        relationship_type=COMMENTS_IDS_RELATIONSHIP_TYPE,
+        partname=_COMMENTS_IDS_PARTNAME,
+        content_type=COMMENTS_IDS_CONTENT_TYPE,
+        template=_COMMENTS_IDS_TEMPLATE,
+        expected_tag=f"{{{_W16CID_NS}}}commentsIds",
+        create=True,
+    )
+    assert ids_root is not None
+    existing = None
+    for entry in ids_root.findall(_COMMENT_ID):
+        if (entry.get(_PARA_ID_CID) or "").upper() == para_id:
+            existing = entry
+            break
+    if existing is None:
+        used = {
+            (entry.get(_DURABLE_ID) or "").upper()
+            for entry in ids_root.findall(_COMMENT_ID)
+        }
+        durable = para_id
+        nonce = int(para_id, 16)
+        while durable in used:
+            nonce = (nonce + 1) & 0xFFFFFFFF
+            durable = f"{nonce:08X}"
+        entry = parse_xml(
+            '<w16cid:commentId xmlns:w16cid='
+            '"http://schemas.microsoft.com/office/word/2016/wordml/cid"'
+            f' w16cid:paraId="{para_id}" w16cid:durableId="{durable}"/>'
+        )
+        ids_root.append(entry)
+        durable_id = durable
+    else:
+        durable_id = (existing.get(_DURABLE_ID) or para_id).upper()
+    cex_root = _xml_part_root(
+        document,
+        relationship_type=COMMENTS_EXTENSIBLE_RELATIONSHIP_TYPE,
+        partname=_COMMENTS_EXTENSIBLE_PARTNAME,
+        content_type=COMMENTS_EXTENSIBLE_CONTENT_TYPE,
+        template=_COMMENTS_EXTENSIBLE_TEMPLATE,
+        expected_tag=f"{{{_W16CEX_NS}}}commentsExtensible",
+        create=True,
+    )
+    assert cex_root is not None
+    for entry in cex_root.findall(_COMMENT_EXTENSIBLE):
+        if (entry.get(_DURABLE_ID_CEX) or "").upper() == durable_id:
+            return
+    cex_root.append(
+        parse_xml(
+            '<w16cex:commentExtensible'
+            ' xmlns:w16cex="http://schemas.microsoft.com/office/word/2018/wordml/cex"'
+            f' w16cex:durableId="{durable_id}"/>'
+        )
+    )
+
+
 def _preflight_comments_extended_write(document: "Document") -> None:
     """Validate extension state and any partname needed for its creation."""
     root = _comments_extended_root(document, create=False)
@@ -290,6 +420,65 @@ def _preflight_comments_extended_write(document: "Document") -> None:
             "a package part already occupies /word/commentsExtended.xml"
             " without the commentsExtended relationship; nothing was changed"
         )
+
+
+def _retarget_comment_identity(
+    document: "Document", previous_id: str, current_id: str
+) -> None:
+    ids_root = _xml_part_root(
+        document,
+        relationship_type=COMMENTS_IDS_RELATIONSHIP_TYPE,
+        partname=_COMMENTS_IDS_PARTNAME,
+        content_type=COMMENTS_IDS_CONTENT_TYPE,
+        template=_COMMENTS_IDS_TEMPLATE,
+        expected_tag=f"{{{_W16CID_NS}}}commentsIds",
+        create=False,
+    )
+    if ids_root is None:
+        return
+    wanted = previous_id.upper()
+    for entry in ids_root.findall(_COMMENT_ID):
+        if (entry.get(_PARA_ID_CID) or "").upper() == wanted:
+            entry.set(_PARA_ID_CID, current_id)
+            return
+
+
+def _remove_comment_identity_rows(document: "Document", para_ids) -> None:
+    wanted = {value.upper() for value in para_ids if value}
+    if not wanted:
+        return
+    ids_root = _xml_part_root(
+        document,
+        relationship_type=COMMENTS_IDS_RELATIONSHIP_TYPE,
+        partname=_COMMENTS_IDS_PARTNAME,
+        content_type=COMMENTS_IDS_CONTENT_TYPE,
+        template=_COMMENTS_IDS_TEMPLATE,
+        expected_tag=f"{{{_W16CID_NS}}}commentsIds",
+        create=False,
+    )
+    durable_ids = set()
+    if ids_root is not None:
+        for entry in list(ids_root.findall(_COMMENT_ID)):
+            para_id = (entry.get(_PARA_ID_CID) or "").upper()
+            if para_id in wanted:
+                durable = (entry.get(_DURABLE_ID) or "").upper()
+                if durable:
+                    durable_ids.add(durable)
+                ids_root.remove(entry)
+    cex_root = _xml_part_root(
+        document,
+        relationship_type=COMMENTS_EXTENSIBLE_RELATIONSHIP_TYPE,
+        partname=_COMMENTS_EXTENSIBLE_PARTNAME,
+        content_type=COMMENTS_EXTENSIBLE_CONTENT_TYPE,
+        template=_COMMENTS_EXTENSIBLE_TEMPLATE,
+        expected_tag=f"{{{_W16CEX_NS}}}commentsExtensible",
+        create=False,
+    )
+    if cex_root is None or not durable_ids:
+        return
+    for entry in list(cex_root.findall(_COMMENT_EXTENSIBLE)):
+        if (entry.get(_DURABLE_ID_CEX) or "").upper() in durable_ids:
+            cex_root.remove(entry)
 
 
 def _migrate_comment_extension(
@@ -305,6 +494,8 @@ def _migrate_comment_extension(
     if previous_raw is None:
         return
     previous_id = _validate_para_id(previous_raw, attribute="w14:paraId")
+    current_id = _ensure_para_id(document, current_last)
+    _retarget_comment_identity(document, previous_id, current_id)
     root = _comments_extended_root(document, create=False)
     if root is None:
         return
@@ -320,7 +511,6 @@ def _migrate_comment_extension(
     ]
     if own_entry is None and not child_entries:
         return
-    current_id = _ensure_para_id(document, current_last)
     if own_entry is not None:
         own_entry.set(_PARA_ID, current_id)
     for entry in child_entries:
@@ -580,3 +770,74 @@ def comment_thread(document: "Document") -> Tuple[dict, ...]:
             }
         )
     return tuple(entries)
+
+
+def _thread_ids_to_delete(document: "Document", comment: "Comment") -> "set[int]":
+    wanted = {comment.comment_id}
+    grew = True
+    while grew:
+        grew = False
+        for candidate in document.comments:
+            if candidate.comment_id in wanted:
+                continue
+            parent_id = parent_of(document, candidate)
+            if parent_id in wanted:
+                wanted.add(candidate.comment_id)
+                grew = True
+    return wanted
+
+
+def _remove_comment_anchors(document: "Document", comment_id: int) -> None:
+    for _story, root in _story_elements(document):
+        for node in list(root.iter(_RANGE_START, _RANGE_END, _REFERENCE)):
+            raw = node.get(_W_ID)
+            try:
+                marker_id = int(raw) if raw is not None else None
+            except (TypeError, ValueError):
+                continue
+            if marker_id != comment_id:
+                continue
+            parent = node.getparent()
+            parent.remove(node)
+            if parent.tag == _R and not any(child.tag != qn("w:rPr") for child in parent):
+                parent.getparent().remove(parent)
+
+
+def delete_comment(document: "Document", comment: "Comment") -> None:
+    """Remove one comment and its replies. Anchored document text stays."""
+    _comment_element(document, comment)
+    _refuse_if_protected(document, "delete a comment")
+    _preflight_comment_add(document)
+    _preflight_comments_extended_write(document)
+    with rollback_on_error(document):
+        ids = _thread_ids_to_delete(document, comment)
+        para_ids = []
+        for item in list(document.comments):
+            if item.comment_id not in ids:
+                continue
+            elm = _comment_element(document, item)
+            raw = _last_paragraph(elm).get(_PARA_ID_ATTR)
+            if raw:
+                para_ids.append(_validate_para_id(raw, attribute="w14:paraId"))
+        for comment_id in ids:
+            _remove_comment_anchors(document, comment_id)
+        comments_root = _comments_part(document)._element  # noqa: SLF001
+        for elm in list(comments_root.findall(_COMMENT)):
+            raw = elm.get(_W_ID)
+            try:
+                comment_id = int(raw) if raw is not None else None
+            except (TypeError, ValueError):
+                continue
+            if comment_id in ids:
+                comments_root.remove(elm)
+        extended = _comments_extended_root(document, create=False)
+        if extended is not None:
+            wanted = {value.upper() for value in para_ids}
+            for entry in list(extended.findall(_COMMENT_EX)):
+                para_id = entry.get(_PARA_ID)
+                parent_id = entry.get(_PARA_ID_PARENT)
+                if (para_id and para_id.upper() in wanted) or (
+                    parent_id and parent_id.upper() in wanted
+                ):
+                    extended.remove(entry)
+        _remove_comment_identity_rows(document, para_ids)

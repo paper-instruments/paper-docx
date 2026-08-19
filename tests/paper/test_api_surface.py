@@ -170,6 +170,7 @@ APPROVED_SIGNATURES = [
     ("docx.commentops", "anchored_text", "(document, comment)"),
     ("docx.commentops", "comment_thread", "(document)"),
     ("docx.commentops", "parent_of", "(document, comment)"),
+    ("docx.commentops", "delete_comment", "(document, comment)"),
     ("docx.controls", "iter_controls", "(document)"),
     ("docx.revision", "Revisions.remaining_unsupported", "(self)"),
     # -- composition, bookmarks, fields, formatting --------------------------
