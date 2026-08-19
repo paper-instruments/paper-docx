@@ -26,7 +26,13 @@ class PackageReader:
 
     @staticmethod
     def from_file(pkg_file):
-        """Return a |PackageReader| instance loaded with contents of `pkg_file`."""
+        """A `PackageReader` loaded from `pkg_file`, with the package graph already validated.
+
+        This is the read path behind `Document()`, so a malformed file is caught here rather
+        than carried into the object model. Raises `MalformedPackageError` for a corrupt or
+        ambiguous archive, a relationship targeting a missing part, a part with no declared
+        content type, or a content type that contradicts its relationship.
+        """
         phys_reader = PhysPkgReader(pkg_file)
         try:
             content_types = _ContentTypeMap.from_xml(phys_reader.content_types_xml)

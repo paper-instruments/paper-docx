@@ -91,7 +91,11 @@ def _simple_field(instr: str, placeholder: str) -> "_Element":
 
 
 def add_page_number_field(paragraph: "Paragraph") -> None:
-    """Append a PAGE field (typically to a footer paragraph)."""
+    """Append a PAGE field, typically to a footer paragraph.
+
+    Writes the field, not a number, so Word computes the page on open. Refuses a protected
+    document.
+    """
     document = _document_of_paragraph(paragraph)
     _refuse_if_protected(document, "insert a field")
     with rollback_on_error(document):
@@ -100,7 +104,11 @@ def add_page_number_field(paragraph: "Paragraph") -> None:
 
 
 def add_page_count_field(paragraph: "Paragraph") -> None:
-    """Append a NUMPAGES field (typically to a footer paragraph)."""
+    """Append a NUMPAGES field, typically to a footer paragraph.
+
+    Writes the field, not a number, so Word computes the count on open. Refuses a protected
+    document.
+    """
     document = _document_of_paragraph(paragraph)
     _refuse_if_protected(document, "insert a field")
     with rollback_on_error(document):
@@ -109,9 +117,11 @@ def add_page_count_field(paragraph: "Paragraph") -> None:
 
 
 def add_date_field(paragraph: "Paragraph", *, date_format: Optional[str] = None) -> None:
-    """Append a DATE field; `date_format` is Word's \\@ picture (e.g.
-    'MMMM d, yyyy'). The result stays a placeholder until a renderer opens
-    the file — this package never computes dates into results."""
+    """Append a DATE field; `date_format` is Word's \\@ picture, for example 'MMMM d, yyyy'.
+
+    The result stays a placeholder until a renderer opens the file; this package never
+    computes a date into the result. Refuses a protected document.
+    """
     document = _document_of_paragraph(paragraph)
     _refuse_if_protected(document, "insert a field")
     instr = " DATE "
@@ -126,8 +136,12 @@ def add_date_field(paragraph: "Paragraph", *, date_format: Optional[str] = None)
 def add_reference_field(
     paragraph: "Paragraph", *, bookmark: str, kind: str = "text"
 ) -> None:
-    """Append a cross-reference to `bookmark`: its text (`kind="text"`), its
-    page (`"page"`), or its paragraph number (`"number"`)."""
+    """Append a cross-reference to `bookmark`: its text (`kind="text"`), page (`"page"`), or
+    paragraph number (`"number"`).
+
+    Writes a REF field, so Word recomputes it on open. Refuses a protected document and an
+    unknown bookmark name.
+    """
     if kind not in _REFERENCE_KINDS:
         raise ValueError(
             f"kind must be one of {sorted(_REFERENCE_KINDS)}, got {kind!r}"
@@ -153,10 +167,11 @@ def add_caption(
     label: str = "Figure",
     description: str = "",
 ) -> None:
-    """Append a SEQ caption (`Figure 1`, `Table 1`, …) to `paragraph`.
+    """Append a SEQ caption (`Figure 1`, `Table 1`) to `paragraph`.
 
-    Word recomputes the number on open. This package writes the field, not
-    the displayed integer.
+    Writes the field rather than the displayed integer, so Word recomputes the number on
+    open. Sets the paragraph style to "Caption" without checking that the style exists.
+    Refuses a protected document and an unknown label.
     """
     if not label:
         raise ValueError("label must be a non-empty caption name")
@@ -181,9 +196,12 @@ def add_caption(
 def insert_toc_after(
     document: "Document", anchor, *, levels: Tuple[int, int] = (1, 3)
 ) -> None:
-    """Insert a TOC complex field (begin / instrText / separate / placeholder
-    / end) in a new paragraph after `anchor`, marked dirty so the renderer
-    builds the real table on open. Heading `levels` maps to \\o "1-3"."""
+    """Insert a TOC field in a new paragraph after `anchor`.
+
+    Marked dirty so the renderer builds the real table on open; heading `levels` maps to the
+    \\o "1-3" switch. Refuses a protected document, and an anchor that is missing, ambiguous
+    or foreign.
+    """
     from docx.blocks import _insert_after, _resolve_anchor_paragraph
 
     low, high = levels

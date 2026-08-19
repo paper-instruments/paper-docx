@@ -64,10 +64,11 @@ class Drawing(Parented):
         return image_part.image
 
     def replace_picture(self, image_descriptor: str | IO[bytes]) -> None:
-        """Swap this drawing's image bytes. Display size and position stay.
+        """Swap this drawing's image bytes, keeping display size and position.
 
-        Always writes a new image part so other shapes that shared the old
-        part are unchanged.
+        Always writes a new image part, so other shapes sharing the old part are unchanged;
+        the old relationship stays behind. Refuses a drawing with no picture, a linked picture
+        whose bytes live outside the package, and a protected document.
         """
         if not self.has_picture:
             raise ValueError("drawing does not contain a picture")

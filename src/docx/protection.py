@@ -192,6 +192,12 @@ class ProtectionStatus:
 
     @property
     def blocks_paper_edits(self) -> bool:
+        """True when protection is enforced and has not been acknowledged.
+
+        Not a prediction of whether a call will refuse: it ignores the operation class, so it
+        reports True under trackedChanges or formatting-only protection where the gate still
+        permits body edits and comments. Call `acknowledge_protection` to proceed deliberately.
+        """
         return self.enforced and not self.acknowledged
 
     def to_dict(self) -> dict:

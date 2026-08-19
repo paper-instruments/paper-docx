@@ -287,9 +287,9 @@ class PackageDiff:
 def diff_package(path_a: _PathLike, path_b: _PathLike) -> PackageDiff:
     """Part-by-part diff of the OPC packages at `path_a` and `path_b`.
 
-    XML parts (`*.xml`, `*.rels`) are compared semantically; binary parts by
-    bytes. A byte-changed XML part that fails to parse counts as semantically
-    changed — never silently equal.
+    XML parts (`*.xml`, `*.rels`) compare semantically, binary parts by bytes. A
+    byte-changed XML part that fails to parse counts as semantically changed, never
+    silently equal. Raises `MalformedPackageError` when either package will not open.
     """
     a_parts, a_order = _read_zip(Path(path_a))
     b_parts, b_order = _read_zip(Path(path_b))
@@ -482,12 +482,11 @@ class PackageDiagnosis:
 
 
 def diagnose(path: _PathLike) -> PackageDiagnosis:
-    """Say what the file at `path` is and why it can or cannot be opened.
+    """Why the file at `path` can or cannot be opened, as a `PackageDiagnosis`.
 
-    The upstream `docx.Document()` entry point raises raw, untyped errors on
-    encrypted, macro-enabled, template, or corrupt input; its behavior is
-    frozen, so triage ships as this additive API instead: call it when
-    an open fails (or before opening untrusted input).
+    Returns instead of raising, so you can triage untrusted input before opening it.
+    `Document()` refuses corrupt and encrypted packages with `MalformedPackageError` but
+    still raises a bare `ValueError` for macro-enabled and template files.
     """
     file_path = Path(path)
 
@@ -584,18 +583,19 @@ def patch_save(
 ) -> PatchSaveResult:
     """Save `document` to `out_path`, restoring original bytes wherever possible.
 
-    The document is serialized normally, then every XML part that is
-    semantically identical to its counterpart in `original_path` gets that
-    counterpart's exact original bytes back — a narrow save that keeps
-    unrelated parts byte-stable through the open/edit/save cycle. When
-    nothing changed at all, `out_path` becomes a verbatim copy of the
-    original file, so a no-op round trip is byte-identical.
+    The document is serialized normally, then every XML part semantically identical to its
+    counterpart in `original_path` gets that counterpart's exact original bytes back, a
+    narrow save that keeps unrelated parts byte-stable through the open/edit/save cycle.
+    When nothing changed, `out_path` becomes a verbatim copy of the original.
 
-    `original_path == out_path` is permitted; the original bytes are read up
-    front and the write is atomic (temp file + rename), so the original
-    survives any mid-write failure. An existing destination keeps its current
-    permission bits; a newly created destination inherits `original_path`'s
-    permission bits.
+    `original_path == out_path` is permitted; the original bytes are read up front and the
+    write is atomic (temp file + rename), so the original survives a mid-write failure. An
+    existing destination keeps its permission bits; a new one inherits `original_path`'s.
+    Creates the destination's parent directory when it is missing.
+
+    Returns a `PatchSaveResult` naming what it restored and what it rewrote. Raises
+    `MalformedPackageError` when `original_path`, the serialized document, or the finished
+    output fails to reparse, and `OSError` when a destination symlink moves mid-save.
     """
     original_file = Path(original_path)
     output_file = Path(out_path)

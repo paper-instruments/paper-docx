@@ -161,13 +161,12 @@ def insert_blocks_from(
     count: int = 1,
     styles: str = "match_by_name",
 ) -> CompositionReport:
-    """Copy a contiguous block range from `source`'s body after `anchor` in
-    `document`, reconciling styles, numbering, media, and bookmarks.
+    """Copy a block range from `source` after `anchor`, and return a `CompositionReport`.
 
-    `start_anchor`/`end_anchor` address SOURCE body paragraphs (str needle,
-    Block, Anchor or Span — blocks.py semantics); with no `end_anchor`,
-    `count` blocks are taken (tables between the endpoints come along).
-    `anchor` addresses the DESTINATION paragraph to insert after.
+    Reconciles styles, numbering, media and bookmarks so the copy keeps its appearance.
+    `start_anchor`/`end_anchor` address SOURCE body paragraphs. Refuses a protected
+    destination, an anchor that is missing or ambiguous, and source content this package
+    cannot carry over: revisions, comments, OLE objects, EMF/WMF images.
     """
     _validate_styles_mode(styles)
     require_anchor_owner(source, start_anchor, argument="start_anchor")
@@ -188,15 +187,13 @@ def append_document(
     styles: str = "match_by_name",
     headers: str = "destination",
 ) -> CompositionReport:
-    """Append `source`'s whole body to `document`.
+    """Append `source`'s whole body to `document`, and return a `CompositionReport`.
 
-    Keeps the destination's headers/footers by default and authors no new
-    `w:sectPr`: `section="new_page"` prefixes the appended content with a
-    page break; `"continuous"` appends flush. Pass `headers="source"` to
-    copy the source letterhead onto the destination's last section.
-    First-page headers cannot target the appended content (they apply to
-    that section's first page, which already holds destination body) and
-    are skipped.
+    Keeps the destination's headers and footers by default and authors no new `w:sectPr`:
+    `section="new_page"` prefixes a page break, `"continuous"` appends flush.
+    `headers="source"` overwrites the destination's last-section header and footer and flips
+    the document-wide even/odd setting. Refuses a protected document and an empty body on
+    either side.
     """
     _validate_styles_mode(styles)
     if section not in ("new_page", "continuous"):

@@ -537,7 +537,11 @@ def _entry_for(root: "_Element", para_id: str, *, create: bool) -> "Optional[_El
 
 
 def is_resolved(document: "Document", comment: "Comment") -> bool:
-    """Whether `comment` is marked resolved (`w15:done`)."""
+    """Whether `comment`'s thread is marked resolved.
+
+    Reads `commentsExtended`, where Word keeps resolution state. Refuses a stale or foreign
+    comment, and a malformed `commentsExtended` part.
+    """
     comment_elm = _comment_element(document, comment)
     root = _comments_extended_root(document, create=False)
     if root is None:
@@ -550,7 +554,11 @@ def is_resolved(document: "Document", comment: "Comment") -> bool:
 
 
 def resolve(document: "Document", comment: "Comment", *, resolved: bool = True) -> None:
-    """Mark `comment` resolved (or reopened) the way Word does."""
+    """Mark `comment`'s thread resolved, or reopen it with `resolved=False`.
+
+    Word keeps resolution in `commentsExtended` rather than on the comment, so this writes
+    that part. Refuses a protected document, and a stale or foreign comment.
+    """
     comment_elm = _comment_element(document, comment)
     _refuse_if_protected(document, "resolve a comment", operation_class=OP_COMMENT)
     # Validate a pre-existing extension part before adding a paraId to the
@@ -564,7 +572,10 @@ def resolve(document: "Document", comment: "Comment", *, resolved: bool = True) 
 
 
 def parent_of(document: "Document", comment: "Comment") -> Optional[int]:
-    """The comment-id this comment replies to, or None for a top-level one."""
+    """The comment `comment` replies to, or None when it starts a thread.
+
+    Refuses a stale or foreign comment, and a malformed `commentsExtended` part.
+    """
     comment_elm = _comment_element(document, comment)
     root = _comments_extended_root(document, create=False)
     if root is None:
@@ -625,7 +636,11 @@ def _anchor_elements(document: "Document", comment_id: int):
 
 
 def anchored_text(document: "Document", comment: "Comment") -> str:
-    """The document text `comment` is anchored to (its range marks' span)."""
+    """The document text `comment` is anchored to, taken from its range marks.
+
+    Refuses a stale or foreign comment, and a comment whose range marks are missing or
+    crossed.
+    """
     _comment_element(document, comment)
     start, end, _ = _anchor_elements(document, comment.comment_id)
     if start is None or end is None:
@@ -665,7 +680,12 @@ def reply(
     initials: Optional[str] = None,
     date: Optional[dt.datetime] = None,
 ) -> "Comment":
-    """Add a threaded reply to `comment`, anchored to the same text range."""
+    """Add a threaded reply to `comment`, anchored to the same range; returns the new `Comment`.
+
+    Creates `commentsExtended` on first use, since Word keeps threading outside `w:comment`.
+    Refuses a protected document, a stale or foreign comment, and a comments part that is
+    missing or ambiguous.
+    """
     if not author:
         raise ValueError("author is required")
     from docx.search import _validate_xml_characters
@@ -740,8 +760,12 @@ def reply(
 
 
 def comment_thread(document: "Document") -> Tuple[dict, ...]:
-    """Every comment with its thread state: (id, author, text, resolved,
-    parent_id, anchored_text where available)."""
+    """Every comment with its thread state: id, author, text, resolved, parent id, and anchored
+    text where available.
+
+    Use it to read a whole discussion in one pass rather than walking replies. Refuses a
+    stale comment and a malformed `commentsExtended` part.
+    """
     from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
     _preflight_comment_add(document)
@@ -805,7 +829,11 @@ def _remove_comment_anchors(document: "Document", comment_id: int) -> None:
 
 
 def delete_comment(document: "Document", comment: "Comment") -> None:
-    """Remove one comment and its replies. Anchored document text stays."""
+    """Delete `comment` and its replies, removing their range marks from the text.
+
+    Refuses a protected document, a stale or foreign comment, and a comments part that is
+    missing or ambiguous.
+    """
     _comment_element(document, comment)
     _refuse_if_protected(document, "delete a comment", operation_class=OP_COMMENT)
     _preflight_comment_add(document)

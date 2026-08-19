@@ -222,7 +222,12 @@ def _effective_paragraph_numbering(
 
 
 def list_numbering(document: "Document") -> NumberingReport:
-    """Every numbering definition and every numbered paragraph in `document`."""
+    """Every numbering definition and every numbered paragraph in `document`.
+
+    Walks all story parts and reports text in the "current" view. Refuses when a paragraph
+    resolves to a definition the document does not define, or to a level that definition
+    omits.
+    """
     definitions = _definitions(_numbering_root(document))
     definitions_by_id = {definition.num_id: definition for definition in definitions}
     numbered = []
@@ -356,10 +361,9 @@ def _document_of_paragraph(paragraph: "Paragraph") -> "Document":
 def apply_numbering(paragraph: "Paragraph", *, num_id: int, level: int = 0) -> None:
     """Give `paragraph` the existing numbering definition `num_id` at `level`.
 
-    The definition must exist in word/numbering.xml and define `level` —
-    otherwise |TargetNotFoundError|; this API never fabricates definitions
-    (create one deliberately with `ensure_bullet_definition` /
-    `ensure_decimal_definition`).
+    Writes `w:numPr` into the paragraph's `w:pPr`. This never fabricates a definition; create
+    one deliberately with `ensure_bullet_definition` or `ensure_decimal_definition`. Refuses a
+    protected document, and a numId or level the document does not define.
     """
     document = _document_of_paragraph(paragraph)
     _refuse_if_protected(document, "apply numbering")
@@ -400,14 +404,10 @@ def _style_numbering_binding(document: "Document", style_name: str) -> Optional[
 
 
 def apply_list_style(paragraph: "Paragraph", style_name: str) -> None:
-    """Apply the existing paragraph style named `style_name` (e.g. a list
-    style like "List Bullet") — |TargetNotFoundError| when undefined.
+    """Apply the existing paragraph style `style_name` to `paragraph`.
 
-    When the style binds a numbering definition, that definition must
-    actually resolve in word/numbering.xml; otherwise this call refuses
-    rather than producing the classic FAKE bullet (a list-styled paragraph
-    that renders with no marker). Styles with no
-    numbering binding apply as plain styles.
+    Refuses a protected document, a style the document does not define, and a style whose
+    numbering binding does not resolve.
     """
     document = _document_of_paragraph(paragraph)
     _refuse_if_protected(document, "apply a list style")
@@ -611,27 +611,32 @@ def _ensure_definition(document: "Document", kind: str) -> int:
 
 
 def ensure_bullet_definition(document: "Document") -> int:
-    """The numId of a real bullet-list definition, creating one when the
-    document has none. Idempotent: repeated calls return the same
-    definition."""
+    """The numId of a canonical bullet-list definition, creating it when absent.
+
+    Creates `/word/numbering.xml` and its relationship on first use. Reuse requires an exactly
+    canonical definition, so a hand-edited one of the same name is left alone and a new
+    definition is appended. Refuses a protected document.
+    """
     _refuse_if_protected(document, "author a numbering definition")
     return _ensure_definition(document, "bullet")
 
 
 def ensure_decimal_definition(document: "Document") -> int:
-    """The numId of a real decimal-list definition, created on demand.
-    Idempotent, like `ensure_bullet_definition`."""
+    """The numId of a canonical decimal-list definition, creating it when absent.
+
+    Same creation and exact-shape reuse rules as `ensure_bullet_definition`. Refuses a
+    protected document.
+    """
     _refuse_if_protected(document, "author a numbering definition")
     return _ensure_definition(document, "decimal")
 
 
 def restart_numbering(document: "Document", *, num_id: int) -> int:
-    """A NEW numId continuing `num_id`'s formatting but restarting at 1.
+    """A NEW numId continuing `num_id`'s formatting but restarting the count at 1.
 
-    Word models restarts as a fresh `w:num` referencing the same abstract
-    definition with a level-0 `w:startOverride`; paragraphs re-point at the
-    returned numId. Anything fancier (mid-list overrides, custom level text)
-    stays out of scope and refuses via the ordinary numId validation.
+    Paragraphs are not re-pointed; re-point them yourself with `apply_numbering`. Refuses a
+    protected document, an unknown numId, a malformed `w:numId`, and a definition carrying
+    `w:lvlOverride`.
     """
     _refuse_if_protected(document, "restart numbering")
     numbering = _numbering_root(document)

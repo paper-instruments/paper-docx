@@ -176,10 +176,12 @@ def _revision_wrapper_between(left: "_Element", right: "_Element") -> bool:
 
 
 def create_bookmark(document: "Document", span: "Span", name: str) -> BookmarkInfo:
-    """Bookmark exactly `span`'s text under `name` (unique, Word-legal).
+    """Bookmark exactly `span`'s text under `name`, and return its `BookmarkInfo`.
 
-    Boundary runs are split so the markers wrap precisely the span's
-    characters — the same isolation the comment-range machinery uses.
+    Use this to give a span a stable target that survives later edits; cross-references and
+    `add_reference_field` ride on bookmarks. Splits boundary runs so the markers wrap the
+    span's characters exactly. Refuses a protected document, a foreign or stale span, and a
+    name Word rejects or the document already uses.
     """
     require_span_owner(document, span)
     _refuse_if_protected(document, "create a bookmark")
@@ -234,9 +236,12 @@ def create_bookmark(document: "Document", span: "Span", name: str) -> BookmarkIn
 
 
 def delete_bookmark(document: "Document", name: str) -> None:
-    """Remove `name`'s markers (the text stays). Refuses while any field
-    instruction still references the name — a dangling REF/PAGEREF renders
-    'Error! Reference source not found.' in Word."""
+    """Remove `name`'s markers, leaving the text in place.
+
+    Use this to retire a bookmark without touching content. Refuses while a field
+    instruction still references the name, since a dangling REF renders "Error! Reference
+    source not found." in Word. Refuses a protected document and an unknown name.
+    """
     _refuse_if_protected(document, "delete a bookmark")
     matching_names = {
         start.get(_NAME) or ""

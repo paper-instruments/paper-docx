@@ -137,9 +137,10 @@ class _ZipPkgReader(PhysPkgReader):
             raise
 
     def blob_for(self, pack_uri):
-        """Return blob corresponding to `pack_uri`.
+        """The bytes of the member `pack_uri` names.
 
-        Raises |ValueError| if no matching member is present in zip archive.
+        Member names are matched case-insensitively, since Word accepts packages whose parts
+        disagree with the relationship in case. Raises `ValueError` when no member matches.
         """
         actual_name = self._member_name_by_fold[pack_uri.membername.casefold()]
         return self._guarded_reader.read(actual_name)

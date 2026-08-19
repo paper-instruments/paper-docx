@@ -227,8 +227,13 @@ class Revision:
             )
 
     def accept(self) -> None:
-        """Apply this change to the document. Tracked moves resolve as a
-        PAIR: accepting either site accepts both."""
+        """Apply this change to the document.
+
+        Tracked moves resolve as a PAIR: accepting either site accepts both. Resolution can
+        remove paragraphs, rows, tables, comments and note bodies along with the markup.
+        Refuses a protected document, and revision types this package cannot resolve, leaving
+        the document untouched.
+        """
         self._refuse_unresolvable("accept")
         self._refuse_if_stale("accept")
         if self._document is not None:
@@ -247,8 +252,12 @@ class Revision:
         _resolve_one(self._element, accept=True, document=None)
 
     def reject(self) -> None:
-        """Undo this change, restoring the pre-change content. Tracked moves
-        resolve as a PAIR: rejecting either site rejects both."""
+        """Undo this change, restoring the pre-change content.
+
+        Tracked moves resolve as a PAIR: rejecting either site rejects both. Restores `w:delText`
+        back to `w:t`. Refuses a protected document, and revision types this package cannot
+        resolve, leaving the document untouched.
+        """
         self._refuse_unresolvable("reject")
         self._refuse_if_stale("reject")
         if self._document is not None:
@@ -300,20 +309,19 @@ class Revisions(Sequence[Revision]):
         return iter(self._items)
 
     def accept_all(self, *, author: Optional[str] = None) -> int:
-        """Apply every selected revision (optionally only `author`'s).
+        """Apply every selected revision (optionally only `author`'s) and return the count.
 
-        Validates the WHOLE selected set first: if it contains revision types
-        this package cannot resolve, the call refuses atomically — it never
-        half-resolves and reports success while
-        Word still shows pending changes. Returns the resolved count; check
-        `remaining_unsupported()` before inferring "the document is clean".
+        Validates the whole selected set first, so a set holding types this package cannot
+        resolve refuses atomically instead of half-resolving and reporting success while Word
+        still shows changes. Refuses a protected document and a stale snapshot. Check
+        `remaining_unsupported()` before concluding the document is clean.
         """
         return self._resolve_all(accept=True, author=author)
 
     def reject_all(self, *, author: Optional[str] = None) -> int:
-        """Undo every selected revision (optionally only `author`'s).
+        """Undo every selected revision (optionally only `author`'s) and return the count.
 
-        Same selected-set validation and census semantics as `accept_all`.
+        Same whole-set validation, refusals and census semantics as `accept_all`.
         """
         return self._resolve_all(accept=False, author=author)
 
@@ -920,11 +928,12 @@ _MARKUP_SCAN_TAGS = tuple(_REVISION_TYPES) + tuple(
 
 
 def _remaining_markup(document: "Document") -> dict:
-    """{local-tag-name: count} of ALL revision markup left ANYWHERE — the
-    full serialized space, including mc:Fallback branches (which traversal
-    skips but a saved file still carries). The invariant oracle: after a
-    successful `accept_all()`/`reject_all()` this is empty — "resolved"
-    while markup remains anywhere would be false state.
+    """{local-tag-name: count} of ALL revision markup left anywhere in the serialized space,
+    including `mc:Fallback` branches that traversal skips.
+
+    The clean-document oracle: empty after an unfiltered `accept_all()`/`reject_all()`. An
+    author-filtered call legitimately leaves other authors' markup, so empty is not the
+    expectation there.
     """
     counts: dict = {}
     for _story, root in _story_elements(document):

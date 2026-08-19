@@ -49,7 +49,11 @@ class Hyperlink(Parented):
 
     @address.setter
     def address(self, value: str) -> None:
-        """Point this hyperlink at a new external URL."""
+        """Point this hyperlink at a new external URL.
+
+        Clears `fragment`, so retargeting an internal jump turns it into an external
+        link. Refuses an empty address and a protected document.
+        """
         document = self.part.package.main_document_part.document
         _refuse_if_protected(document, "retarget a hyperlink")
         if not value:

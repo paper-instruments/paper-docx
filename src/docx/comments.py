@@ -90,24 +90,10 @@ class Comments:
     def add_comment(self, text: str = "", author: str = "", initials: str | None = "") -> Comment:
         """Add a new comment to the document and return it.
 
-        The comment is added to the end of the comments collection and is assigned a unique
-        comment-id.
-
-        If `text` is provided, it is added to the comment. This option provides for the common
-        case where a comment contains a modest passage of plain text. Multiple paragraphs can be
-        added using the `text` argument by separating their text with newlines (`"\\\\n"`).
-        Between newlines, text is interpreted as it is in `Document.add_paragraph(text=...)`.
-
-        The default is to place a single empty paragraph in the comment, which is the same
-        behavior as the Word UI when you add a comment. New runs can be added to the first
-        paragraph in the empty comment with `comments.paragraphs[0].add_run()` to adding more
-        complex text with emphasis or images. Additional paragraphs can be added using
-        `.add_paragraph()`.
-
-        `author` is a required attribute, set to the empty string by default.
-
-        `initials` is an optional attribute, set to the empty string by default. Passing |None|
-        for the `initials` parameter causes that attribute to be omitted from the XML.
+        Assigns a unique id and writes the modern identity parts (`commentsIds`,
+        `commentsExtensible`, a `w14:paraId`) that Word needs to thread replies. Refuses a
+        protected document, a collection whose part was removed or replaced, and an ambiguous
+        comments relationship.
         """
         if self._comments_elm is not self._comments_part._element:
             raise TargetNotFoundError(
@@ -151,15 +137,9 @@ class Comments:
 class Comment(BlockItemContainer):
     """Proxy for a single comment in the document.
 
-    Provides methods to access comment metadata such as author, initials, and date.
-
-    A comment is also a block-item container, similar to a table cell, so it can contain both
-    paragraphs and tables and its paragraphs can contain rich text, hyperlinks and images,
-    although the common case is that a comment contains a single paragraph of plain text like a
-    sentence or phrase.
-
-    Note that certain content like tables may not be displayed in the Word comment sidebar due to
-    space limitations. Such "over-sized" content can still be viewed in the review pane.
+    Reads author, initials, date and body content, and adds paragraphs or tables. Every
+    mutation revalidates that the comment is still live first, so a proxy whose part was
+    removed or replaced refuses instead of writing into a detached tree.
     """
 
     def __init__(self, comment_elm: CT_Comment, comments_part: CommentsPart):
@@ -179,11 +159,11 @@ class Comment(BlockItemContainer):
         return document
 
     def add_paragraph(self, text: str = "", style: str | ParagraphStyle | None = None) -> Paragraph:
-        """Return paragraph newly added to the end of the content in this container.
+        """Append a paragraph to this comment's body and return it.
 
-        The paragraph has `text` in a single run if present, and is given paragraph style `style`.
-        When `style` is |None| or ommitted, the "CommentText" paragraph style is applied, which is
-        the default style for comments.
+        Re-keys the comment's `commentEx`, its replies' `paraIdParent`, and its `commentsIds` row
+        onto the new last paragraph, so appending rewrites thread and resolution state. Refuses a
+        protected document, and a proxy whose part was removed or replaced.
         """
         document = self._validate_live("edit a comment")
         previous_last = None
@@ -219,7 +199,11 @@ class Comment(BlockItemContainer):
             return add()
 
     def add_table(self, rows: int, cols: int, width: Length) -> Table:
-        """Return a table appended to this comment."""
+        """Append a table to this comment's body and return it.
+
+        Re-keys thread and resolution state onto the new last paragraph, as `add_paragraph` does.
+        Refuses a protected document, and a proxy whose part was removed or replaced.
+        """
         document = self._validate_live("edit a comment")
         previous_last = None
         if document is not None:
@@ -260,6 +244,11 @@ class Comment(BlockItemContainer):
 
     @author.setter
     def author(self, value: str):
+        """Read/write. The recorded author of this comment.
+
+        Required, but may be the empty string. Assigning refuses a protected document, and a
+        comment whose part was removed or replaced.
+        """
         self._validate_live("edit a comment")
         with rollback_xml_on_error(self._comment_elm):
             self._comment_elm.author = value
@@ -280,6 +269,11 @@ class Comment(BlockItemContainer):
 
     @initials.setter
     def initials(self, value: str | None):
+        """Read/write. The recorded initials of the comment author.
+
+        Optional in the XML; returns None when unset, and assigning None removes it. Assigning
+        refuses a protected document, and a comment whose part was removed or replaced.
+        """
         self._validate_live("edit a comment")
         with rollback_xml_on_error(self._comment_elm):
             self._comment_elm.initials = value

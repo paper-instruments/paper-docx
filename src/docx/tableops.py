@@ -235,11 +235,13 @@ def update_cell(
     author: Optional[str] = None,
     date: Optional[dt.datetime] = None,
 ) -> ReplaceResult:
-    """Replace the visible text of one cell (0-based `row`/`column`).
+    """Replace one cell's visible text and return a `ReplaceResult` (0-based `row`,
+    layout-grid `column`).
 
-    Routed through `Span.replace`: the first run's formatting carries the new
-    text, other formatting is untouched, and `tracked=True` produces a real
-    revision. Complex tables and multi-paragraph cells are refused.
+    Runs through `Span.replace`, so the first run's formatting carries the text. Guards are
+    cell-wise: a merged header elsewhere in the table does not block a plain target cell.
+    Refuses a protected document, an out-of-range address, and a merged, multi-paragraph or
+    nested target.
     """
     if tracked and not author:
         raise ValueError("author is required when tracked=True")
@@ -340,8 +342,12 @@ def insert_row_after(
     *,
     copy_format_from: Optional[int] = None,
 ) -> None:
-    """Insert a new row after `row` (0-based), copying formatting from
-    `copy_format_from` (default: the anchor row) and filling `values`."""
+    """Insert a row after `row` (0-based), copying formatting from `copy_format_from` and
+    filling `values`.
+
+    Refuses a protected document, an out-of-range index, and a target row that is merged or
+    holds a nested table.
+    """
     _refuse_if_protected(_document_of(table), "insert a table row")
     rows = table.rows
     if not 0 <= row < len(rows):
@@ -418,8 +424,11 @@ def _set_cell_text_keeping_format(cell: "_Cell", text: str) -> None:
 
 
 def delete_row(table: "Table", row: int) -> None:
-    """Delete row `row` (0-based). The last remaining row is refused —
-    a rowless table is not valid WordprocessingML."""
+    """Delete row `row` (0-based).
+
+    Refuses the last remaining row, since a rowless table is not valid WordprocessingML.
+    Refuses a protected document, an out-of-range index, and a merged or nested target.
+    """
     _refuse_if_protected(_document_of(table), "delete a table row")
     rows = table.rows
     if not 0 <= row < len(rows):

@@ -206,10 +206,20 @@ def _insert_after_span(runs, mark: "_Element") -> None:
 
 
 def add_footnote(document: "Document", span: "Span", text: str) -> int:
-    """Insert a footnote mark after `span` and create the note body."""
+    """Attach a footnote to `span` and return its note id.
+
+    Creates the footnotes part on first use. Refuses a protected document, a stale or foreign
+    span, a span outside the main body, and one inside a text box, a field result, or a
+    data-bound, locked or plain-text control.
+    """
     return _insert_note(document, span, text, endnote=False)
 
 
 def add_endnote(document: "Document", span: "Span", text: str) -> int:
-    """Insert an endnote mark after `span` and create the note body."""
+    """Attach an endnote to `span` and return its note id.
+
+    Creates the endnotes part on first use. Same refusals as `add_footnote`: protection, a
+    stale or foreign span, a span outside the main body, and one inside a text box, a field
+    result, or a data-bound, locked or plain-text control.
+    """
     return _insert_note(document, span, text, endnote=True)

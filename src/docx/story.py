@@ -450,8 +450,11 @@ def _iter_block_elements(
 
 
 def _count_fldchar_delta(element: "_Element") -> int:
-    """Net change in open complex-field depth across `element`'s traversal
-    space (begins minus ends, floored at closing more than opened)."""
+    """Net change in open complex-field depth across `element`: begins minus ends.
+
+    Goes negative when a block closes more fields than it opens; `iter_blocks` clamps at the
+    call site.
+    """
     delta = 0
 
     def walk(node: "_Element") -> None:

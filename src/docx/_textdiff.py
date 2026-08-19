@@ -101,8 +101,13 @@ def text_diff(path_a: _PathLike, path_b: _PathLike, *, view: str = "current") ->
 
 
 def pending_changes(path: _PathLike) -> TextDiff:
-    """What the document's pending revisions would change if all were accepted
-    (its "original" view diffed against its "current" view)."""
+    """What the document's pending revisions would change if all were accepted.
+
+    Diffs the "original" view against the "current" view, so an empty `TextDiff` means no
+    visible TEXT change rather than a clean document: formatting-only, table-structure and
+    same-place move revisions produce no diff lines. Ask `Document.revisions` whether markup
+    remains.
+    """
     import docx
 
     document = docx.Document(str(path))

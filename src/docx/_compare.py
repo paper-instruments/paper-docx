@@ -161,13 +161,12 @@ def compare(
     granularity: str = "word",
     materialize: Optional[str] = None,
 ) -> CompareResult:
-    """A new document: `original` + tracked changes that produce `revised`.
+    """A `CompareResult`: `original` plus tracked changes producing `revised`.
 
-    `original`/`revised` are .docx paths. Inputs carrying pending revisions
-    refuse unless `materialize` ("accept" | "reject") routes them through
-    resolution on in-memory working copies first (the files on disk are
-    never touched). `granularity`: "word" (token-level edits inside matched
-    paragraphs) or "block" (whole-paragraph del+ins only).
+    Takes paths or bytes. `granularity` is "word" or "block". Inputs carrying pending
+    revisions refuse unless `materialize` ("accept" | "reject") resolves them on in-memory
+    copies, leaving the files on disk untouched. Refuses any edit it cannot express as a
+    clean redline.
     """
     import docx as _docx
 
@@ -534,7 +533,12 @@ def _verify_compare_algebra(
 def _assert_packages_match(
     actual_bytes: bytes, expected_bytes: bytes, *, outcome: str
 ) -> None:
-    """Compare every part, allowing only inert run fragmentation in stories."""
+    """Compare every part, allowing only inert differences in stories.
+
+    Canonicalization strips `w:proofErr`, drops empty `w:pPr` and `w:rPr`, merges adjacent
+    `w:t`, and normalizes `xml:space`, so run fragmentation and those artifacts pass.
+    Non-story parts compare semantically rather than byte for byte.
+    """
     import docx as _docx
     from docx._paperpkg import (
         _parts_semantically_equal,
@@ -1329,13 +1333,13 @@ def _iso(stamp: "dt.datetime") -> str:
 def _replace_paragraph_text(
     ctx: _Ctx, paragraph: "_Element", text_o: str, text_r: str
 ) -> None:
-    """Token-level tracked edits inside one matched paragraph; whole-block
-    del+ins fallback when the span machinery refuses a region.
+    """Token-level tracked edits inside one matched paragraph.
 
-    A refusal can arrive AFTER earlier regions already emitted revisions;
-    falling back on the half-redlined paragraph would nest fresh w:del
-    inside w:del — so the pristine paragraph is swapped back in before the
-    fallback runs."""
+    A refusal can arrive after earlier regions already emitted revisions, so the paragraph is
+    restored to its pristine state and the refusal re-raised rather than left half-redlined
+    with fresh `w:del` nested inside existing markup. No caller catches it, so the compare
+    fails as a whole.
+    """
     regions = _token_regions(text_o, text_r)
     pristine = copy.deepcopy(paragraph)
     try:
