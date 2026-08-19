@@ -87,12 +87,11 @@ _UNRESOLVED = (
 
 @dataclass(frozen=True)
 class ResolvedValue:
-    """One property's effective value plus WHERE it came from.
+    """One property's effective value and where it came from.
 
-    `source`: "direct", "character_style:<id>", "paragraph_style:<id>",
-    "doc_defaults", "toggle_xor" (multiple toggle layers combined — the
-    contributing layers are in `chain`), "mixed" (a span whose runs
-    disagree), or "none" (nothing specifies it).
+    `source` is "direct", "character_style:<id>", "paragraph_style:<id>", "doc_defaults",
+    "toggle_xor", "agreeing_layers", "mixed", or "none". `chain` holds the contributing
+    layers.
     """
 
     value: object
@@ -128,13 +127,12 @@ class EffectiveFormat:
 
 
 def format_of(target) -> EffectiveFormat:
-    """The effective formatting of a |Run|, |Paragraph| or |Span|.
+    """The effective formatting of a `Run`, `Paragraph` or `Span`.
 
-    Runs resolve the supported run-property subset in ``properties``;
-    paragraphs resolve alignment and style plus the supported run defaults
-    their style chain implies. Spans resolve every run they touch and report
-    disagreeing properties as "mixed". Omitted categories are named in
-    ``unresolved`` rather than implicitly reported as absent.
+    Read-only and provenance-bearing: each `ResolvedValue` says where its value came from.
+    Runs resolve the supported run-property subset; paragraphs resolve alignment and style
+    plus the run defaults their style chain implies; spans resolve every run they touch and
+    report "mixed" where runs disagree. Raises `TypeError` for anything else.
     """
     from docx.search import Span
     from docx.text.paragraph import Paragraph
@@ -159,12 +157,11 @@ def format_of(target) -> EffectiveFormat:
 
 
 def surrounding_format(document: "Document", anchor) -> EffectiveFormat:
-    """The effective format AT an anchor — what inserted content should
-    match to adopt its neighbors' look (the insertion helper used when
-    adopting a neighbor's formatting).
+    """The effective format AT an anchor, for content you are about to insert.
 
-    Resolves the anchor paragraph's first text run; an empty paragraph
-    resolves the paragraph itself.
+    Use it so inserted text adopts its neighbours' look. Resolves the anchor paragraph's
+    first text run; an empty paragraph resolves the paragraph's own properties. Refuses an
+    anchor that is missing or ambiguous.
     """
     from docx.blocks import _locate_anchor_paragraph
 

@@ -29,8 +29,9 @@ class PackageWriter:
 
     @staticmethod
     def write(pkg_file, pkg_rels, parts):
-        """Write a physical package (.pptx file) to `pkg_file` containing `pkg_rels` and
-        `parts` and a content types stream based on the content types of the parts."""
+        """Write `parts` and `pkg_rels` to `pkg_file` as a .docx package, with a content-types
+        stream derived from the parts.
+        """
         phys_writer = PhysPkgWriter(pkg_file)
         try:
             PackageWriter._write_content_types_stream(phys_writer, parts)

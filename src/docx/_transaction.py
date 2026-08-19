@@ -321,7 +321,11 @@ def _same_items(
 def _reachable_package_objects(
     package: "OpcPackage",
 ) -> "Tuple[Tuple[OpcPackage | Part, ...], Tuple[Part, ...]]":
-    """Return every package-owned part without materializing lazy state."""
+    """(owners, parts) reachable from the package, without materializing lazy state.
+
+    `owners` includes the package itself. Only parts behind already-materialized rels are
+    seen, so a part the caller never touched is absent.
+    """
     owners: "List[OpcPackage | Part]" = [package]
     parts: "List[Part]" = []
     seen: "set[int]" = set()

@@ -331,7 +331,12 @@ def _normalized_with_map(value: str) -> Tuple[str, List[int]]:
 
 @dataclass(frozen=True)
 class ReplaceResult:
-    """Outcome of a `Span.replace` call."""
+    """Outcome of a `Span.replace` call.
+
+    `deleted_text` and `inserted_text` cover the whole span for an untracked replace but only
+    the affix-trimmed middle for a tracked one, so comparing them against `Span.text` is
+    wrong for tracked edits.
+    """
 
     story: str
     deleted_text: str
@@ -404,11 +409,12 @@ class Span:
         initials: Optional[str] = None,
         date: Optional[dt.datetime] = None,
     ) -> "object":
-        """Anchor a new comment to exactly this span's text.
+        """Anchor a new comment to exactly this span's text, and return the upstream `Comment`.
 
-        Returns the upstream |Comment|. The comment range marks wrap the
-        span's runs; `date` defaults to the injectable clock. Comments can
-        only be anchored in the main document story.
+        Reach for this over `Document.add_comment` when the anchor must match exact text rather
+        than whole runs. Splits boundary runs, and creates `/word/comments.xml` on first use.
+        Only the main document story carries comments. Refuses a protected document, a stale
+        span, and a locked or data-bound control surface.
         """
         if not author:
             raise ValueError("author is required")
@@ -851,17 +857,11 @@ class Span:
     ) -> ReplaceResult:
         """Replace this span's text, preserving run formatting.
 
-        Untracked: surgical in-place edit — untouched runs keep their `rPr`
-        byte-identical; the replacement renders with the start run's
-        formatting. Tracked: emits a minimal `w:del`/`w:ins` pair (common
-        prefix/suffix trimmed) stamped with `author`, `date` (default: the
-        injectable clock) and a unique revision id.
-
-        Filling a content control that still shows placeholder text clears
-        the placeholder state (`w:showingPlcHdr` + `PlaceholderText` style)
-        so Word treats the control as genuinely filled.
-
-        All refusal conditions are checked before any mutation.
+        Untracked, this edits in place: untouched runs keep their `rPr` byte-identical, the
+        replacement takes the start run's formatting, and the span stays usable. Tracked, it
+        emits a minimal `w:del`/`w:ins` pair and CONSUMES the span. Refuses a protected document,
+        a stale or foreign span, a span crossing a field or control boundary, and a tracked
+        no-op.
         """
         if tracked and not author:
             raise ValueError("author is required when tracked=True")
@@ -1531,14 +1531,12 @@ def replace_all(
     author: Optional[str] = None,
     date: Optional[dt.datetime] = None,
 ) -> ReplaceAllResult:
-    """Replace every match of `needle` in one pass.
+    """Replace every match of `needle` in one pass, and return a `ReplaceAllResult`.
 
-    Pinned invalidation semantics: one scan finds all matches, then
-    replacements apply in REVERSE document order within each story, so no
-    replacement can shift the offsets of one still pending — matches sharing
-    a run stay valid without re-finding. Matches that refuse individually
-    (field results, revision overlaps, bookmark hollowing, …) are reported in
-    `refused` with their reason; the rest proceed.
+    One scan finds all matches, then replacements apply in reverse document order within each
+    story, so no pending match shifts. A refusal on one match is recorded in `refused` and the
+    rest proceed; a stale span aborts the batch instead, rolling back every replacement already
+    applied. Matches already equal to `new_text` are skipped.
     """
     from docx.errors import PaperRefusal
 
@@ -1622,9 +1620,9 @@ def find_one(
 ) -> Span:
     """The single span matching `needle`, or a typed refusal.
 
-    Zero matches raise |TargetNotFoundError|; more than one (after `nth`,
-    `near`, `story` disambiguation) raises |AmbiguousTargetError| — the
-    library never guesses which occurrence you meant.
+    Zero matches raise `TargetNotFoundError`. Two or more raise `AmbiguousTargetError`:
+    `nth` and `story` narrow the set, while `near` only ranks `find_text` results and never
+    reduces them.
     """
     matches = find_text(document, needle, nth=nth, near=near, story=story, view=view)
     if not matches:

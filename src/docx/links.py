@@ -95,8 +95,10 @@ def _part_for_span(document: "Document", span: "Span"):
 def add_hyperlink(document: "Document", span: "Span", address: str) -> Hyperlink:
     """Wrap `span`'s runs in a hyperlink pointing at `address`.
 
-    The span must lie in a single paragraph. Visible text stays; Word
-    shows it as a link after the file opens.
+    Visible text stays; Word shows it in the Hyperlink character style, which this defines
+    when the document lacks it. Refuses a protected document, a stale or foreign span, a span
+    crossing paragraphs, a field result, an existing hyperlink, and a data-bound, locked or
+    plain-text control surface.
     """
     if not address:
         raise ValueError("address must be a non-empty URL")

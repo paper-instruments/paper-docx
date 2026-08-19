@@ -47,34 +47,12 @@ class Document(ElementProxy):
         author: str = "",
         initials: str | None = "",
     ) -> Comment:
-        """Add a comment to the document, anchored to the specified runs.
+        """Add a comment anchored to `runs`, and return it.
 
-        `runs` can be a single `Run` object or a non-empty sequence of `Run` objects. Only the
-        first and last run of a sequence are used, it's just more convenient to pass a whole
-        sequence when that's what you have handy, like `paragraph.runs` for example. When `runs`
-        contains a single `Run` object, that run serves as both the first and last run.
-
-        A comment can be anchored only on an even run boundary, meaning the text the comment
-        "references" must be a non-zero integer number of consecutive runs. The runs need not be
-        _contiguous_ per se, like the first can be in one paragraph and the last in the next
-        paragraph, but all runs between the first and the last will be included in the reference.
-
-        The comment reference range is delimited by placing a `w:commentRangeStart` element before
-        the first run and a `w:commentRangeEnd` element after the last run. This is why only the
-        first and last run are required and why a single run can serve as both first and last.
-        Word works out which text to highlight in the UI based on these range markers.
-
-        `text` allows the contents of a simple comment to be provided in the call, providing for
-        the common case where a comment is a single phrase or sentence without special formatting
-        such as bold or italics. More complex comments can be added using the returned `Comment`
-        object in much the same way as a `Document` or (table) `Cell` object, using methods like
-        `.add_paragraph()`, .add_run()`, etc.
-
-        The `author` and `initials` parameters allow that metadata to be set for the comment.
-        `author` is a required attribute on a comment and is the empty string by default.
-        `initials` is optional on a comment and may be omitted by passing |None|, but Word adds an
-        `initials` attribute by default and we follow that convention by using the empty string
-        when no `initials` argument is provided.
+        Pass one `Run` or a sequence; only the first and last are used, so handing over
+        `paragraph.runs` works. Reach for `Span.comment` instead when the anchor should match
+        exact text rather than whole runs. Refuses a protected document, runs belonging to
+        another document, and a comments part that is missing or ambiguous.
         """
         # -- normalize `runs` to a sequence of runs --
         runs = [runs] if isinstance(runs, Run) else runs

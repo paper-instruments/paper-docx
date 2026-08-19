@@ -475,11 +475,11 @@ def insert_section_after(
     author: Optional[str] = None,
     date: Optional[dt.datetime] = None,
 ) -> BlockEditResult:
-    """Insert a heading plus body paragraphs after `anchor`.
+    """Insert a heading plus body paragraphs after `anchor`, and return a `BlockEditResult`.
 
-    With `tracked=True` every inserted paragraph is a real Word insertion
-    (content wrapped in `w:ins`, paragraph mark stamped) attributed to
-    `author` (required) and `date` (default: the injectable clock).
+    With `tracked=True` each inserted paragraph is a real Word insertion attributed to
+    `author` (required) and `date`. Refuses a protected document, an undefined heading
+    style, and an anchor that is missing, ambiguous, foreign or stale.
     """
     if tracked and not author:
         raise ValueError("author is required when tracked=True")
@@ -526,11 +526,12 @@ def tracked_delete_paragraphs(
     author: str,
     date: Optional[dt.datetime] = None,
 ) -> BlockEditResult:
-    """Mark a paragraph range deleted with real tracked changes.
+    """Mark a paragraph range deleted with real tracked changes; returns a `BlockEditResult`.
 
-    Each paragraph's runs move into `w:del` with their formatting intact and
-    the paragraph mark is stamped deleted, so accept removes the paragraphs
-    and reject restores them exactly.
+    Runs move into `w:del` with formatting intact and the paragraph mark is stamped, so
+    accepting removes the paragraphs and rejecting restores them exactly. Refuses a
+    protected document, a range crossing stories or parents, a bookmarked or non-plain run,
+    and an open field.
     """
     if not author:
         raise ValueError("author is required")
@@ -568,7 +569,12 @@ def tracked_replace_paragraphs(
     author: str,
     date: Optional[dt.datetime] = None,
 ) -> BlockEditResult:
-    """Tracked-delete a paragraph range and tracked-insert replacements after it."""
+    """Tracked-delete a paragraph range and tracked-insert replacements after it.
+
+    Returns a `BlockEditResult`. Replacements land after the last deleted paragraph. Carries
+    the same refusals as `tracked_delete_paragraphs`: protection, a range crossing stories,
+    bookmarked or non-plain runs, an open field.
+    """
     if not author:
         raise ValueError("author is required")
     _validate_tracked_identity(author, date)
@@ -757,14 +763,12 @@ def insert_blocks_after(
     author: Optional[str] = None,
     date: Optional[dt.datetime] = None,
 ) -> BlockEditResult:
-    """Insert a typed block list after `anchor`.
+    """Insert a typed block list after `anchor`, and return a `BlockEditResult`.
 
-    `blocks` mixes |RichParagraph| (styled runs), |ListBlock| (REAL bullet or
-    decimal lists — the numbering definition is created on demand), and
-    |TableBlock| (simple rectangular tables). This is deliberately a small
-    vocabulary: rich enough for a report section, small enough to stay safe.
-    Tracked mode covers paragraphs and lists; tracked TABLE insertion refuses
-    (Word's row-revision vocabulary is a later phase).
+    `blocks` mixes `RichParagraph` (styled runs), `ListBlock` (real bullet or decimal lists,
+    numbering definition created on demand) and `TableBlock` (rectangular tables). Reach for
+    this when you want structure rather than raw XML. Refuses a protected document, and an
+    anchor that is missing, ambiguous, foreign or stale.
     """
     if tracked and not author:
         raise ValueError("author is required when tracked=True")

@@ -458,12 +458,12 @@ class Control:
     # -- writing ----------------------------------------------------------
 
     def set_value(self, value: "Union[str, bool, dt.date, dt.datetime]") -> None:
-        """Set the control's value type-correctly; validate-fully-then-mutate.
+        """Set the control's value, validating fully before mutating anything.
 
-        Text/rich-text: replaces the content with one run (first run's
-        formatting kept, placeholder state cleared). Checkbox: bool.
-        Dropdown/combo: must match a listItem (dropdown) — combos accept free
-        text. Date: date/datetime (stamps `w:fullDate`) or display string.
+        Text and rich-text controls take a string, checkboxes a bool, dropdowns a value from
+        their `w:listItem` choices, dates an ISO date. Refuses a protected document, a stale or
+        foreign control, a locked or data-bound surface, a picture, group or building-block
+        control, a dropdown value outside its choices, and an unsupported date format.
         """
         self._validate_ownership()
         _refuse_if_protected(
@@ -870,5 +870,9 @@ def set_control_value(
     tag: Optional[str] = None,
     alias: Optional[str] = None,
 ) -> None:
-    """Find one control by tag/alias and set its value (see Control.set_value)."""
+    """Set the value of the control that `tag` names.
+
+    Refuses when no control carries the tag and when several do, plus every refusal
+    `Control.set_value` raises.
+    """
     get_control(document, tag=tag, alias=alias).set_value(value)

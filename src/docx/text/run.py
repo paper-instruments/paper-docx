@@ -176,9 +176,11 @@ class Run(StoryChild):
                 yield Drawing(item, self)
 
     def mark_comment_range(self, last_run: Run, comment_id: int) -> None:
-        """Mark the range of runs from this run to `last_run` (inclusive) as belonging to a comment.
+        """Mark the runs from this one to `last_run` as a comment range for `comment_id`.
 
-        `comment_id` identfies the comment that references this range.
+        Called by the comment-anchoring machinery; prefer `Document.add_comment` or
+        `Span.comment`. Refuses when the two runs belong to different documents, leaving the
+        XML unchanged.
         """
         root = self._r.getroottree().getroot()
         if root is not last_run._r.getroottree().getroot():

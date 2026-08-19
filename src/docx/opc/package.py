@@ -162,9 +162,16 @@ class OpcPackage:
         return Relationships(PACKAGE_URI.baseURI)
 
     def save(self, pkg_file: str | IO[bytes]):
-        """Save this package to `pkg_file`.
+        """Save this package to `pkg_file`, a path or a stream positioned at byte zero.
 
-        `pkg_file` can be either a file-path or a file-like object.
+        Serializes to a sibling temp file, reparses it to confirm it opens, then replaces the
+        destination. A failed save leaves the original untouched and never leaves behind a
+        package Word cannot open. An existing destination keeps its permission bits. A symlink
+        destination is followed and its target replaced.
+
+        Raises `MalformedPackageError` when the serialized output will not reparse, and
+        `OSError` for a stream in append mode, a stream positioned past byte zero, or a
+        destination symlink that moves mid-save.
         """
         parts = self.parts
         for part in parts:
