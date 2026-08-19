@@ -162,13 +162,15 @@ def it_restores_a_seekable_stream_after_commit_error():
 
     original = b"prefix and original suffix"
     stream = FailOnce(original)
-    stream.seek(7)
+    stream.seek(0)
 
     with pytest.raises(OSError, match="commit failed"):
         docx.Document().save(stream)
 
+    # -- the subject is commit-failure rollback, not the cursor: a nonzero position is now
+    # -- refused outright, so this exercises snapshot/restore at offset 0
     assert stream.getvalue() == original
-    assert stream.tell() == 7
+    assert stream.tell() == 0
 
 
 def it_refuses_an_append_mode_stream_without_changing_it(tmp_path: Path):
@@ -184,28 +186,41 @@ def it_refuses_an_append_mode_stream_without_changing_it(tmp_path: Path):
     assert destination.read_bytes() == original
 
 
-def it_validates_the_real_prefix_of_a_nonzero_position_stream(monkeypatch):
+def it_refuses_a_nonzero_position_stream_without_changing_it():
+    """Word refuses a package with bytes in front of it.
+
+    This test previously asserted the opposite -- that the save succeeded, preserved the
+    caller's prefix, and that the whole stream reopened as a Document. Word for Mac
+    (2026-08-18) refuses exactly that file, and the extractable slice is offset-skewed by the
+    prefix length, so the operation has no usable output by either route.
+    """
     prefix = b"real destination prefix"
     original = prefix + b"existing suffix"
     stream = io.BytesIO(original)
     stream.seek(len(prefix))
-    validate = package_module._validate_serialized_output
-    validated_prefixes = []
 
-    def validate_and_record(source):
-        source.seek(0)
-        validated_prefixes.append(source.read(len(prefix)))
-        source.seek(0)
-        validate(source)
+    with pytest.raises(OSError, match="positioned at offset"):
+        docx.Document().save(stream)
 
-    monkeypatch.setattr(package_module, "_validate_serialized_output", validate_and_record)
+    assert stream.getvalue() == original
+    assert stream.tell() == len(prefix)
 
+
+def it_truncates_an_offset_zero_stream_holding_a_longer_document(tmp_path: Path):
+    """The behaviour the truncation gate must preserve.
+
+    A short document written over a longer one at offset 0 must leave no tail of the previous
+    document: undeclared trailing bytes are a shape Word refuses.
+    """
+    reference = tmp_path / "fresh.docx"
+    docx.Document().save(str(reference))
+    fresh_bytes = reference.read_bytes()
+
+    stream = io.BytesIO(b"Z" * (len(fresh_bytes) * 3))
+    stream.seek(0)
     docx.Document().save(stream)
 
-    assert validated_prefixes == [prefix]
-    assert stream.getvalue().startswith(prefix)
-    stream.seek(0)
-    assert isinstance(docx.Document(stream), docx.document.Document)
+    assert stream.getvalue() == fresh_bytes
 
 
 def it_refuses_before_overwriting_an_unreadable_seekable_stream():

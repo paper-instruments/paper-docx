@@ -314,6 +314,12 @@ def _atomic_stream_write(stream: IO[bytes], relationships, parts) -> None:
             " nothing was written"
         )
     start = _stream_position(stream)
+    if start not in (None, 0):
+        raise OSError(
+            f"destination stream is positioned at offset {start}, so the package would be"
+            " written after existing bytes; Word cannot open a .docx with anything in front"
+            " of the archive. Pass a stream positioned at 0, or save to a path"
+        )
     snapshot_record = _snapshot_stream_tail(stream, start)
     if snapshot_record is None:
         if _has_stream_rollback_surface(stream, start):
@@ -328,15 +334,18 @@ def _atomic_stream_write(stream: IO[bytes], relationships, parts) -> None:
     snapshot, original_end = snapshot_record
     try:
         with tempfile.SpooledTemporaryFile(max_size=_STREAM_SPOOL_BYTES, mode="w+b") as staged:
-            assert start is not None
-            _copy_stream_prefix(stream, staged, start)
+            assert start == 0
             PackageWriter.write(staged, relationships, parts)
             _validate_serialized_output(staged)
             staged.seek(start)
             try:
                 stream.seek(start)
                 _copy_stream(staged, cast(BinaryIO, stream))
-                stream.truncate()
+                if start == 0:
+                    # -- truncate() cuts at the current position; doing that anywhere but
+                    # -- offset 0 would discard bytes the caller owns. Nonzero offsets are
+                    # -- refused above, so this states the precondition it relies on.
+                    stream.truncate()
                 flush = getattr(stream, "flush", None)
                 if callable(flush):
                     flush()
@@ -376,21 +385,6 @@ def _write_staged_to_unrestorable_stream(
         flush = getattr(stream, "flush", None)
         if callable(flush):
             flush()
-
-
-def _copy_stream_prefix(stream, destination: BinaryIO, length: int) -> None:
-    """Copy the exact preserved prefix into the staged validation stream."""
-    stream.seek(0)
-    remaining = length
-    while remaining:
-        chunk = stream.read(min(_STREAM_COPY_BYTES, remaining))
-        if not isinstance(chunk, bytes) or not chunk:
-            raise OSError(
-                "destination stream prefix could not be read; nothing was written"
-            )
-        destination.write(chunk)
-        remaining -= len(chunk)
-    stream.seek(length)
 
 
 def _stream_position(stream) -> "Optional[int]":

@@ -193,6 +193,19 @@ def _preflight_zip_stream(stream: BinaryIO) -> None:
             central_size,
             total_entries,
         )
+
+        # -- Word refuses a package that does not begin at the start of the file, even when
+        # -- the archive itself is internally consistent: a rebased prefix satisfies every
+        # -- check above. Runs last so a genuinely malformed archive keeps its own, more
+        # -- specific diagnosis instead of this one.
+        stream.seek(0, os.SEEK_SET)
+        leading = stream.read(4)
+        if leading not in (_LOCAL_HEADER_SIGNATURE, _END_RECORD_SIGNATURE):
+            raise PackageLimitError(
+                "the package does not begin with a ZIP local file header, so bytes precede"
+                " the archive; Word cannot open a .docx with anything in front of the"
+                " package. Extract the archive to a file of its own and open that"
+            )
     finally:
         with suppress(AttributeError, OSError, TypeError, ValueError):
             stream.seek(original_position, os.SEEK_SET)

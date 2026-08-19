@@ -38,6 +38,9 @@ from typing import IO, TYPE_CHECKING, Dict, List, Tuple, Union
 from lxml import etree
 
 from docx._zipguard import (
+    _END_RECORD,
+    _END_RECORD_SIGNATURE,
+    _MAX_END_COMMENT_BYTES,
     GuardedZipReader,
     preflight_zip,
     read_compressed_bytes,
@@ -416,6 +419,35 @@ def _write_bytes_atomically(out_path: Path, data: bytes, mode: int) -> None:
 #: OLE Compound File header — encrypted Office files and legacy .doc binaries
 _CFB_MAGIC = b"\xd0\xcf\x11\xe0\xa1\xb1\x1a\xe1"
 
+
+def _has_end_of_central_directory(path: Path) -> bool:
+    """Whether the file ends with a structurally plausible end-of-central-directory record.
+
+    A file carrying one is a ZIP whose archive simply does not start at byte 0, which is a
+    different defect from having no ZIP structure at all. The record must *account for the rest
+    of the file* — its declared comment length has to reach exactly the end — which is the same
+    rule the preflight applies. Testing for the four signature bytes alone would misread any
+    non-ZIP that happens to contain them: measured, a text file with those bytes planted in its
+    tail was reported as a prefixed archive.
+    """
+    try:
+        size = path.stat().st_size
+        with path.open("rb") as stream:
+            window = min(size, _END_RECORD.size + _MAX_END_COMMENT_BYTES)
+            stream.seek(size - window)
+            tail = stream.read(window)
+    except OSError:
+        return False
+    cursor = tail.rfind(_END_RECORD_SIGNATURE)
+    while cursor >= 0:
+        if cursor + _END_RECORD.size <= len(tail):
+            comment_length = _END_RECORD.unpack_from(tail, cursor)[7]
+            if cursor + _END_RECORD.size + comment_length == len(tail):
+                return True
+        cursor = tail.rfind(_END_RECORD_SIGNATURE, 0, cursor)
+    return False
+
+
 _MAIN_PART_KINDS = {
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document.main+xml": "docx",
     "application/vnd.openxmlformats-officedocument.wordprocessingml.template.main+xml": "dotx",
@@ -476,6 +508,16 @@ def diagnose(path: _PathLike) -> PackageDiagnosis:
             " (decrypt it first) or a legacy binary .doc (convert to .docx)",
         )
     if not header.startswith(b"PK"):
+        # -- a package whose archive does not start at byte 0 is still a ZIP; saying
+        # -- "not a ZIP archive" would send the caller looking for the wrong problem
+        if _has_end_of_central_directory(file_path):
+            return result(
+                False,
+                "unsafe-archive",
+                "a ZIP archive is present but does not begin at the start of the file;"
+                " Word cannot open a .docx with anything in front of the package."
+                " Extract the archive to a file of its own and open that",
+            )
         return result(False, "not-a-zip", "not a ZIP archive, so not an OPC package")
     try:
         parts, _ = _read_zip(file_path)
