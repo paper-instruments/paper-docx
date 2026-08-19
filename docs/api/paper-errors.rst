@@ -22,7 +22,7 @@ disk byte-for-byte unchanged. Programmer mistakes remain ordinary
 
 
 |MalformedPackageError|
--------------------
+-----------------------
 
 .. autoexception:: MalformedPackageError
    :show-inheritance:
