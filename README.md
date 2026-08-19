@@ -1,4 +1,33 @@
-# paper-docx
+<div align="center">
+  <a href="https://github.com/paper-instruments/paper-docx">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset=".github/assets/logo-dark.svg">
+      <img alt="paper-docx logo" src=".github/assets/logo-light.svg" height="128">
+    </picture>
+  </a>
+  <h1>paper-docx</h1>
+
+[![PyPI](https://img.shields.io/pypi/v/paper-docx.svg)](https://pypi.org/project/paper-docx/)
+[![Python versions](https://img.shields.io/pypi/pyversions/paper-docx.svg)](https://pypi.org/project/paper-docx/)
+[![License](https://img.shields.io/pypi/l/paper-docx.svg)](LICENSE)
+[![CI](https://github.com/paper-instruments/paper-docx/actions/workflows/test.yml/badge.svg)](https://github.com/paper-instruments/paper-docx/actions/workflows/test.yml)
+[![Downloads](https://img.shields.io/pypi/dm/paper-docx.svg)](https://pypi.org/project/paper-docx/)
+
+</div>
+
+<div align="center">
+  <a href="https://github.com/paper-instruments/paper-docx">
+    <picture>
+      <source media="(prefers-color-scheme: dark)" srcset=".github/assets/logo-dark.svg">
+      <img alt="paper-docx logo" src=".github/assets/logo-light.svg" height="128">
+    </picture>
+  </a>
+  <h1>paper-docx</h1>
+
+[![PyPI](https://img.shields.io/pypi/v/paper-docx.svg)](https://pypi.org/project/paper-docx/)
+[![Python versions](https://img.shields.io/pypi/pyversions/paper-docx.svg)](https://pypi.org/project/paper-docx/)
+[![License](https://img.shields.io/pypi/l/paper-docx.svg)](LICENSE)
+[![CI](https://github.com/paper-instruments/paper-docx/actions/workflows/test.yml/badge.svg)](https://github.com/paper-instruments/paper-docx/actions/workflows/test.yml)
 
 `paper-docx` is an agent-first Python library for safely inspecting, editing,
 reviewing, and composing existing Microsoft Word (`.docx`) documents. It is a
@@ -28,9 +57,10 @@ library to refuse rather than guess.
 ## Safety contract
 
 Every added operation either does exactly what it claims or refuses atomically.
-Mutating operations validate fully before they change anything. If an operation
-cannot proceed safely, it raises a typed `PaperRefusal` and leaves the document
-byte-for-byte unchanged in memory and on disk. Callers can catch `PaperRefusal`
+Gates such as Restrict-Editing are checked before anything is touched, and
+compound edits capture the live package first and restore it if they raise. If
+an operation cannot proceed safely, it raises a typed `PaperRefusal` and leaves
+the document byte-for-byte unchanged in memory and on disk. Callers can catch `PaperRefusal`
 separately from programmer errors, which remain plain `ValueError` or
 `TypeError`. Comparison and rewrite paths preserve meaningful whitespace,
 including trailing spaces inside runs.
@@ -83,8 +113,13 @@ change, it raises a typed refusal instead of returning an incomplete result.
 - **`docx.controls`** fills content controls with the correct value type and
   clears placeholder state so Word treats them as filled.
 - **`docx.bookmarks` / `docx.fields`** create bookmarks over a span and author
-  page numbers, dates, cross-references, and tables of contents as fields with
-  placeholder results.
+  page numbers, dates, cross-references, captions, and tables of contents as
+  fields with placeholder results.
+- **`docx.notes` / `docx.links`** anchor real footnotes, endnotes, and
+  hyperlinks to a matched span, so they compose with `docx.search` rather than
+  needing their own targeting.
+- **`Drawing.replace_picture`** swaps the image behind a drawing in place,
+  leaving its size, position, and identity alone.
 - **`docx.formatting`** resolves effective formatting through document defaults,
   styles, and direct formatting, with provenance for each value.
 
@@ -93,9 +128,11 @@ change, it raises a typed refusal instead of returning an incomplete result.
 - **`doc.revisions`** enumerates and resolves tracked changes across every part:
   insertions, deletions, run and paragraph format changes, table-row revisions,
   and moves. Unresolvable markup is listed by name.
-- **`docx.protection`** respects Restrict-Editing. Mutating operations refuse on
-  a protected document unless the caller explicitly overrides; the setting is
-  preserved in the document.
+- **`docx.comments` / `docx.commentops`** read comments and delete one by
+  identity, keeping the modern comment identity parts consistent.
+- **`docx.protection`** reads, sets, and respects Restrict-Editing. Mutating
+  operations refuse on a protected document unless the caller explicitly
+  overrides, and the setting is preserved in the document.
 
 ### Working across documents
 
