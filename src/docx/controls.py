@@ -659,9 +659,41 @@ def _binding_namespaces(root, binding: "_Element") -> dict:
     return nsmap
 
 
+def _evaluate_store_xpath(root, xpath: str, namespaces):
+    """Run one stored binding expression, refusing anything that cannot name a node.
+
+    The expression comes from `w:dataBinding/@w:xpath`, so it is document content rather than
+    a caller argument: a malformed or non-node-set expression is bad input and has to speak as
+    a typed refusal like every other defect this function rejects. Unguarded, lxml surfaced
+    `XPathEvalError` for bad syntax and `TypeError` for an expression returning a number or a
+    boolean, neither of which a caller catching |PaperRefusal| can handle.
+
+    Word treats a binding it cannot evaluate as an *unbound* control: it opens the document
+    without complaint and shows the body placeholder. So the message says the binding is
+    unusable, never that the document is damaged.
+    """
+    try:
+        result = root.xpath(xpath, namespaces=namespaces)
+    except etree.XPathError as exc:
+        raise UnsupportedStructureError(
+            f"the data-bound control's xpath {xpath!r} is not a valid XPath expression, so the"
+            " bound value cannot be located. The document itself is intact — Word treats such"
+            " a binding as unbound. Repair the w:dataBinding expression, or set the control's"
+            " value in a document whose binding resolves; nothing was changed"
+        ) from exc
+    if not isinstance(result, list):
+        raise UnsupportedStructureError(
+            f"the data-bound control's xpath {xpath!r} evaluates to"
+            f" {type(result).__name__}, not to a node, so there is nothing in the custom XML"
+            " store to write to. Point the binding at an element or attribute; nothing was"
+            " changed"
+        )
+    return result
+
+
 def _eval_store_xpath(root, xpath: str, nsmap: dict):
     namespaces = nsmap or None
-    nodes = root.xpath(xpath, namespaces=namespaces)
+    nodes = _evaluate_store_xpath(root, xpath, namespaces)
     if nodes:
         return nodes
     if "_" not in nsmap or re.search(r"(^|/)[A-Za-z_][\w.-]*:", xpath):
@@ -671,7 +703,7 @@ def _eval_store_xpath(root, xpath: str, nsmap: dict):
         lambda match: f"{match.group(1)}_:{match.group(2)}",
         xpath,
     )
-    return root.xpath(qualified, namespaces=nsmap)
+    return _evaluate_store_xpath(root, qualified, nsmap)
 
 
 def _part_root(part):

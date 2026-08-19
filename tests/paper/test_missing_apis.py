@@ -7,6 +7,7 @@ import struct
 from pathlib import Path
 
 import pytest
+from lxml import etree
 
 import docx
 from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
@@ -532,6 +533,46 @@ class DescribeNotes:
 
 
 class DescribeDataBoundControls:
+    # -- A binding's xpath is document content, not a caller argument, so every way it can be
+    # -- unusable has to speak as a typed refusal. Word treats a binding it cannot evaluate as
+    # -- an unbound control -- it opens the document and shows the body placeholder -- so these
+    # -- refusals must not claim the document is damaged.
+    @pytest.mark.parametrize(
+        "xpath",
+        [
+            "/ns0:root/[[[",                    # malformed syntax
+            "bogus-fn(/ns0:root)",              # unregistered function
+            "count(/ns0:root/ns0:name)",        # evaluates to a number
+            "string(/ns0:root/ns0:name)",       # evaluates to a string
+            "boolean(/ns0:root)",               # evaluates to a boolean
+        ],
+    )
+    def it_refuses_an_xpath_that_cannot_name_a_node(self, xpath: str):
+        document = _doc()
+        _attach_bound_control(document, "bound", xpath=xpath)
+        before = etree.tostring(document.element)
+
+        with pytest.raises(UnsupportedStructureError, match="nothing was changed"):
+            set_control_value(document, "new", tag="bound")
+
+        assert etree.tostring(document.element) == before
+        assert get_control(document, tag="bound").value == "old"
+
+    def it_says_the_binding_is_unusable_without_calling_the_document_damaged(self):
+        document = _doc()
+        _attach_bound_control(document, "bound", xpath="/ns0:root/[[[")
+
+        with pytest.raises(UnsupportedStructureError) as exc:
+            set_control_value(document, "new", tag="bound")
+
+        message = str(exc.value)
+        assert "not a valid XPath expression" in message
+        assert "/ns0:root/[[[" in message
+        # -- Word opens these documents without complaint, so the message must not imply
+        # -- corruption or send the caller to repair the file
+        assert "corrupt" not in message.lower()
+        assert "w:dataBinding expression" in message
+
     def it_writes_the_custom_xml_store(self, tmp_path: Path):
         document = _doc()
         _attach_bound_control(document, "bound")
