@@ -180,19 +180,3 @@ jobs:
           expect_failure "$matrix_root/transitive-clobber/bin/paper-docx-doctor"
           expect_failure "$matrix_root/transitive-clobber/bin/python" \
             -c "import docx.search"
-
-  required:
-    name: Required
-    if: always()
-    needs: [test, docs, build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require every quality job
-        env:
-          TEST_RESULT: ${{ needs.test.result }}
-          DOCS_RESULT: ${{ needs.docs.result }}
-          BUILD_RESULT: ${{ needs.build.result }}
-        run: |
-          test "$TEST_RESULT" = success
-          test "$DOCS_RESULT" = success
-          test "$BUILD_RESULT" = success
