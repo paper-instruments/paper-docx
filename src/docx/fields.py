@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional, Tuple
 
+from docx._guard import check_install
+from docx._transaction import rollback_on_error
 from docx.errors import TargetNotFoundError
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
@@ -26,6 +28,8 @@ if TYPE_CHECKING:
 
     from docx.document import Document
     from docx.text.paragraph import Paragraph
+
+check_install()
 
 #: placeholder result texts — deliberately obviously-stale until a renderer
 #: recomputes them on open (w:updateFields)
@@ -90,16 +94,18 @@ def add_page_number_field(paragraph: "Paragraph") -> None:
     """Append a PAGE field (typically to a footer paragraph)."""
     document = _document_of_paragraph(paragraph)
     _refuse_if_protected(document, "insert a field")
-    paragraph._p.append(_simple_field(" PAGE ", _PLACEHOLDERS["PAGE"]))
-    _set_update_fields_on_open(document)
+    with rollback_on_error(document):
+        paragraph._p.append(_simple_field(" PAGE ", _PLACEHOLDERS["PAGE"]))
+        _set_update_fields_on_open(document)
 
 
 def add_page_count_field(paragraph: "Paragraph") -> None:
     """Append a NUMPAGES field (typically to a footer paragraph)."""
     document = _document_of_paragraph(paragraph)
     _refuse_if_protected(document, "insert a field")
-    paragraph._p.append(_simple_field(" NUMPAGES ", _PLACEHOLDERS["NUMPAGES"]))
-    _set_update_fields_on_open(document)
+    with rollback_on_error(document):
+        paragraph._p.append(_simple_field(" NUMPAGES ", _PLACEHOLDERS["NUMPAGES"]))
+        _set_update_fields_on_open(document)
 
 
 def add_date_field(paragraph: "Paragraph", *, date_format: Optional[str] = None) -> None:
@@ -112,8 +118,9 @@ def add_date_field(paragraph: "Paragraph", *, date_format: Optional[str] = None)
     if date_format:
         escaped = date_format.replace('"', "")
         instr = f' DATE \\@ "{escaped}" '
-    paragraph._p.append(_simple_field(instr, _PLACEHOLDERS["DATE"]))
-    _set_update_fields_on_open(document)
+    with rollback_on_error(document):
+        paragraph._p.append(_simple_field(instr, _PLACEHOLDERS["DATE"]))
+        _set_update_fields_on_open(document)
 
 
 def add_reference_field(
@@ -133,10 +140,11 @@ def add_reference_field(
         raise TargetNotFoundError(
             f"no bookmark named {bookmark!r} exists to cross-reference"
         )
-    paragraph._p.append(
-        _simple_field(_REFERENCE_KINDS[kind](bookmark), "(reference)")
-    )
-    _set_update_fields_on_open(document)
+    with rollback_on_error(document):
+        paragraph._p.append(
+            _simple_field(_REFERENCE_KINDS[kind](bookmark), "(reference)")
+        )
+        _set_update_fields_on_open(document)
 
 
 def insert_toc_after(
@@ -160,33 +168,34 @@ def insert_toc_after(
 
     root = next(r for s, r in _story_elements(document) if s == story)
     _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
-    paragraph = OxmlElement("w:p")
+    with rollback_on_error(document):
+        paragraph = OxmlElement("w:p")
 
-    def _fld_char(fld_type: str, *, dirty: bool = False) -> "_Element":
-        run = OxmlElement("w:r")
-        fld_char = OxmlElement("w:fldChar")
-        fld_char.set(qn("w:fldCharType"), fld_type)
-        if dirty:
-            fld_char.set(qn("w:dirty"), "true")
-        run.append(fld_char)
-        return run
+        def _fld_char(fld_type: str, *, dirty: bool = False) -> "_Element":
+            run = OxmlElement("w:r")
+            fld_char = OxmlElement("w:fldChar")
+            fld_char.set(qn("w:fldCharType"), fld_type)
+            if dirty:
+                fld_char.set(qn("w:dirty"), "true")
+            run.append(fld_char)
+            return run
 
-    instr_run = OxmlElement("w:r")
-    instr = OxmlElement("w:instrText")
-    instr.set(qn("xml:space"), "preserve")
-    instr.text = f' TOC \\o "{low}-{high}" \\h \\z \\u '
-    instr_run.append(instr)
-    placeholder_run = OxmlElement("w:r")
-    placeholder_run.add_t(
-        "Table of contents placeholder — update fields to build it."
-    )
-    for piece in (
-        _fld_char("begin", dirty=True),
-        instr_run,
-        _fld_char("separate"),
-        placeholder_run,
-        _fld_char("end"),
-    ):
-        paragraph.append(piece)
-    _insert_after(anchor_p, [paragraph])
-    _set_update_fields_on_open(document)
+        instr_run = OxmlElement("w:r")
+        instr = OxmlElement("w:instrText")
+        instr.set(qn("xml:space"), "preserve")
+        instr.text = f' TOC \\o "{low}-{high}" \\h \\z \\u '
+        instr_run.append(instr)
+        placeholder_run = OxmlElement("w:r")
+        placeholder_run.add_t(
+            "Table of contents placeholder — update fields to build it."
+        )
+        for piece in (
+            _fld_char("begin", dirty=True),
+            instr_run,
+            _fld_char("separate"),
+            placeholder_run,
+            _fld_char("end"),
+        ):
+            paragraph.append(piece)
+        _insert_after(anchor_p, [paragraph])
+        _set_update_fields_on_open(document)

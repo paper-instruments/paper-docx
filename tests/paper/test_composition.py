@@ -63,7 +63,7 @@ class DescribeInsertBlocksFrom:
         heading = next(p for p in reopened.paragraphs if p.text == "Payment Terms")
         assert heading.style.name == "Heading 2"
         # match_by_name: the destination's own Heading 2 definition wins
-        assert "Heading2" not in report.imported_styles or True
+        assert "Heading2" not in report.imported_styles
         payload = report.to_dict()
         assert payload["schema"] == "paper_composition"
         assert "word/styles.xml" in payload["declared_parts"]

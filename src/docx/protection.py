@@ -20,11 +20,14 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
+from docx._guard import check_install
 from docx.errors import DocumentProtectedError
 from docx.oxml.ns import qn
 
 if TYPE_CHECKING:
     from docx.document import Document
+
+check_install()
 
 _ACK_ATTR = "_paper_protection_acknowledged"
 _TRUTHY = ("1", "true", "on")

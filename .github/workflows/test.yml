@@ -7,6 +7,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 permissions:
   contents: read
 
@@ -69,8 +73,7 @@ jobs:
           python-version: "3.13"
       - name: Install LibreOffice Writer
         run: |
-          sudo apt-get update
-          sudo apt-get install --yes libreoffice-writer
+          sudo apt-get install --yes --no-install-recommends libreoffice-writer
           command -v soffice
           soffice --version
       - name: Install package and test dependencies
@@ -135,6 +138,8 @@ jobs:
           "$matrix_root/paper-then-upstream/bin/python" -m pip install \
             --no-deps python-docx==1.2.0
           expect_failure "$matrix_root/paper-then-upstream/bin/paper-docx-doctor"
+          expect_failure "$matrix_root/paper-then-upstream/bin/python" \
+            -c "import docx.search"
 
           python -m venv "$matrix_root/upstream-then-paper"
           "$matrix_root/upstream-then-paper/bin/python" -m pip install \
@@ -153,20 +158,25 @@ jobs:
             --yes python-docx
           expect_failure "$matrix_root/unsafe-uninstall/bin/paper-docx-doctor"
 
-  required:
-    name: Required
-    if: always()
-    needs: [test, libreoffice, docs, build]
-    runs-on: ubuntu-latest
-    steps:
-      - name: Require every quality job
-        env:
-          TEST_RESULT: ${{ needs.test.result }}
-          LIBREOFFICE_RESULT: ${{ needs.libreoffice.result }}
-          DOCS_RESULT: ${{ needs.docs.result }}
-          BUILD_RESULT: ${{ needs.build.result }}
-        run: |
-          test "$TEST_RESULT" = success
-          test "$LIBREOFFICE_RESULT" = success
-          test "$DOCS_RESULT" = success
-          test "$BUILD_RESULT" = success
+          python -m venv "$matrix_root/transitive-clobber"
+          clobber_src="$matrix_root/clobber-dep"
+          mkdir -p "$clobber_src/clobber_dep"
+          printf '%s\n' \
+            '[build-system]' \
+            'requires = ["setuptools>=61"]' \
+            'build-backend = "setuptools.build_meta"' \
+            '' \
+            '[project]' \
+            'name = "clobber-dep"' \
+            'version = "0.0.0"' \
+            'dependencies = ["python-docx==1.2.0"]' \
+            '' \
+            '[tool.setuptools]' \
+            'packages = ["clobber_dep"]' \
+            > "$clobber_src/pyproject.toml"
+          : > "$clobber_src/clobber_dep/__init__.py"
+          "$matrix_root/transitive-clobber/bin/python" -m pip install "$wheel"
+          "$matrix_root/transitive-clobber/bin/python" -m pip install "$clobber_src"
+          expect_failure "$matrix_root/transitive-clobber/bin/paper-docx-doctor"
+          expect_failure "$matrix_root/transitive-clobber/bin/python" \
+            -c "import docx.search"

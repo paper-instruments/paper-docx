@@ -14,6 +14,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Iterator, Optional, Tuple
 
+from docx._guard import check_install
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml.ns import qn
@@ -30,6 +31,9 @@ if TYPE_CHECKING:
 
     from docx.document import Document
     from docx.text.paragraph import Paragraph
+
+
+check_install()
 
 
 @dataclass(frozen=True)

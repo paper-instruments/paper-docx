@@ -25,6 +25,7 @@ import io
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
+from docx._guard import check_install
 from docx._ownership import require_anchor_owner
 from docx._transaction import rollback_on_error
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
@@ -36,6 +37,8 @@ if TYPE_CHECKING:
     from lxml.etree import _Element
 
     from docx.document import Document
+
+check_install()
 
 _P = qn("w:p")
 _TBL = qn("w:tbl")

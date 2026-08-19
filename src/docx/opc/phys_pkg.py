@@ -3,7 +3,7 @@
 import os
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo, is_zipfile
 
-from docx._zipguard import GuardedZipReader, enforce_compressed_size, preflight_zip
+from docx._zipguard import GuardedZipReader, preflight_zip
 from docx.errors import PackageLimitError
 from docx.opc.exceptions import PackageNotFoundError
 from docx.opc.packuri import CONTENT_TYPES_URI
@@ -124,7 +124,6 @@ class _ZipPkgReader(PhysPkgReader):
     def _load(self, source):
         """Preflight and cache one already-open package source."""
         try:
-            enforce_compressed_size(source)
             preflight_zip(source)
             self._zipf = ZipFile(source, "r")
             self._guarded_reader = GuardedZipReader(self._zipf)

@@ -19,6 +19,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Iterator, List, Optional, Sequence, Tuple
 
 from docx import _clock, _textatoms
+from docx._guard import check_install
 from docx._normalize import normalize_text  # noqa: F401 - public re-export
 from docx._transaction import rollback_on_error
 from docx.errors import (
@@ -43,6 +44,8 @@ if TYPE_CHECKING:
     from lxml.etree import _Element
 
     from docx.document import Document
+
+check_install()
 
 _T = _textatoms.T
 _DEL_TEXT = _textatoms.DEL_TEXT

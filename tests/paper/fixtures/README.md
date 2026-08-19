@@ -4,7 +4,7 @@ Layout: `<provenance>/<taxonomy>/<name>.docx` + same-stem `.json` sidecar.
 
 **Provenance buckets**: `word/` (authored in desktop
 Microsoft Word — not yet included), `google/` (exported from
-Google Docs — pending), `libreoffice/` (exported from LibreOffice),
+Google Docs), `libreoffice/` (exported from LibreOffice),
 `other/` (other real-world producers), `generated/` (produced by
 `tests/paper/fixtures_authoring/build_fixtures.py`; never by code under test).
 

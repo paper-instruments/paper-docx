@@ -30,6 +30,7 @@ import os
 import stat
 import tempfile
 import zipfile
+from contextlib import suppress
 from dataclasses import dataclass
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Dict, List, Tuple, Union
@@ -38,7 +39,6 @@ from lxml import etree
 
 from docx._zipguard import (
     GuardedZipReader,
-    enforce_compressed_size,
     preflight_zip,
     read_compressed_bytes,
 )
@@ -223,7 +223,6 @@ def _read_zip(
         with open(source, "rb") as stream:
             return _read_zip(stream)
     source = io.BytesIO(source) if isinstance(source, bytes) else source
-    enforce_compressed_size(source)
     preflight_zip(source)
     with zipfile.ZipFile(source) as zf:
         return GuardedZipReader(zf).read_all()
@@ -361,19 +360,54 @@ def _deterministic_zip_bytes(parts: Dict[str, bytes], order: List[str]) -> bytes
 def _write_bytes_atomically(out_path: Path, data: bytes, mode: int) -> None:
     """Write via a same-directory temp file + `os.replace`.
 
-    A failure anywhere before the final rename leaves any existing file at
-    `out_path` byte-for-byte intact; the temp file is always cleaned up.
+    Follows a destination symlink (updates the target, keeps the link).
+    `fsync`s the file and directory. A failure before the final rename leaves
+    any existing file intact; the temp file is always cleaned up.
     """
-    out_path.parent.mkdir(parents=True, exist_ok=True)
+    path = os.fspath(out_path)
+    link_state = None
+    if os.path.islink(path):
+        link_stat = os.lstat(path)
+        destination = os.path.realpath(path)
+        link_state = (link_stat.st_dev, link_stat.st_ino, destination)
+    else:
+        destination = path
+    directory = os.path.dirname(os.path.abspath(destination)) or os.curdir
+    os.makedirs(directory, exist_ok=True)
     fd, temp_name = tempfile.mkstemp(
-        prefix=out_path.name + ".", suffix=".partial", dir=str(out_path.parent)
+        prefix=os.path.basename(destination) + ".",
+        suffix=".partial",
+        dir=directory,
     )
     temp_path = Path(temp_name)
     try:
         with os.fdopen(fd, "wb") as stream:
             stream.write(data)
+            stream.flush()
+            os.fsync(stream.fileno())
         os.chmod(temp_path, mode)
-        os.replace(temp_path, out_path)
+        if link_state is not None:
+            try:
+                current = os.lstat(path)
+            except OSError as exc:
+                raise OSError(
+                    "destination symlink changed during save; nothing was replaced"
+                ) from exc
+            if (
+                not stat.S_ISLNK(current.st_mode)
+                or (current.st_dev, current.st_ino) != link_state[:2]
+                or os.path.realpath(path) != link_state[2]
+            ):
+                raise OSError(
+                    "destination symlink changed during save; nothing was replaced"
+                )
+        os.replace(temp_path, destination)
+        with suppress(OSError):
+            directory_fd = os.open(directory, os.O_RDONLY)
+            try:
+                os.fsync(directory_fd)
+            finally:
+                os.close(directory_fd)
     finally:
         if temp_path.exists():
             temp_path.unlink()
