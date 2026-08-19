@@ -376,24 +376,10 @@ def it_validates_case_insensitive_content_types_without_losing_duplicates():
         docx.Document(io.BytesIO(_rewrite_package(_document_bytes(), transform)))
 
 
-def it_refuses_a_known_relationship_role_with_the_wrong_content_type():
-    """A core part declared as the wrong media type is refused.
-
-    Uses the styles role rather than officeDocument: Word refuses `styles.xml`
-    declared `application/xml`, so this is the Word-verified case. The main-document
-    role is deliberately not checked here -- see the test below.
-    """
-
-    def transform(name: str, blob: bytes):
-        if name == "[Content_Types].xml":
-            blob = blob.replace(
-                b"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
-                b"application/xml",
-            )
-        return name, blob
-
-    with pytest.raises(MalformedPackageError, match="invalid content type"):
-        docx.Document(io.BytesIO(_rewrite_package(_document_bytes(), transform)))
+# The "known relationship role declared with the wrong content type" mechanism is
+# covered by test_word_media_content_types.py, which mutates the styles role -- the
+# case Word actually verified -- and asserts the declaration changed before opening.
+# This file keeps only the main-document exception, below.
 
 
 def it_leaves_the_main_document_content_type_check_to_upstream():
