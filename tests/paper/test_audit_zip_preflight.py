@@ -213,7 +213,9 @@ class DescribeArchiveMustBeginAtByteZero:
         target = tmp_path / "prefixed.docx"
         target.write_bytes(_prefixed_archive(self._clean(tmp_path), b"# self-extracting stub\n"))
 
-        with pytest.raises(MalformedPackageError, match="does not begin with a ZIP local file header"):
+        with pytest.raises(
+            MalformedPackageError, match="does not begin with a ZIP local file header"
+        ):
             docx.Document(str(target))
 
     def it_opens_the_same_document_without_the_prefix(self, tmp_path: Path):
@@ -246,5 +248,7 @@ class DescribeArchiveMustBeginAtByteZero:
         original = tmp_path / "prefixed.docx"
         original.write_bytes(_prefixed_archive(self._clean(tmp_path), b"#" * 64))
 
-        with pytest.raises(MalformedPackageError, match="does not begin with a ZIP local file header"):
+        with pytest.raises(
+            MalformedPackageError, match="does not begin with a ZIP local file header"
+        ):
             _paperpkg.patch_save(original, docx.Document(), tmp_path / "out.docx")
