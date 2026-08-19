@@ -4,8 +4,10 @@ Word's Restrict Editing pane writes `w:documentProtection` into
 word/settings.xml; Word then blocks or restricts editing. This package's own
 mutating APIs check that setting and refuse with |DocumentProtectedError|
 rather than silently editing a locked template — the same fail-loudly
-principle applied elsewhere in this fork. Upstream python-docx APIs are untouched
-(strict superset).
+principle applied elsewhere in this fork. The refusal follows Word's own rules,
+which are per-mode AND per-operation-class (see `_PROTECTION_MATRIX`): a
+comments-only restriction blocks body edits but still permits commenting.
+Upstream python-docx APIs are untouched (strict superset).
 
 Protection is ADVISORY, not security: the setting is plain XML anyone can
 remove. The sanctioned override is one explicit, document-level
@@ -18,7 +20,7 @@ reported by `protection_status` and never removed.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Optional
+from typing import TYPE_CHECKING, Dict, Optional
 
 from docx._guard import check_install
 from docx._transaction import rollback_on_error
@@ -33,7 +35,68 @@ check_install()
 
 _ACK_ATTR = "_paper_protection_acknowledged"
 _TRUTHY = ("1", "true", "on")
-_EDIT_MODES = ("readOnly", "comments", "forms", "trackedChanges")
+
+# --- Operation classes -------------------------------------------------------
+#
+# Word's Restrict Editing rules are per-mode AND per-operation-class: `comments`
+# exists precisely to permit commenting while forbidding body edits, and `forms`
+# exists to permit filling a form field while locking everything around it. The
+# gate therefore needs to know what KIND of operation is being attempted, not
+# just that protection is enforced.
+OP_COMMENT = "comment"
+OP_FORM_FIELD = "form-field-value"
+OP_BODY = "body-content"
+OPERATION_CLASSES = (OP_COMMENT, OP_FORM_FIELD, OP_BODY)
+
+# The formatting-only row of the matrix: `w:formatting="1"` with no `w:edit`
+# restriction (or `w:edit="none"`). The key is a sentinel object rather than a
+# string so that no `w:edit` token can ever spell it: a document declaring
+# `w:edit="formatting-only"` is an unrecognised restriction and must refuse
+# every class, not land on this row. The noun the refusal message uses is a
+# separate name for the same reason in reverse — rewording the message must not
+# change which matrix row is looked up.
+_FORMATTING_ONLY = object()
+_FORMATTING_ONLY_NOUN = "formatting-only"
+
+# True = permit, False = refuse. Cells marked (measured) were verified in Word
+# for Mac on 2026-08-18 (verdict set `2-refused-operations`); see
+# verifying-against-word/WORD-VERDICTS.md, "The protection gate".
+#
+# TWO CELLS ARE UNMEASURED and ship PERMISSIVE: body content under
+# `trackedChanges` and under formatting-only. Word has not been asked about
+# either. A refusal with no Word verdict behind it is an unjustified
+# regression, and this gate is a policy mirror of Word's UI rather than a
+# corruption guard, so permitting cannot produce a file Word refuses. Both are
+# pinned by a test naming them unmeasured, so measuring one later changes a
+# test deliberately rather than silently.
+_PROTECTION_MATRIX: Dict[object, Dict[str, bool]] = {
+    #                    comment          form-field value  body content
+    "readOnly": {
+        OP_COMMENT: False,  # measured: blocked
+        OP_FORM_FIELD: False,  # measured: blocked
+        OP_BODY: False,  # measured: blocked
+    },
+    "comments": {
+        OP_COMMENT: True,  # measured: ALLOWED
+        OP_FORM_FIELD: False,  # unmeasured; the mode is not about form fields
+        OP_BODY: False,  # measured: blocked
+    },
+    "trackedChanges": {
+        OP_COMMENT: True,  # measured: ALLOWED
+        OP_FORM_FIELD: False,  # unmeasured; the mode is not about form fields
+        OP_BODY: True,  # UNMEASURED — ships permissive, see note above
+    },
+    "forms": {
+        OP_COMMENT: False,  # measured: blocked
+        OP_FORM_FIELD: True,  # measured: ALLOWED
+        OP_BODY: False,  # measured: blocked
+    },
+    _FORMATTING_ONLY: {
+        OP_COMMENT: True,  # measured: ALLOWED
+        OP_FORM_FIELD: True,  # unmeasured; no content restriction is declared
+        OP_BODY: True,  # UNMEASURED — ships permissive, see note above
+    },
+}
 _DOCUMENT_PROTECTION_SUCCESSORS = (
     "w:autoFormatOverride",
     "w:styleLockTheme",
@@ -101,6 +164,12 @@ _DOCUMENT_PROTECTION_SUCCESSORS = (
 )
 
 
+# `set_protection` accepts exactly the `w:edit` tokens the matrix has a row
+# for, so the two cannot drift apart. The formatting-only row is keyed by a
+# sentinel rather than a string, so it drops out here.
+_EDIT_MODES = tuple(mode for mode in _PROTECTION_MATRIX if isinstance(mode, str))
+
+
 def _is_on(value: Optional[str]) -> bool:
     return (value or "").lower() in _TRUTHY
 
@@ -134,7 +203,7 @@ class ProtectionStatus:
         }
 
 
-def _package_of(obj):
+def _package_of(obj: object):
     """The OPC package behind a |Document| or any Parented proxy/part."""
     part = getattr(obj, "part", None) or getattr(obj, "_part", None)
     if part is None:
@@ -207,12 +276,22 @@ def set_protection(document: "Document", *, edit: str) -> ProtectionStatus:
     return protection_status(document)
 
 
-def _refuse_if_protected(obj, operation: str) -> None:
+def _refuse_if_protected(
+    obj: object, operation: str, *, operation_class: str = OP_BODY
+) -> None:
     """Typed refusal when `obj`'s document enforces edit/format protection.
 
     `obj` is whatever the mutating API has in hand: a |Document|, or any
     proxy/part with a `.part` (Table, Paragraph, ...). Called BEFORE any
     mutation (refusal atomicity).
+
+    `operation_class` says what KIND of edit this is — one of `OP_COMMENT`,
+    `OP_FORM_FIELD`, `OP_BODY` — and is consulted against the declared
+    restriction mode via `_PROTECTION_MATRIX`. It defaults to `OP_BODY`, the
+    strictest class, so a call site added without a class keeps the
+    conservative behaviour rather than silently becoming permissive.
+    `operation` is unchanged: the class decides *whether* to refuse, the
+    operation string still says *what* was refused.
     """
     package = _package_of(obj)
     if getattr(package, _ACK_ATTR, False):
@@ -225,15 +304,20 @@ def _refuse_if_protected(obj, operation: str) -> None:
     enforcement = _is_on(element.get(qn("w:enforcement")))
     if (edit in (None, "none") and not formatting) or not enforcement:
         return
+    mode: object = edit if edit not in (None, "none") else _FORMATTING_ONLY
+    # An unrecognised `w:edit` token has no row: an unknown restriction is not
+    # a licence, so every class refuses.
+    if _PROTECTION_MATRIX.get(mode, {}).get(operation_class):
+        return
     restriction = (
-        f"{edit!r} editing"
-        if edit not in (None, "none")
-        else "formatting-only"
+        _FORMATTING_ONLY_NOUN if mode is _FORMATTING_ONLY else f"{edit!r} editing"
     )
     raise DocumentProtectedError(
-        f"cannot {operation}: this document enforces {restriction}"
-        " protection (w:documentProtection). Protection is advisory, not"
-        " security — if editing is intended, call"
+        f"cannot {operation}: this document is under Restrict Editing"
+        f" ({restriction} protection, w:documentProtection), and Word's own"
+        " UI would not permit this edit either. The document itself is fine —"
+        " this is a policy restriction, not a defect in the file. Protection"
+        " is advisory, not security: if the edit is intended, call"
         " docx.protection.acknowledge_protection(document) first; paper-docx"
         " never removes the protection setting itself"
     )

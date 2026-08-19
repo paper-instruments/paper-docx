@@ -306,7 +306,7 @@ def it_refuses_duplicate_relationship_ids():
       <Relationship Id="rId1" Type="urn:two" Target="two.xml"/>
     </Relationships>"""
 
-    with pytest.raises(PackageLimitError, match="duplicate Id"):
+    with pytest.raises(PackageLimitError, match="two different targets"):
         _SerializedRelationships.load_from_xml("/word", relationships)
 
 

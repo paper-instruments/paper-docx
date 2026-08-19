@@ -30,7 +30,7 @@ from docx.errors import (
 from docx.opc.constants import CONTENT_TYPE as CT
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement, parse_xml
-from docx.protection import _refuse_if_protected
+from docx.protection import OP_FORM_FIELD, _refuse_if_protected
 from docx.search import _validate_writable_text
 from docx.story import _first_choice_children, _story_elements
 
@@ -466,7 +466,9 @@ class Control:
         text. Date: date/datetime (stamps `w:fullDate`) or display string.
         """
         self._validate_ownership()
-        _refuse_if_protected(self._document, "set a control value")
+        _refuse_if_protected(
+            self._document, "set a control value", operation_class=OP_FORM_FIELD
+        )
         if self.is_data_bound:
             control_type = self.control_type
             if control_type not in ("text", "rich_text"):

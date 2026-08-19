@@ -30,7 +30,7 @@ from docx.errors import (
 )
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
-from docx.protection import _refuse_if_protected
+from docx.protection import OP_COMMENT, _refuse_if_protected
 from docx.story import (
     VIEWS,
     Anchor,
@@ -418,7 +418,9 @@ class Span:
             _validate_xml_characters(initials, argument="initials")
         if date is not None and not isinstance(date, dt.datetime):
             raise TypeError("date must be a datetime or None")
-        _refuse_if_protected(self._document, "anchor a comment")
+        _refuse_if_protected(
+            self._document, "anchor a comment", operation_class=OP_COMMENT
+        )
         main_story = next(
             story
             for story, root in _story_elements(self._document)

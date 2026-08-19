@@ -93,9 +93,10 @@ deletions, format changes, table-row revisions, and moves as paired units:
     doc.revisions.reject_all(author="Bob Reviewer")     # or accept_all()
 
 Document protection is honored throughout:
-:ref:`docx.protection <paper_protection_api>` makes every fork mutating API
-refuse with |DocumentProtectedError| on a Restrict-Editing setting rather than
-silently editing a locked template.
+:ref:`docx.protection <paper_protection_api>` makes fork mutating APIs refuse
+with |DocumentProtectedError| wherever Word's own UI would refuse the edit,
+rather than silently editing a locked template. The gate follows Word's per-mode
+rules, so a comments-only restriction still permits commenting.
 
 
 Compose across documents

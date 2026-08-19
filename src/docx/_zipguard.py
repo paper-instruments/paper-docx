@@ -15,7 +15,6 @@ from __future__ import annotations
 import os
 import stat
 import struct
-import unicodedata
 import zlib
 from contextlib import suppress
 from typing import BinaryIO, Dict, List, Optional, Tuple, Union, cast
@@ -39,6 +38,7 @@ _ZIP64_LOCATOR_SIGNATURE = b"PK\x06\x07"
 _MAX_END_COMMENT_BYTES = 65_535
 
 _CONTENT_TYPES_NAME = "[Content_Types].xml"
+_CONTENT_TYPES_FOLDED = _CONTENT_TYPES_NAME.casefold()
 _CONTENT_TYPES_NAMESPACE = (
     "http://schemas.openxmlformats.org/package/2006/content-types"
 )
@@ -61,6 +61,10 @@ _FLAG_UTF8_NAME = 0x0800
 _SUPPORTED_COMPRESSION = (ZIP_STORED, ZIP_DEFLATED)
 _HEX_DIGITS = frozenset("0123456789ABCDEF")
 _URI_UNRESERVED = frozenset(b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-._~")
+# RFC 3986 ``pchar`` minus ``pct-encoded``: unreserved / sub-delims / ":" / "@",
+# plus "/" as the segment separator. ``%`` is deliberately absent — it is legal
+# only as the head of a ``%XX`` triplet, which the walk consumes as a unit.
+_URI_PATH_LITERAL = _URI_UNRESERVED | frozenset(b"!$&'()*+,;=:@/")
 
 
 def compressed_size(source: object) -> Optional[int]:
@@ -233,7 +237,13 @@ def _find_end_record(stream: BinaryIO, archive_size: int) -> Tuple[int, Tuple[in
             candidates.append((archive_size - tail_size + index, fields))
 
     if not candidates:
-        raise PackageLimitError("ZIP package has no valid end-of-central-directory record")
+        raise PackageLimitError(
+            "the file does not end with an archive footer, so nothing marks where the"
+            " package stops: usually bytes were appended after the archive, or the file"
+            " was truncated in transfer. Word cannot open a .docx unless the archive is"
+            " exactly the file. Re-saving the document fixes an appended tail; a"
+            " truncated file needs a fresh copy"
+        )
     if len(candidates) != 1:
         raise PackageLimitError("ZIP package has ambiguous end-of-central-directory records")
     return candidates[0]
@@ -382,6 +392,7 @@ class GuardedZipReader:
         return dict(self._parts), list(self.order)
 
     def _validate_metadata(self) -> None:
+        self._refuse_directory_prefix_collisions()
         seen_names: set[str] = set()
         seen_equivalent_names: set[str] = set()
         seen_offsets: set[int] = set()
@@ -442,6 +453,32 @@ class GuardedZipReader:
                 raise PackageLimitError(
                     f"stored ZIP member {name!r} has inconsistent size metadata"
                 )
+
+    def _refuse_directory_prefix_collisions(self) -> None:
+        """Refuse a member whose name is a directory prefix of another member.
+
+        Word refuses a zero-length member named ``word`` sitting beside members
+        under ``word/`` whatever the member's attributes, so the name is the
+        defect. This runs as a pre-pass over the whole member-name set: the
+        collision is only visible from the deeper name, and the shallow member
+        is written first, so a per-member check would report whichever defect
+        the archive order happened to surface. Directory records are not in
+        ``self._infos`` and so are out of scope here, which is correct --
+        zero-length ``word/`` folder records open in Word.
+        """
+        member_names = {info.orig_filename for info in self._infos}
+        for info in self._infos:
+            name = info.orig_filename
+            boundary = name.find("/")
+            while boundary != -1:
+                prefix = name[:boundary]
+                if prefix in member_names:
+                    raise PackageLimitError(
+                        f"ZIP member {prefix!r} is also a directory prefix of member"
+                        f" {name!r}: one name cannot denote both a file and a"
+                        f" directory. Remove the member named {prefix!r}."
+                    )
+                boundary = name.find("/", boundary + 1)
 
     def _read_all_members(self) -> Dict[str, bytes]:
         if not self._infos and not self._directory_infos:
@@ -726,7 +763,11 @@ def _parse_content_types(data: bytes) -> Tuple[Dict[str, str], Dict[str, str]]:
             key = extension.lower()
             if key in defaults:
                 raise PackageLimitError(
-                    "[Content_Types].xml contains an ambiguous Default declaration"
+                    f"[Content_Types].xml declares the extension {extension!r} in more"
+                    " than one Default element; an extension may carry only one Default"
+                    " declaration, so the package does not bind it to a single content"
+                    " type and Word refuses to open it. Delete the duplicate Default so"
+                    f" {extension!r} is declared exactly once"
                 )
             defaults[key] = content_type
             continue
@@ -775,8 +816,6 @@ def _validate_directory_entry(info: "ZipInfo") -> None:
 def _validate_member_name(name: str) -> None:
     if not name:
         raise PackageLimitError("ZIP contains an empty member name")
-    if name != unicodedata.normalize("NFC", name):
-        raise PackageLimitError(f"ZIP member name {name!r} is not Unicode-normalized")
     if name.startswith("/") or name.endswith("/") or "\\" in name:
         raise PackageLimitError(f"ZIP member name {name!r} is noncanonical")
     if "?" in name or "#" in name:
@@ -791,16 +830,46 @@ def _validate_member_name(name: str) -> None:
     if len(first_segment) >= 2 and first_segment[0].isalpha() and first_segment[1] == ":":
         raise PackageLimitError(f"ZIP member name {name!r} has a drive-qualified path")
 
+    if name.casefold() == _CONTENT_TYPES_FOLDED:
+        # Reserved package item rather than an OPC part name: "[" and "]" are
+        # not legal URI-path characters, and this is the only member carrying
+        # them. Word opens every package that has it, so it is exempt from the
+        # character rule below. Case-variant spellings are the same package item
+        # here as they are for the case-ambiguity check, and must reach their own
+        # content-types diagnosis rather than be renamed a character defect.
+        return
+
+    # One pass over the name, consuming "%XX" as a unit. It must stay a single
+    # pass: "%" is not a legal literal, so a separate literal check would refuse
+    # percent-escaped ASCII names such as "word/media/my%20image.png", which
+    # Word opens.
     index = 0
     while index < len(name):
-        if name[index] != "%":
+        char = name[index]
+        if char != "%":
+            code = ord(char)
+            if code > 0x7F:
+                raise PackageLimitError(
+                    f"ZIP member name {name!r} contains the non-ASCII character {char!r}; "
+                    "an OPC part name may contain only ASCII characters legal in a URI path"
+                )
+            if code not in _URI_PATH_LITERAL:
+                raise PackageLimitError(
+                    f"ZIP member name {name!r} contains the character {char!r}, which is not "
+                    "legal in an OPC part name; percent-escape it or rename the part"
+                )
             index += 1
             continue
         if index + 2 >= len(name) or any(
-            char not in _HEX_DIGITS for char in name[index + 1 : index + 3]
+            digit not in _HEX_DIGITS for digit in name[index + 1 : index + 3]
         ):
             raise PackageLimitError(f"ZIP member name {name!r} has a noncanonical percent escape")
         value = int(name[index + 1 : index + 3], 16)
         if value in _URI_UNRESERVED or value in (0x00, 0x2F, 0x5C, 0x7F) or value < 0x20:
             raise PackageLimitError(f"ZIP member name {name!r} has an unsafe percent escape")
+        if value >= 0x80:
+            raise PackageLimitError(
+                f"ZIP member name {name!r} percent-escapes the non-ASCII byte 0x{value:02X}; "
+                "an OPC part name may escape only ASCII characters"
+            )
         index += 3

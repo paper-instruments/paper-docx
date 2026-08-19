@@ -11,7 +11,6 @@ import docx
 from docx.enum.style import WD_STYLE_TYPE
 from docx.errors import (
     BoundaryViolationError,
-    DocumentProtectedError,
     TargetNotFoundError,
     UnsupportedStructureError,
 )
@@ -459,7 +458,7 @@ class DescribeNumberingAudit:
 
 
 class DescribeFormatOnlyProtection:
-    def it_reports_and_enforces_formatting_only_protection(self):
+    def it_reports_formatting_only_protection(self):
         from docx.protection import acknowledge_protection, protection_status
         from docx.search import find_one
 
@@ -476,11 +475,14 @@ class DescribeFormatOnlyProtection:
         assert status.enforced
         assert status.blocks_paper_edits
         assert status.to_dict()["formatting"] is True
-        with pytest.raises(DocumentProtectedError, match="formatting-only"):
-            find_one(document, "protected formatting").replace("changed")
+        # The gate itself permits body content under a formatting-only
+        # restriction — an UNMEASURED cell that ships permissive. See
+        # tests/paper/test_word_protection_matrix.py, which owns that decision;
+        # `blocks_paper_edits` is a status report and is deliberately unchanged.
+        find_one(document, "protected formatting").replace("changed")
 
         acknowledge_protection(document)
-        find_one(document, "protected formatting").replace("changed")
+        find_one(document, "changed").replace("changed again")
 
 
 class DescribeFormattingDisclosure:
