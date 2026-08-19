@@ -4,9 +4,14 @@ from __future__ import annotations
 
 from pathlib import Path
 
+import pytest
+
 import docx
 from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
+from docx.errors import DocumentProtectedError
 from docx.oxml.ns import qn
+from docx.oxml.parser import OxmlElement
+from docx.protection import acknowledge_protection, set_protection
 from docx.search import find_one
 
 from .harness.contract import save_and_reopen
@@ -60,3 +65,38 @@ class DescribeCommentDeleteAndIdentity:
         assert old_para not in para_ids
         delete_comment(document, comment)
         assert list(ids_root) == []
+
+
+class DescribeProtectionSetter:
+    def it_locks_the_file_for_the_recipient(self):
+        document = _doc()
+        status = set_protection(document, edit="readOnly")
+        assert status.edit == "readOnly"
+        assert status.enforced
+        with pytest.raises(DocumentProtectedError):
+            find_one(document, "perfectly ordinary").replace("nope")
+
+    def it_clears_an_in_memory_ack_when_locking_again(self):
+        document = _doc()
+        set_protection(document, edit="readOnly")
+        acknowledge_protection(document)
+        find_one(document, "perfectly ordinary").replace("ok")
+        set_protection(document, edit="comments")
+        with pytest.raises(DocumentProtectedError):
+            find_one(document, "ok").replace("nope")
+
+    def it_inserts_protection_before_later_settings_children(self):
+        document = _doc()
+        settings = document.settings.element
+        for child in list(settings):
+            if child.tag == qn("w:defaultTabStop"):
+                settings.remove(child)
+        footnote_pr = OxmlElement("w:footnotePr")
+        compat = settings.find(qn("w:compat"))
+        if compat is not None:
+            compat.addprevious(footnote_pr)
+        else:
+            settings.append(footnote_pr)
+        set_protection(document, edit="readOnly")
+        tags = [child.tag for child in settings]
+        assert tags.index(qn("w:documentProtection")) < tags.index(qn("w:footnotePr"))

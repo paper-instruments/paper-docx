@@ -21,8 +21,10 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
 from docx._guard import check_install
+from docx._transaction import rollback_on_error
 from docx.errors import DocumentProtectedError
 from docx.oxml.ns import qn
+from docx.oxml.parser import OxmlElement
 
 if TYPE_CHECKING:
     from docx.document import Document
@@ -31,6 +33,72 @@ check_install()
 
 _ACK_ATTR = "_paper_protection_acknowledged"
 _TRUTHY = ("1", "true", "on")
+_EDIT_MODES = ("readOnly", "comments", "forms", "trackedChanges")
+_DOCUMENT_PROTECTION_SUCCESSORS = (
+    "w:autoFormatOverride",
+    "w:styleLockTheme",
+    "w:styleLockQFSet",
+    "w:defaultTabStop",
+    "w:autoHyphenation",
+    "w:consecutiveHyphenLimit",
+    "w:hyphenationZone",
+    "w:doNotHyphenateCaps",
+    "w:showEnvelope",
+    "w:summaryLength",
+    "w:clickAndTypeStyle",
+    "w:defaultTableStyle",
+    "w:evenAndOddHeaders",
+    "w:bookFoldRevPrinting",
+    "w:bookFoldPrinting",
+    "w:bookFoldPrintingSheets",
+    "w:drawingGridHorizontalSpacing",
+    "w:drawingGridVerticalSpacing",
+    "w:displayHorizontalDrawingGridEvery",
+    "w:displayVerticalDrawingGridEvery",
+    "w:doNotUseMarginsForDrawingGridOrigin",
+    "w:drawingGridHorizontalOrigin",
+    "w:drawingGridVerticalOrigin",
+    "w:doNotShadeFormData",
+    "w:noPunctuationKerning",
+    "w:characterSpacingControl",
+    "w:printTwoOnOne",
+    "w:strictFirstAndLastChars",
+    "w:noLineBreaksAfter",
+    "w:noLineBreaksBefore",
+    "w:savePreviewPicture",
+    "w:doNotValidateAgainstSchema",
+    "w:saveInvalidXml",
+    "w:ignoreMixedContent",
+    "w:alwaysShowPlaceholderText",
+    "w:doNotDemarcateInvalidXml",
+    "w:saveXmlDataOnly",
+    "w:useXSLTWhenSaving",
+    "w:saveThroughXslt",
+    "w:showXMLTags",
+    "w:alwaysMergeEmptyNamespace",
+    "w:updateFields",
+    "w:hdrShapeDefaults",
+    "w:footnotePr",
+    "w:endnotePr",
+    "w:compat",
+    "w:docVars",
+    "w:rsids",
+    "m:mathPr",
+    "w:attachedSchema",
+    "w:themeFontLang",
+    "w:clrSchemeMapping",
+    "w:doNotIncludeSubdocsInStats",
+    "w:doNotAutoCompressPictures",
+    "w:forceUpgrade",
+    "w:captions",
+    "w:readModeInkLockDown",
+    "w:smartTagType",
+    "sl:schemaLibrary",
+    "w:shapeDefaults",
+    "w:doNotEmbedSmartTags",
+    "w:decimalSymbol",
+    "w:listSeparator",
+)
 
 
 def _is_on(value: Optional[str]) -> bool:
@@ -116,6 +184,27 @@ def acknowledge_protection(document: "Document") -> ProtectionStatus:
     status = protection_status(document)
     setattr(package, _ACK_ATTR, True)
     return status
+
+
+def set_protection(document: "Document", *, edit: str) -> ProtectionStatus:
+    """Turn Restrict Editing on for delivery (`w:documentProtection`).
+
+    `edit` is a Word token: `readOnly`, `comments`, `forms`, or
+    `trackedChanges`. This writes the setting; it does not strip one.
+    Paper mutators then refuse until `acknowledge_protection`.
+    """
+    if edit not in _EDIT_MODES:
+        raise ValueError(f"edit must be one of {_EDIT_MODES}, got {edit!r}")
+    with rollback_on_error(document):
+        settings = document.settings.element
+        element = settings.find(qn("w:documentProtection"))
+        if element is None:
+            element = OxmlElement("w:documentProtection")
+            settings.insert_element_before(element, *_DOCUMENT_PROTECTION_SUCCESSORS)
+        element.set(qn("w:edit"), edit)
+        element.set(qn("w:enforcement"), "1")
+    setattr(_package_of(document), _ACK_ATTR, False)
+    return protection_status(document)
 
 
 def _refuse_if_protected(obj, operation: str) -> None:

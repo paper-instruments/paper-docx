@@ -35,7 +35,7 @@ Drop the zip-bomb caps and the two bundled deliver verbs. Keep `PackageLimitErro
 
 - ~~Delete one comment~~ **Done.** `delete_comment`.
 - ~~Modern comment identity parts~~ **Done.** New comments write `commentsIds.xml` and `commentsExtensible.xml`.
-- Lock a file for the recipient
+- ~~Lock a file for the recipient~~ **Done.** `set_protection`.
 - Replace one existing picture
 - Create or retarget a hyperlink
 - Auto-number caption field
@@ -71,7 +71,7 @@ Read **What it does** first. The API column is only the name in the library.
 | Show which ZIP parts or visible text changed between two files, or what pending revisions would change if accepted. | `diff_package`, `text_diff`, `pending_changes` | Package | Yes | Proof of what an edit did. Library belongs; not a ritual after every call. |
 | Strip comments and author metadata for a clean outgoing copy. Optional: RSIDs and hidden text. Does not remove Restrict Editing. | `Document.scrub` | Deliver | No | Bundled send-clean verb. Author names are stock `core_properties`. Comments have add, reply, resolve, and `delete_comment`. RSIDs and hidden text are not a package job. No bundled deliver verb. |
 | Accept or reject every tracked change, then check that none remain, or refuse and undo. | `Document.finalize` | Deliver | No | Wrapper around `revisions.accept_all` / `reject_all`. Those already refuse unresolvable types. The leftover-markup postcheck is not a second public verb. |
-| See whether Restrict Editing is on, and refuse Paper edits until you override in memory for this session. Cannot turn protection on or strip it from the file. | `docx.protection` | Deliver | Yes | The original plan asked to notice a lock and refuse, never to strip it. A setter to lock a file for a recipient was not asked for (see Missing). |
+| See whether Restrict Editing is on, refuse Paper edits until you override in memory for this session, or turn protection on for delivery. Cannot strip it from the file. | `docx.protection` | Deliver | Yes | The original plan asked to notice a lock and refuse, never to strip it. `set_protection` turns it on for the recipient. |
 | Point at text and ask what Word is actually showing: bold, italic, font, size, color, highlight, alignment, paragraph style. Those can live on the text, on a style, or on the document default; this walks all three and says which one won. If a phrase is half bold and half not, it says mixed. It does not answer spacing, indent, borders, table coloring, or list-number look; those come back as “we did not compute this” instead of a guess. | `docx.formatting` | Edit existing | Yes | The original plan asked for this inspect, and asked it to name what it cannot resolve rather than guess. The short list plus “not computed” is what was asked for, not a half-built inspect. A helper to match nearby formatting when inserting exists, but copy/insert do not call it yet. |
 | Check that `import docx` is this fork, not a mixed install with python-docx. | `paper-docx-doctor` | Package | Yes | Both packages own the import name `docx`. Keep the doctor. Paper-only modules also refuse a mixed install. CI covers both install orders, leftover uninstall, and a dummy package that pulls `python-docx` as a dependency. |
 
@@ -86,7 +86,7 @@ Jobs the agent could not do through the package. Stacked follow-ups add these AP
 | --- | --- | --- | --- | --- |
 | ~~Delete one comment and leave the rest~~ **Done.** | Review | Add, reply, or resolve. No single-comment delete. | `delete_comment` | **Not asked.** Original plan is add, reply, resolve only. |
 | ~~Add a comment that current Word will show and round-trip~~ **Done.** | Review | Only `comments.xml` and `commentsExtended.xml`. Current Word also wants `commentsIds.xml` and `commentsExtensible.xml`. | New comments write those two parts. | **Not asked.** Original plan is the older extra comments part only. |
-| Lock a file for the recipient (read-only, comments only, or forms only) | Deliver | Could report Restrict Editing and refuse edits. Could not turn it on. | | **Not asked.** Plan: report it, never strip it, refuse edits while it is on. No setter. |
+| ~~Lock a file for the recipient (read-only, comments only, or forms only)~~ **Done.** | Deliver | Could report Restrict Editing and refuse edits. Could not turn it on. | `set_protection` | **Not asked.** Plan: report it, never strip it, refuse edits while it is on. No setter. |
 | Replace one existing picture, keep size and position | Edit existing | Insert (stock) or copy on combine. No in-place swap that avoids sharing the image part. Picture form controls still refuse. | | **Later, if someone asks.** Image swap was parked until a real demand. |
 | Turn a phrase into a hyperlink, or change where an existing link goes | Edit existing, review | URL was read-only. Create/retarget was XML. | | **Later, if someone asks.** The plan asked to edit text *inside* an existing link, not to create or retarget one. |
 | Caption a figure or table so numbers update (Figure 1, Figure 2, …) | Structured | Bookmark plus REF is not a SEQ caption field. | | **Not asked.** Fields in the plan are page numbers, date, cross-references, and TOC. |
