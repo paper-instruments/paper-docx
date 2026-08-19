@@ -212,6 +212,8 @@ APPROVED_SIGNATURES = [
         "(paragraph, *, label='Figure', description='')",
     ),
     ("docx.links", "add_hyperlink", "(document, span, address)"),
+    ("docx.notes", "add_footnote", "(document, span, text)"),
+    ("docx.notes", "add_endnote", "(document, span, text)"),
     ("docx.drawing", "Drawing.replace_picture", "(self, image_descriptor)"),
     ("docx.formatting", "format_of", "(target)"),
     ("docx.formatting", "surrounding_format", "(document, anchor)"),
