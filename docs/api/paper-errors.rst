@@ -21,10 +21,10 @@ disk byte-for-byte unchanged. Programmer mistakes remain ordinary
    :show-inheritance:
 
 
-|PackageLimitError|
+|MalformedPackageError|
 -------------------
 
-.. autoexception:: PackageLimitError
+.. autoexception:: MalformedPackageError
    :show-inheritance:
 
 

@@ -15,7 +15,7 @@ import pytest
 
 import docx
 import docx.opc.pkgreader as pkgreader_module
-from docx.errors import PackageLimitError
+from docx.errors import MalformedPackageError
 from docx.opc.pkgreader import _SerializedRelationships
 
 _RELATIONSHIPS_NS = "http://schemas.openxmlformats.org/package/2006/relationships"
@@ -37,7 +37,7 @@ def _relationships_xml(second_target: str) -> bytes:
 
 
 def _refusal(callable_, *args) -> str:
-    with pytest.raises(PackageLimitError) as exc_info:
+    with pytest.raises(MalformedPackageError) as exc_info:
         callable_(*args)
     return str(exc_info.value)
 

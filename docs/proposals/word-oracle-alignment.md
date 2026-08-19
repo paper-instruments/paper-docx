@@ -19,6 +19,33 @@ something Word rejects, reports correct content for it, and will edit and re-sav
 misreading. That is the exact failure the package was built to prevent, occurring inside the
 package. Those get priority.
 
+## Status — superseded in part by PR 30
+
+Most of this spec has shipped. PR 24 removed the resource caps, PR 29 closed the byte-zero
+rule and the nonzero-offset write, and **PR 30 landed Fixes 1, 3, 4, 6 and 7** — part-name
+legality, directory-prefix collisions, the image content type, the protection gate, and the
+message rewrites.
+
+What this branch adds on top of PR 30 is what none of them covered:
+
+- **The exception rename.** `PackageLimitError` -> `MalformedPackageError`. Nothing it raises
+  for is a limit any more; PR 24 removed every ceiling and rewrote the docstring without
+  renaming the class.
+- **The main-document content type defers to upstream.** `RT.OFFICE_DOCUMENT` is out of
+  `_KNOWN_RELATIONSHIP_CONTENT_TYPES`, so `api.Document`'s own `ValueError` fires instead of
+  being pre-empted with a different exception type.
+
+Two corrections PR 30 made to this spec's prose, worth keeping:
+
+- Fix 1's rule must be implemented as a **single pass** that consumes `%XX` as a unit. Written
+  as two rules — a literal-character check and a separate escape check — it refuses
+  `my%20image.png`, which Word opens: 6 of 7 verdicts instead of 7.
+- Fix 3's collision check must run as a **pre-pass** over the whole member-name set. Inside the
+  per-member loop the shallow member is reached first and its attribute check reports the wrong
+  defect.
+
+The sections below are the original design record and are left as written.
+
 ## State at this commit — measured, not assumed
 
 Every fixture set was replayed against this commit's code.
@@ -173,7 +200,7 @@ output is broken.
 **Refuse a seekable destination whose position is not zero**, before staging anything, raising
 `OSError` — matching the append-mode refusal and every other destination refusal in this module.
 A destination's cursor position is a property of the argument, not of the archive, so
-`PackageLimitError` would mis-type it. A stream whose `tell()` is unsupported stays permitted:
+`MalformedPackageError` would mis-type it. A stream whose `tell()` is unsupported stays permitted:
 that is the bare write/flush sink Word confirmed OPENS.
 
 Keep the truncation gate (`if start == 0`) as defence in depth, and note that

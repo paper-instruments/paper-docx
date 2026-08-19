@@ -19,7 +19,7 @@ import pytest
 import docx
 from docx import _paperpkg
 from docx._zipguard import _validate_member_name
-from docx.errors import PackageLimitError
+from docx.errors import MalformedPackageError
 
 from .test_audit_zip_preflight import _write_archive
 
@@ -41,7 +41,7 @@ class DescribeWordVerdictMemberNames:
 
     def it_refuses_a_literal_space_naming_the_character(self):
         # Word: REFUSES
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _validate_member_name("word/media/my image.png")
         message = str(exc.value)
         assert "' '" in message
@@ -49,13 +49,13 @@ class DescribeWordVerdictMemberNames:
 
     def it_refuses_a_raw_non_ascii_name_in_composed_form(self):
         # Word: REFUSES
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _validate_member_name(_NFC_NAME)
         assert "non-ASCII character" in str(exc.value)
 
     def it_refuses_a_raw_non_ascii_name_in_decomposed_form(self):
         # Word: REFUSES. Refused for being non-ASCII, not for its normal form.
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _validate_member_name(_NFD_NAME)
         message = str(exc.value)
         assert "non-ASCII character" in message
@@ -63,7 +63,7 @@ class DescribeWordVerdictMemberNames:
 
     def it_refuses_a_percent_escaped_composed_non_ascii_name(self):
         # Word: REFUSES
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _validate_member_name("word/media/imag%C3%A91.png")
         message = str(exc.value)
         assert "percent-escapes the non-ASCII byte 0xC3" in message
@@ -71,7 +71,7 @@ class DescribeWordVerdictMemberNames:
 
     def it_refuses_a_percent_escaped_decomposed_non_ascii_name(self):
         # Word: REFUSES
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _validate_member_name("word/media/image%CC%811.png")
         assert "percent-escapes the non-ASCII byte 0xCC" in str(exc.value)
 
@@ -97,24 +97,24 @@ class DescribeContentTypesExemption:
         _validate_member_name("[CONTENT_TYPES].XML")
 
     def it_does_not_exempt_brackets_in_any_other_member(self):
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _validate_member_name("word/[Content_Types].xml")
         assert "not legal in an OPC part name" in str(exc.value)
 
 
 class DescribeMemberNameMessagesAreNotShadowed:
     def it_still_names_a_control_character_rather_than_an_illegal_literal(self):
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _validate_member_name("word/med\x01ia.png")
         assert "contains a control character" in str(exc.value)
 
     def it_still_names_a_malformed_escape_rather_than_an_illegal_literal(self):
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _validate_member_name("word/media/x%ZZ.png")
         assert "noncanonical percent escape" in str(exc.value)
 
     def it_still_names_an_unsafe_escape_of_an_unreserved_character(self):
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _validate_member_name("word/media/x%41.png")
         assert "unsafe percent escape" in str(exc.value)
 
@@ -126,7 +126,7 @@ class DescribePartNameLegalityOnRead:
         path = tmp_path / "spaced.docx"
         _write_archive(path, (("word/media/my image.png", b"payload"),))
 
-        with pytest.raises(PackageLimitError, match="not legal in an OPC part name"):
+        with pytest.raises(MalformedPackageError, match="not legal in an OPC part name"):
             _paperpkg._read_zip(path)
 
     def it_reads_a_package_whose_member_name_escapes_an_ascii_space(

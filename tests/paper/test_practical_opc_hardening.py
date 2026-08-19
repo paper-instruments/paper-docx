@@ -15,7 +15,7 @@ import docx
 import docx._paperpkg as paperpkg_module
 import docx.opc.package as package_module
 from docx._transaction import rollback_on_error
-from docx.errors import PackageLimitError
+from docx.errors import MalformedPackageError
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.opc.packuri import PackURI
 from docx.opc.part import Part
@@ -84,7 +84,7 @@ def it_refuses_a_dtd_before_parsing_relationship_records():
       <Relationship Id="rId1" Type="&role;" Target="word/document.xml"/>
     </Relationships>"""
 
-    with pytest.raises(PackageLimitError, match="prohibited DTD"):
+    with pytest.raises(MalformedPackageError, match="prohibited DTD"):
         _SerializedRelationships.load_from_xml("/", relationships)
 
 
@@ -116,7 +116,7 @@ def it_validates_patch_save_after_final_recompression(
         lambda _parts, _order: bytes(payload),
     )
 
-    with pytest.raises(PackageLimitError, match="encrypted"):
+    with pytest.raises(MalformedPackageError, match="encrypted"):
         patch_save(source, document, destination)
 
     assert destination.read_bytes() == b"existing destination"
@@ -296,7 +296,7 @@ def it_refuses_a_symlinked_member_in_an_expanded_package(tmp_path: Path):
     member.replace(outside)
     member.symlink_to(outside)
 
-    with pytest.raises(PackageLimitError, match="symbolic link"):
+    with pytest.raises(MalformedPackageError, match="symbolic link"):
         docx.Document(expanded)
 
 
@@ -306,7 +306,7 @@ def it_refuses_duplicate_relationship_ids():
       <Relationship Id="rId1" Type="urn:two" Target="two.xml"/>
     </Relationships>"""
 
-    with pytest.raises(PackageLimitError, match="two different targets"):
+    with pytest.raises(MalformedPackageError, match="two different targets"):
         _SerializedRelationships.load_from_xml("/word", relationships)
 
 
@@ -320,7 +320,7 @@ def it_refuses_multiple_main_document_relationships_before_replacing_a_path(
         RT.OFFICE_DOCUMENT, document.part, "rIdDuplicateMain"
     )
 
-    with pytest.raises(PackageLimitError, match="multiple officeDocument"):
+    with pytest.raises(MalformedPackageError, match="multiple officeDocument"):
         document.save(destination)
 
     assert destination.read_bytes() == b"original"
@@ -352,7 +352,7 @@ def it_refuses_unexpected_relationship_elements_instead_of_dropping_them():
             blob = etree.tostring(root, encoding="UTF-8", standalone=True)
         return name, blob
 
-    with pytest.raises(PackageLimitError, match="unexpected element"):
+    with pytest.raises(MalformedPackageError, match="unexpected element"):
         docx.Document(io.BytesIO(_rewrite_package(_document_bytes(), transform)))
 
 
@@ -372,11 +372,39 @@ def it_validates_case_insensitive_content_types_without_losing_duplicates():
             etree.tostring(root, encoding="UTF-8", standalone=True),
         )
 
-    with pytest.raises(PackageLimitError, match="ambiguous Override"):
+    with pytest.raises(MalformedPackageError, match="ambiguous Override"):
         docx.Document(io.BytesIO(_rewrite_package(_document_bytes(), transform)))
 
 
 def it_refuses_a_known_relationship_role_with_the_wrong_content_type():
+    """A core part declared as the wrong media type is refused.
+
+    Uses the styles role rather than officeDocument: Word refuses `styles.xml`
+    declared `application/xml`, so this is the Word-verified case. The main-document
+    role is deliberately not checked here -- see the test below.
+    """
+
+    def transform(name: str, blob: bytes):
+        if name == "[Content_Types].xml":
+            blob = blob.replace(
+                b"application/vnd.openxmlformats-officedocument.wordprocessingml.styles+xml",
+                b"application/xml",
+            )
+        return name, blob
+
+    with pytest.raises(MalformedPackageError, match="invalid content type"):
+        docx.Document(io.BytesIO(_rewrite_package(_document_bytes(), transform)))
+
+
+def it_leaves_the_main_document_content_type_check_to_upstream():
+    """The officeDocument role is not validated during load, on purpose.
+
+    `api.Document` already checks the main part's content type and raises `ValueError`
+    naming the file and the type it found. That check is upstream's, byte-identical,
+    and a caller migrating from python-docx may rely on it. Validating the same
+    condition during package load only pre-empted it with a different exception type.
+    """
+
     def transform(name: str, blob: bytes):
         if name == "[Content_Types].xml":
             blob = blob.replace(
@@ -385,7 +413,7 @@ def it_refuses_a_known_relationship_role_with_the_wrong_content_type():
             )
         return name, blob
 
-    with pytest.raises(PackageLimitError, match="invalid content type"):
+    with pytest.raises(ValueError, match="is not a Word file, content type is"):
         docx.Document(io.BytesIO(_rewrite_package(_document_bytes(), transform)))
 
 
@@ -395,7 +423,7 @@ def it_refuses_a_relationship_to_a_missing_package_part():
         lambda name, blob: None if name == "word/styles.xml" else (name, blob),
     )
 
-    with pytest.raises(PackageLimitError, match="targets missing package part"):
+    with pytest.raises(MalformedPackageError, match="targets missing package part"):
         docx.Document(io.BytesIO(data))
 
 
@@ -413,7 +441,7 @@ def it_refuses_a_relationship_target_without_a_declared_content_type():
             blob = etree.tostring(root, encoding="UTF-8", standalone=True)
         return name, blob
 
-    with pytest.raises(PackageLimitError, match="no declared content type"):
+    with pytest.raises(MalformedPackageError, match="no declared content type"):
         docx.Document(io.BytesIO(_rewrite_package(_document_bytes(), transform)))
 
 

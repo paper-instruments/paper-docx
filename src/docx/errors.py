@@ -21,13 +21,18 @@ class PaperRefusal(Exception):
     """
 
 
-class PackageLimitError(PaperRefusal):
-    """A package archive is corrupt, encrypted, or malformed.
+class MalformedPackageError(PaperRefusal):
+    """The file is not a package this library can safely read.
 
-    Package reads validate ZIP structure before any XML is parsed or output is
-    replaced. This exception therefore represents a safe refusal, including for
-    encrypted entries, duplicate/noncanonical member
-    names, unsupported entry types, and forged ZIP size metadata.
+    Raised for a damaged or inconsistent ZIP envelope, an encrypted or
+    unsupported member, a member name that cannot denote one part, and a
+    `[Content_Types].xml` or relationship graph that does not describe a
+    readable package. Validation runs before any XML is parsed or any output is
+    replaced, so this is a safe refusal: nothing was read into the object model
+    and nothing on disk was touched.
+
+    It does not mean the file is too large. Size and member-count ceilings were
+    removed once Word was measured opening documents past all of them.
     """
 
 

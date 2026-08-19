@@ -18,7 +18,7 @@ import zipfile
 import pytest
 
 import docx
-from docx.errors import PackageLimitError
+from docx.errors import MalformedPackageError
 from docx.opc.constants import CONTENT_TYPE as CT
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
 
@@ -77,5 +77,5 @@ def it_still_refuses_a_core_part_declared_with_a_generic_content_type():
     data = _rewrite_package(_document_with_image_bytes(), transform)
     assert b'PartName="/word/styles.xml" ContentType="application/xml"' in _content_types(data)
 
-    with pytest.raises(PackageLimitError, match="invalid content type"):
+    with pytest.raises(MalformedPackageError, match="invalid content type"):
         docx.Document(io.BytesIO(data))

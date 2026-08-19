@@ -4,7 +4,7 @@ import os
 from zipfile import ZIP_DEFLATED, ZipFile, ZipInfo, is_zipfile
 
 from docx._zipguard import GuardedZipReader, preflight_zip
-from docx.errors import PackageLimitError
+from docx.errors import MalformedPackageError
 from docx.opc.exceptions import PackageNotFoundError
 from docx.opc.packuri import CONTENT_TYPES_URI
 
@@ -46,18 +46,18 @@ class _DirPkgReader(PhysPkgReader):
         super(_DirPkgReader, self).__init__()
         self._path = os.path.abspath(os.fspath(path))
         if os.path.islink(self._path):
-            raise PackageLimitError("expanded package root is a symbolic link")
+            raise MalformedPackageError("expanded package root is a symbolic link")
         names = []
         for root, directories, files in os.walk(self._path, followlinks=False):
             directories.sort()
             files.sort()
             for directory in directories:
                 if os.path.islink(os.path.join(root, directory)):
-                    raise PackageLimitError("expanded package contains a symbolic link")
+                    raise MalformedPackageError("expanded package contains a symbolic link")
             for filename in files:
                 file_path = os.path.join(root, filename)
                 if os.path.islink(file_path):
-                    raise PackageLimitError("expanded package contains a symbolic link")
+                    raise MalformedPackageError("expanded package contains a symbolic link")
                 member = os.path.relpath(file_path, self._path).replace(
                     os.sep, "/"
                 )
@@ -66,7 +66,7 @@ class _DirPkgReader(PhysPkgReader):
         for name in names:
             folded = name.casefold()
             if folded in self._member_name_by_fold:
-                raise PackageLimitError(
+                raise MalformedPackageError(
                     f"expanded package contains case-ambiguous member name {name!r}"
                 )
             self._member_name_by_fold[folded] = name

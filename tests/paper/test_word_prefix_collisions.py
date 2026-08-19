@@ -21,7 +21,7 @@ import pytest
 
 import docx
 from docx import _paperpkg
-from docx.errors import PackageLimitError
+from docx.errors import MalformedPackageError
 
 _COLLIDING_MEMBERS = ("word/document.xml", "word/_rels/document.xml.rels")
 
@@ -77,7 +77,7 @@ class DescribeWordVerdictPrefixCollisions:
         path = tmp_path / f"collision-{shape}.docx"
         _write_collision(path, external_attr)
 
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _paperpkg._read_zip(path)
 
         message = str(exc.value)
@@ -103,7 +103,7 @@ class DescribeWordVerdictPrefixCollisions:
         path = tmp_path / f"collision-{shape}.docx"
         _write_collision(path, external_attr)
 
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _paperpkg._read_zip(path)
 
         message = str(exc.value)
@@ -116,7 +116,7 @@ class DescribeWordVerdictPrefixCollisions:
             archive.writestr("word/media", b"")
             archive.writestr("word/media/image1.png", b"payload")
 
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _paperpkg._read_zip(path)
 
         assert "'word/media'" in str(exc.value)
@@ -174,7 +174,7 @@ class DescribeNonCollidingAttributedMembers:
             info.external_attr = 0x10
             archive.writestr(info, b"")
 
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _paperpkg._read_zip(path)
 
         assert "is a directory entry" in str(exc.value)
@@ -186,7 +186,7 @@ class DescribeNonCollidingAttributedMembers:
             info.external_attr = (stat.S_IFDIR | 0o755) << 16
             archive.writestr(info, b"")
 
-        with pytest.raises(PackageLimitError) as exc:
+        with pytest.raises(MalformedPackageError) as exc:
             _paperpkg._read_zip(path)
 
         assert "unsupported filesystem entry type" in str(exc.value)
