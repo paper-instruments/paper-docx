@@ -11,9 +11,16 @@ import pytest
 import docx
 from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
 from docx.drawing import Drawing
-from docx.errors import DocumentProtectedError, UnsupportedStructureError
-from docx.oxml.ns import qn
-from docx.oxml.parser import OxmlElement
+from docx.errors import (
+    BoundaryViolationError,
+    DocumentProtectedError,
+    TargetNotFoundError,
+    UnsupportedStructureError,
+)
+from docx.links import add_hyperlink
+from docx.opc.constants import RELATIONSHIP_TYPE as RT
+from docx.oxml.ns import nsdecls, qn
+from docx.oxml.parser import OxmlElement, parse_xml
 from docx.protection import acknowledge_protection, set_protection
 from docx.search import find_one
 
@@ -151,3 +158,172 @@ class DescribePictureReplace:
         blip.set(qn("r:link"), "rId99")
         with pytest.raises(UnsupportedStructureError, match="linked picture"):
             drawing.replace_picture(io.BytesIO(_bmp(0, 0, 255)))
+
+
+class DescribeHyperlinks:
+    def it_wraps_a_phrase_and_can_retarget(self, tmp_path: Path):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        link = add_hyperlink(document, span, "https://example.com/a")
+        assert link.address == "https://example.com/a"
+        link.address = "https://example.com/b"
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        addresses = [
+            hyperlink.address
+            for paragraph in reopened.paragraphs
+            for hyperlink in paragraph.hyperlinks
+        ]
+        assert "https://example.com/b" in addresses
+
+    def it_puts_the_relationship_on_the_header_part(self, tmp_path: Path):
+        document = _doc()
+        header = document.sections[0].header
+        header.paragraphs[0].text = "HeaderLinkUnique"
+        span = find_one(document, "HeaderLinkUnique", story="word/header1.xml")
+        link = add_hyperlink(document, span, "https://example.com/header")
+        header_part = document.sections[0].header.part
+        r_id = link._hyperlink.get(qn("r:id"))
+        assert r_id in header_part.rels
+        assert header_part.rels[r_id].reltype == RT.HYPERLINK
+        assert header_part.rels[r_id].target_ref == "https://example.com/header"
+        assert link.address == "https://example.com/header"
+        reopened = save_and_reopen(document, tmp_path / "out.docx")
+        addresses = [
+            hyperlink.address
+            for paragraph in reopened.sections[0].header.paragraphs
+            for hyperlink in paragraph.hyperlinks
+        ]
+        assert "https://example.com/header" in addresses
+
+    def it_refuses_to_nest_a_hyperlink(self):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        add_hyperlink(document, span, "https://example.com/a")
+        again = find_one(document, "perfectly ordinary")
+        with pytest.raises(UnsupportedStructureError, match="already inside a hyperlink"):
+            add_hyperlink(document, again, "https://example.com/b")
+
+    def it_refuses_intervening_markup_between_runs(self):
+        document = _doc()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("hello ")
+        second = paragraph.add_run("world")
+        first._r.addnext(
+            parse_xml(f'<w:bookmarkStart {nsdecls("w")} w:id="1" w:name="Term"/>')
+        )
+        second._r.addnext(parse_xml(f'<w:bookmarkEnd {nsdecls("w")} w:id="1"/>'))
+        before = paragraph._p.xml
+        with pytest.raises(UnsupportedStructureError, match="intervening markup"):
+            add_hyperlink(document, find_one(document, "hello world"), "https://example.com/a")
+        assert paragraph._p.xml == before
+
+    def it_clears_a_stale_internal_anchor_when_retargeting(self):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        link = add_hyperlink(document, span, "https://example.com/a")
+        link._hyperlink.anchor = "_TocOld"
+        link.address = "https://example.com/b"
+        assert link._hyperlink.anchor is None
+        assert link.address == "https://example.com/b"
+
+    def it_refuses_a_span_from_another_document(self):
+        document = _doc()
+        foreign = find_one(_doc(), "perfectly ordinary")
+        with pytest.raises(BoundaryViolationError, match="different document"):
+            add_hyperlink(document, foreign, "https://example.com/a")
+
+    def it_refuses_a_stale_span(self):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        find_one(document, "perfectly ordinary").replace("changed")
+        with pytest.raises(TargetNotFoundError, match="stale"):
+            add_hyperlink(document, span, "https://example.com/a")
+
+    def it_keeps_a_shared_relationship_when_retargeting_one(self):
+        document = _doc()
+        first = add_hyperlink(
+            document, find_one(document, "perfectly ordinary"), "https://example.com/a"
+        )
+        second = add_hyperlink(
+            document, find_one(document, "First body paragraph"), "https://example.com/a"
+        )
+        assert first._hyperlink.get(qn("r:id")) == second._hyperlink.get(qn("r:id"))
+        first.address = "https://example.com/b"
+        assert first.address == "https://example.com/b"
+        assert second.address == "https://example.com/a"
+
+    def it_refuses_a_field_result_span(self):
+        document = _doc("generated/feature-isolated/fields.docx")
+        span = find_one(document, "June 1, 2026")
+        assert span.in_field
+        with pytest.raises(UnsupportedStructureError, match="field result"):
+            add_hyperlink(document, span, "https://example.com/a")
+
+    def it_defines_the_hyperlink_character_style(self):
+        document = _doc()
+        assert "Hyperlink" not in document.styles
+        add_hyperlink(document, find_one(document, "perfectly ordinary"), "https://example.com/a")
+        assert "Hyperlink" in document.styles
+
+    def it_refuses_a_data_bound_span(self):
+        document = _doc()
+        document.element.body.insert(
+            len(document.element.body) - 1,
+            parse_xml(
+                f'<w:p {nsdecls("w")}>'
+                '<w:sdt><w:sdtPr><w:tag w:val="bound"/>'
+                '<w:dataBinding w:xpath="/x" w:storeItemID="{11111111-1111-1111-1111-111111111111}"/>'
+                "</w:sdtPr>"
+                "<w:sdtContent><w:r><w:t>BoundLink</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        with pytest.raises(UnsupportedStructureError, match="data-bound"):
+            add_hyperlink(document, find_one(document, "BoundLink"), "https://example.com/a")
+
+    def it_refuses_a_locked_control_span(self):
+        document = _doc()
+        document.element.body.insert(
+            len(document.element.body) - 1,
+            parse_xml(
+                f'<w:p {nsdecls("w")}>'
+                '<w:sdt><w:sdtPr><w:tag w:val="locked"/>'
+                '<w:lock w:val="contentLocked"/></w:sdtPr>'
+                "<w:sdtContent><w:r><w:t>LockedLink</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        with pytest.raises(UnsupportedStructureError, match="locked"):
+            add_hyperlink(document, find_one(document, "LockedLink"), "https://example.com/a")
+
+    def it_wraps_text_inside_an_unlocked_control(self):
+        document = _doc()
+        document.element.body.insert(
+            len(document.element.body) - 1,
+            parse_xml(
+                f'<w:p {nsdecls("w")}>'
+                '<w:sdt><w:sdtPr><w:tag w:val="plain"/></w:sdtPr>'
+                "<w:sdtContent><w:r><w:t>PlainLink</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        link = add_hyperlink(
+            document, find_one(document, "PlainLink"), "https://example.com/a"
+        )
+        assert link.address == "https://example.com/a"
+
+    def it_refuses_a_plain_text_control_span(self):
+        document = _doc()
+        document.element.body.insert(
+            len(document.element.body) - 1,
+            parse_xml(
+                f'<w:p {nsdecls("w")}>'
+                '<w:sdt><w:sdtPr><w:tag w:val="plain-text"/><w:text/></w:sdtPr>'
+                "<w:sdtContent><w:r><w:t>PlainTextLink</w:t></w:r></w:sdtContent>"
+                "</w:sdt></w:p>"
+            ),
+        )
+        with pytest.raises(UnsupportedStructureError, match="plain-text"):
+            add_hyperlink(
+                document, find_one(document, "PlainTextLink"), "https://example.com/a"
+            )
