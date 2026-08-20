@@ -144,7 +144,20 @@ Useful non-code contributions include real-world fixtures authored by desktop Wo
 
 paper-docx exists because python-docx's package layer and XML mapping are excellent. Thanks to Steve Canny and the python-docx contributors for the work this project builds on. Upstream python-docx lives at [github.com/python-openxml/python-docx](https://github.com/python-openxml/python-docx).
 
-If you reference this project in writing, cite it as *paper-docx* (Paper Instruments, Inc.), a fork of *python-docx* by Steve Canny and contributors, and link to this repository.
+## Citation
+
+If you reference paper-docx in research or writing:
+
+```bibtex
+@software{paper_docx,
+  title   = {paper-docx: an agent-first structure editor for Word documents},
+  author  = {{Paper Instruments, Inc.}},
+  year    = {2026},
+  url     = {https://github.com/paper-instruments/paper-docx}
+}
+```
+
+Cite it as a fork of *python-docx* by Steve Canny and contributors.
 
 ## License
 
