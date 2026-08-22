@@ -157,27 +157,20 @@ def format_of(target) -> EffectiveFormat:
 
 
 def surrounding_format(document: "Document", anchor) -> EffectiveFormat:
-    """The effective format AT an anchor, for content you are about to insert.
+    """The effective format at an inline target or paragraph target.
 
-    Use it so inserted text adopts its neighbours' look. Resolves the anchor paragraph's
-    first text run; an empty paragraph resolves the paragraph's own properties. Refuses an
-    anchor that is missing, ambiguous, or spans more than one paragraph.
+    Strings resolve exactly to live spans, and supplied spans retain their inline
+    position. Live blocks and portable locators identify only a paragraph, so they
+    resolve the paragraph's effective defaults. Refuses a target that is missing,
+    ambiguous, foreign, stale, unsupported, or spans more than one paragraph.
     """
     from docx.blocks import _locate_anchor_paragraph
+    from docx.search import Span, find_one
 
-    _story, paragraph = _locate_anchor_paragraph(document, anchor)
-    for run in paragraph.iter(qn("w:r")):  # incl. runs inside hyperlinks
-        inside_textbox = False
-        current = run.getparent()
-        while current is not None and current is not paragraph:
-            if current.tag == qn("w:txbxContent"):
-                inside_textbox = True
-                break
-            current = current.getparent()
-        if inside_textbox:
-            continue
-        if run.find(qn("w:t")) is not None:
-            return _resolve_run(document, run, paragraph)
+    target = find_one(document, anchor) if isinstance(anchor, str) else anchor
+    _story, paragraph = _locate_anchor_paragraph(document, target)
+    if isinstance(target, Span):
+        return format_of(target)
     return _resolve_paragraph(document, paragraph)
 
 
@@ -405,7 +398,7 @@ def _paragraph_properties(
 
 def _resolve_paragraph(document: "Document", paragraph: "_Element") -> EffectiveFormat:
     properties = _paragraph_properties(document, paragraph)
-    # the run defaults the paragraph's own chain implies (for insertions)
+    # the run defaults implied by the paragraph's own style chain
     probe_run = paragraph.makeelement(qn("w:r"), {})
     run_level = _resolve_run(document, probe_run, paragraph)
     for key, value in run_level.properties.items():

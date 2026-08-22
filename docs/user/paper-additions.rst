@@ -77,7 +77,27 @@ hold it.
 :ref:`docx.formatting <paper_formatting_api>` answers the complementary
 question: what formatting does this text *actually* carry? It resolves through
 document defaults, the style chain and direct formatting, with every value
-naming the layer it came from.
+naming the layer it came from. String targets use exact search and report the
+formatting at the matched text, rather than a representative run elsewhere in
+the paragraph. A live span keeps its already-selected location, including one
+obtained through explicit normalized search:
+
+::
+
+    from docx.formatting import surrounding_format
+    from docx.search import find_one
+
+    exact = surrounding_format(doc, "Payment terms")
+    normalized_span = find_one(doc, "payment terms", match="normalized")
+    normalized = surrounding_format(doc, normalized_span)
+
+A span touching multiple runs reports ``mixed`` for disagreeing properties and
+preserves provenance when equal values come from different layers. A live
+paragraph block or current ``BlockLocator`` carries paragraph identity but no
+inline position, so it reports the paragraph's style/document defaults even
+when the paragraph is empty; it never samples the first existing run. A table
+block has no implied paragraph target and refuses. Select exact text or a live
+span inside the intended cell paragraph instead.
 
 
 Edit one document

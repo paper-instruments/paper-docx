@@ -600,6 +600,9 @@ class DescribeFormattingRegressions:
         style = document.styles.add_style("LinkOnly", WD_STYLE_TYPE.PARAGRAPH)
         style.font.size = Pt(19)
         paragraph = document.add_paragraph(style="LinkOnly")
+        ordinary = paragraph.add_run("ordinary text first ")
+        ordinary.bold = False
+        ordinary.font.size = Pt(8)
         paragraph._p.append(
             parse_xml(
                 f"<w:hyperlink {W} w:anchor='x'>"
@@ -608,7 +611,7 @@ class DescribeFormattingRegressions:
             )
         )
         resolved = surrounding_format(document, "only linked text here")
-        assert resolved["bold"].value is True  # the RUN resolved, not a fallback
+        assert resolved["bold"].value is True  # the hyperlink run, not the first run
         assert resolved["size_pt"].value == 19
 
     def it_reports_agreeing_values_from_different_layers_honestly(self):
