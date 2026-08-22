@@ -12,6 +12,7 @@ import pytest
 import docx
 from docx.commentops import (
     COMMENTS_EXTENDED_RELATIONSHIP_TYPE,
+    COMMENTS_EXTENSIBLE_RELATIONSHIP_TYPE,
     COMMENTS_IDS_RELATIONSHIP_TYPE,
     reply,
     resolve,
@@ -30,6 +31,8 @@ from .harness.paths import fixture_path
 TRACKED_MOVES = "generated/feature-isolated/tracked-moves.docx"
 NOTES = "generated/feature-isolated/footnotes-endnotes.docx"
 _W15_NS = "http://schemas.microsoft.com/office/word/2012/wordml"
+_W16CID_NS = "http://schemas.microsoft.com/office/word/2016/wordml/cid"
+_W16CEX_NS = "http://schemas.microsoft.com/office/word/2018/wordml/cex"
 
 
 def _revision(tag: str, inner_xml: str, revision_id: int):
@@ -366,7 +369,8 @@ class DescribeDiscardCleanup:
         )
         last_para_id = list(comment_elm.iter(qn("w:p")))[-1].get(qn("w14:paraId"))
         top_para_id = comment_elm.findall(qn("w:p"))[-1].get(qn("w14:paraId"))
-        assert last_para_id and last_para_id != top_para_id
+        assert last_para_id
+        assert last_para_id != top_para_id
         reference = next(
             node
             for node in document.element.iter(qn("w:commentReference"))
@@ -386,7 +390,7 @@ class DescribeDiscardCleanup:
         }
         assert last_para_id not in remaining_identity
 
-    def it_removes_an_entire_discarded_comment_thread(self):
+    def it_removes_an_entire_discarded_comment_thread(self, tmp_path: Path):
         from docx.blocks import tracked_delete_paragraphs
 
         document = docx.Document()
@@ -394,8 +398,70 @@ class DescribeDiscardCleanup:
         parent = document.add_comment(
             paragraph.runs, text="parent", author="Audit"
         )
-        reply(document, parent, "reply", author="Audit")
+        child = reply(document, parent, "reply", author="Audit")
         assert len(document.comments) == 2
+
+        comment_ids = {parent.comment_id, child.comment_id}
+        comments_root = document.part.part_related_by(RT.COMMENTS)._element  # noqa: SLF001
+        comment_elements = {
+            int(element.get(qn("w:id"))): element for element in comments_root
+        }
+        para_ids = {
+            list(comment_elements[comment_id].iter(qn("w:p")))[-1].get(
+                qn("w14:paraId")
+            )
+            for comment_id in comment_ids
+        }
+        assert None not in para_ids
+        ids_root = document.part.part_related_by(
+            COMMENTS_IDS_RELATIONSHIP_TYPE
+        )._element  # noqa: SLF001
+        durable_ids = {
+            entry.get(f"{{{_W16CID_NS}}}durableId")
+            for entry in ids_root
+            if entry.get(f"{{{_W16CID_NS}}}paraId") in para_ids
+        }
+        assert None not in durable_ids
+        assert len(durable_ids) == 2
+
+        def assert_thread_absent(candidate):
+            assert comment_ids.isdisjoint(
+                comment.comment_id for comment in candidate.comments
+            )
+            assert comment_ids.isdisjoint(
+                int(marker.get(qn("w:id")))
+                for marker in candidate.element.body.iter(
+                    qn("w:commentRangeStart"),
+                    qn("w:commentRangeEnd"),
+                    qn("w:commentReference"),
+                )
+            )
+
+            extended_root = candidate.part.part_related_by(
+                COMMENTS_EXTENDED_RELATIONSHIP_TYPE
+            )._element  # noqa: SLF001
+            assert para_ids.isdisjoint(
+                entry.get(f"{{{_W15_NS}}}paraId") for entry in extended_root
+            )
+            assert para_ids.isdisjoint(
+                entry.get(f"{{{_W15_NS}}}paraIdParent")
+                for entry in extended_root
+            )
+
+            candidate_ids_root = candidate.part.part_related_by(
+                COMMENTS_IDS_RELATIONSHIP_TYPE
+            )._element  # noqa: SLF001
+            assert para_ids.isdisjoint(
+                entry.get(f"{{{_W16CID_NS}}}paraId")
+                for entry in candidate_ids_root
+            )
+            candidate_extensible_root = candidate.part.part_related_by(
+                COMMENTS_EXTENSIBLE_RELATIONSHIP_TYPE
+            )._element  # noqa: SLF001
+            assert durable_ids.isdisjoint(
+                entry.get(f"{{{_W16CEX_NS}}}durableId")
+                for entry in candidate_extensible_root
+            )
 
         tracked_delete_paragraphs(
             document,
@@ -405,8 +471,8 @@ class DescribeDiscardCleanup:
         )
         assert document.revisions.accept_all() > 0
 
-        assert len(document.comments) == 0
-        extended_root = document.part.part_related_by(
-            COMMENTS_EXTENDED_RELATIONSHIP_TYPE
-        )._element  # noqa: SLF001
-        assert len(extended_root) == 0
+        assert_thread_absent(document)
+
+        output = tmp_path / "discarded-comment-thread.docx"
+        document.save(str(output))
+        assert_thread_absent(docx.Document(str(output)))

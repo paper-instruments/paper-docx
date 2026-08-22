@@ -6,6 +6,7 @@ import pytest
 
 import docx
 from docx.commentops import (
+    COMMENTS_EXTENDED_RELATIONSHIP_TYPE,
     anchored_text,
     comment_thread,
     is_resolved,
@@ -24,6 +25,10 @@ from docx.shared import Inches
 
 from .harness.contract import assert_refusal_atomic
 
+_W15_NS = "http://schemas.microsoft.com/office/word/2012/wordml"
+_W15_PARA_ID = f"{{{_W15_NS}}}paraId"
+_W15_PARA_ID_PARENT = f"{{{_W15_NS}}}paraIdParent"
+
 
 def _commented_document():
     document = docx.Document()
@@ -32,6 +37,53 @@ def _commented_document():
         "Parent", author="Reviewer"
     )
     return document, comment
+
+
+def _assert_parent_reply_topology(document, parent_id: int, child_id: int):
+    comments = {comment.comment_id: comment for comment in document.comments}
+    assert set(comments) == {parent_id, child_id}
+    assert anchored_text(document, comments[parent_id]) == "comment target"
+    assert anchored_text(document, comments[child_id]) == "comment target"
+
+    marker_order = [
+        (marker.tag.rsplit("}", 1)[-1], int(marker.get(qn("w:id"))))
+        for marker in document.element.body.iter(
+            qn("w:commentRangeStart"),
+            qn("w:commentRangeEnd"),
+            qn("w:commentReference"),
+        )
+    ]
+    assert marker_order == [
+        ("commentRangeStart", parent_id),
+        ("commentRangeStart", child_id),
+        ("commentRangeEnd", child_id),
+        ("commentRangeEnd", parent_id),
+        ("commentReference", parent_id),
+        ("commentReference", child_id),
+    ]
+
+    comments_root = document.part.part_related_by(RT.COMMENTS)._element  # noqa: SLF001
+    comment_elements = {
+        int(element.get(qn("w:id"))): element for element in comments_root
+    }
+    para_ids = {
+        comment_id: list(comment_elements[comment_id].iter(qn("w:p")))[-1].get(
+            qn("w14:paraId")
+        )
+        for comment_id in (parent_id, child_id)
+    }
+    assert all(para_ids.values())
+
+    extended_root = document.part.part_related_by(
+        COMMENTS_EXTENDED_RELATIONSHIP_TYPE
+    )._element  # noqa: SLF001
+    entries = {entry.get(_W15_PARA_ID): entry for entry in extended_root}
+    assert entries[para_ids[parent_id]].get(_W15_PARA_ID_PARENT) is None
+    assert (
+        entries[para_ids[child_id]].get(_W15_PARA_ID_PARENT)
+        == para_ids[parent_id]
+    )
+    return para_ids[parent_id], para_ids[child_id]
 
 
 class DescribeCommentRelationshipOwnership:
@@ -125,6 +177,30 @@ class DescribeCommentInspection:
 
 
 class DescribeCommentAnchorIds:
+    def it_retains_conformant_parent_and_reply_anchors_after_round_trip(
+        self, tmp_path
+    ):
+        document, parent = _commented_document()
+        child = reply(document, parent, "Reply", author="Second Reviewer")
+        assert parent.comment_id != child.comment_id
+
+        # Microsoft's pinned SDK test gives each threaded comment its own
+        # anchor triple and links the child through CommentEx.ParaIdParent:
+        # https://github.com/dotnet/Open-XML-SDK/blob/431ab05cf160248cc3885a4a766026d4f8243792/test/DocumentFormat.OpenXml.Tests/ConformanceTest/CommentEx/TestEntities.cs#L89-L115
+        para_ids = _assert_parent_reply_topology(
+            document, parent.comment_id, child.comment_id
+        )
+
+        output = tmp_path / "threaded-comments.docx"
+        document.save(str(output))
+        reopened = docx.Document(str(output))
+        assert (
+            _assert_parent_reply_topology(
+                reopened, parent.comment_id, child.comment_id
+            )
+            == para_ids
+        )
+
     def it_compares_anchor_marker_ids_numerically(self):
         document, comment = _commented_document()
         comment._comment_elm.set(qn("w:id"), "1")  # noqa: SLF001
