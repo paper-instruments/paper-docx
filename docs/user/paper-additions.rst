@@ -67,7 +67,10 @@ Edit one document
     span.replace("rate: $85-110/hr")             # formatting intact
 
 The same call, with ``tracked=True``, emits a minimal genuine ``w:ins``/
-``w:del`` redline that Word renders natively. :ref:`docx.blocks
+``w:del`` redline that Word renders natively. Use
+``preserve_revision=True`` instead to correct current-view text wholly inside
+one existing insertion while retaining its ID, attribution, and accept/reject
+behavior. :ref:`docx.blocks
 <paper_blocks_api>` does the clause-level equivalent (insert, delete or
 replace whole paragraphs). :ref:`docx.tableops <paper_tableops_api>` and
 :ref:`docx.numbering <paper_numbering_api>` cover validated table edits and

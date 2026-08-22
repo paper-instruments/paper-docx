@@ -21,7 +21,8 @@ from docx.errors import (
     TargetNotFoundError,
     UnsupportedStructureError,
 )
-from docx.oxml.ns import qn
+from docx.oxml.ns import nsdecls, qn
+from docx.oxml.parser import parse_xml
 from docx.search import find_one, find_text, normalize_text
 from docx.story import iter_blocks
 
@@ -36,6 +37,7 @@ MINIMAL = "generated/minimal-clean/minimal.docx"
 
 RATE_TEXT = "$75–100/hr on a “full-service” basis"
 FROZEN = dt.datetime(2026, 7, 7, 12, 0, 0, tzinfo=dt.timezone.utc)
+W = nsdecls("w")
 
 
 def _doc(relpath: str):
@@ -78,7 +80,8 @@ class DescribeFindText:
 
     def it_matches_across_a_paragraph_boundary(self):
         spans = find_text(_doc(MINIMAL), "ordinary text. Second body paragraph")
-        assert len(spans) == 1 and spans[0].crosses_paragraphs
+        assert len(spans) == 1
+        assert spans[0].crosses_paragraphs
 
     def it_returns_matches_in_document_order_with_nth_selection(self):
         document = _doc(TRACKED)
@@ -207,6 +210,144 @@ class DescribePlainReplace:
         out = tmp_path / "out.docx"
         docx.package.patch_save(working, document, out)
         assert_changed_parts(working, out, {"word/document.xml"})
+
+
+class DescribeRevisionPreservation:
+    def _insertion_document(self, *, revision_id: str = "41"):
+        document = docx.Document()
+        insertion = parse_xml(
+            f'<w:ins {W} w:id="{revision_id}" w:author="Alice"'
+            ' w:date="2026-07-07T12:00:00Z">'
+            "<w:r><w:t>pending wording</w:t></w:r></w:ins>"
+        )
+        document.add_paragraph()._p.append(insertion)
+        return document, insertion
+
+    def it_preserves_an_existing_insertion_and_its_projections(self, tmp_path: Path):
+        document, insertion = self._insertion_document()
+        attributes = dict(insertion.attrib)
+        original = [b.text for b in iter_blocks(document, view="original")]
+        result = find_one(document, "pending").replace(
+            "revised", preserve_revision=True
+        )
+        assert result.preserved_revision_ids == (41,)
+        assert not result.preserved_structure
+        assert dict(insertion.attrib) == attributes
+        assert [b.text for b in iter_blocks(document, view="original")] == original
+        path = tmp_path / "preserved-insertion.docx"
+        document.save(path)
+        accepted = docx.Document(path)
+        accepted.revisions.accept_all()
+        assert "revised wording" in [b.text for b in iter_blocks(accepted)]
+        rejected = docx.Document(path)
+        rejected.revisions.reject_all()
+        assert "revised wording" not in [b.text for b in iter_blocks(rejected)]
+
+    def it_keeps_safe_insertion_refusal_as_the_default(self):
+        document, _ = self._insertion_document()
+        with pytest.raises(UnsupportedStructureError, match="pending tracked insertion"):
+            find_one(document, "pending").replace("revised")
+
+    def it_refuses_a_base_text_and_insertion_crossing(self):
+        document, insertion = self._insertion_document()
+        insertion.addprevious(parse_xml(f'<w:r {W}><w:t>base </w:t></w:r>'))
+        with pytest.raises(UnsupportedStructureError, match="mixes base text"):
+            find_one(document, "base pending").replace(
+                "combined", preserve_revision=True
+            )
+
+    def it_refuses_a_revision_nested_inside_the_preserved_insertion(self):
+        document = docx.Document()
+        document.add_paragraph()._p.append(
+            parse_xml(
+                f'<w:ins {W} w:id="41" w:author="Alice"'
+                ' w:date="2026-07-07T12:00:00Z">'
+                '<w:r><w:t xml:space="preserve">pending </w:t></w:r>'
+                '<w:del w:id="42" w:author="Bob" w:date="2026-07-07T12:00:00Z">'
+                '<w:r><w:delText xml:space="preserve">dropped </w:delText>'
+                "</w:r></w:del>"
+                "<w:r><w:t>wording</w:t></w:r></w:ins>"
+            )
+        )
+        # the deletion is hidden from the current view but sits BETWEEN the
+        # matched atoms; an in-place edit would leave it stranded
+        with pytest.raises(UnsupportedStructureError, match="nested or mixed"):
+            find_one(document, "pending wording").replace(
+                "revised", preserve_revision=True
+            )
+
+    def it_refuses_a_span_crossing_two_insertions(self):
+        document, insertion = self._insertion_document()
+        insertion.addnext(
+            parse_xml(
+                f'<w:ins {W} w:id="55" w:author="Bob"'
+                ' w:date="2026-07-07T12:00:00Z">'
+                "<w:r><w:t> and more</w:t></w:r></w:ins>"
+            )
+        )
+        with pytest.raises(UnsupportedStructureError, match="crosses multiple"):
+            find_one(document, "wording and more").replace(
+                "revised", preserve_revision=True
+            )
+
+    def it_refuses_a_tracked_move_destination(self):
+        document = docx.Document()
+        document.add_paragraph()._p.append(
+            parse_xml(
+                f'<w:moveTo {W} w:id="9" w:author="Alice"'
+                ' w:date="2026-07-07T12:00:00Z">'
+                "<w:r><w:t>moved wording</w:t></w:r></w:moveTo>"
+            )
+        )
+        with pytest.raises(UnsupportedStructureError, match="tracked moves"):
+            find_one(document, "moved wording").replace(
+                "revised", preserve_revision=True
+            )
+
+    def it_refuses_preservation_outside_the_current_view(self):
+        document, _ = self._insertion_document()
+        span = find_text(document, "pending wording", view="all")[0]
+        with pytest.raises(UnsupportedStructureError, match="view='current'"):
+            span.replace("revised", preserve_revision=True)
+
+    def it_keeps_a_noop_reusable_across_a_bookmark(self):
+        document = docx.Document()
+        insertion = parse_xml(
+            f'<w:ins {W} w:id="42" w:author="Alice">'
+            '<w:r><w:t>outside</w:t></w:r>'
+            '<w:bookmarkStart w:id="11" w:name="target"/>'
+            '<w:r><w:t>inside</w:t></w:r>'
+            '<w:bookmarkEnd w:id="11"/>'
+            "</w:ins>"
+        )
+        document.add_paragraph()._p.append(insertion)
+        span = find_one(document, "outsideinside")
+        before = document.element.xml
+
+        result = span.replace("outsideinside", preserve_revision=True)
+
+        assert result.preserved_revision_ids == (42,)
+        assert document.element.xml == before
+        span.replace("outsideinside", preserve_revision=True)
+
+    @pytest.mark.parametrize("revision_id", ["bad", ""])
+    def it_refuses_unreportable_insertion_ids(self, revision_id: str):
+        document, insertion = self._insertion_document(revision_id=revision_id)
+        if not revision_id:
+            del insertion.attrib[qn("w:id")]
+        with pytest.raises(UnsupportedStructureError, match="w:id"):
+            find_one(document, "pending").replace("current", preserve_revision=True)
+
+    def it_refuses_tracked_revision_preservation(self):
+        document = docx.Document()
+        document.add_paragraph("target")
+        with pytest.raises(ValueError, match="preserve_revision"):
+            find_one(document, "target").replace(
+                "changed",
+                tracked=True,
+                author="Editor",
+                preserve_revision=True,
+            )
 
 
 class DescribeReplaceRefusals:
