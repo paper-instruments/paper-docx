@@ -343,6 +343,8 @@ class ReplaceResult:
     inserted_text: str
     tracked: bool
     revision_ids: Tuple[int, ...]
+    preserved_structure: bool = False
+    preserved_revision_ids: Tuple[int, ...] = ()
 
     def to_dict(self) -> dict:
         return {
@@ -353,7 +355,18 @@ class ReplaceResult:
             "inserted_text": self.inserted_text,
             "tracked": self.tracked,
             "revision_ids": list(self.revision_ids),
+            "preserved_structure": self.preserved_structure,
+            "preserved_revision_ids": list(self.preserved_revision_ids),
         }
+
+
+@dataclass(frozen=True)
+class _TextAssignment:
+    """One preflighted text-only mutation for a replacement plan."""
+
+    element: "_Element"
+    before: str
+    after: str
 
 
 @dataclass
@@ -688,7 +701,8 @@ class Span:
     def _validate_fresh(self) -> None:
         if self._consumed:
             raise TargetNotFoundError(
-                "span was consumed by a tracked replace; re-find the text"
+                "span was consumed by a tracked or structure-preserving"
+                " replace; re-find the text"
             )
         if self._current_slice() != self.text:
             raise TargetNotFoundError(
@@ -863,6 +877,28 @@ class Span:
         a stale or foreign span, a span crossing a field or control boundary, and a tracked
         no-op.
         """
+        return self._replace(
+            new_text,
+            tracked=tracked,
+            author=author,
+            date=date,
+            use_transaction=self._freshness_census is None,
+        )
+
+    def _replace(
+        self,
+        new_text: str,
+        *,
+        tracked: bool,
+        author: Optional[str],
+        date: Optional[dt.datetime],
+        use_transaction: bool,
+    ) -> ReplaceResult:
+        """Implementation shared with the already-transactional batch path.
+
+        `use_transaction` is consumed by replacement plans that need multiple
+        assignments; ordinary and tracked paths retain their current behavior.
+        """
         if tracked and not author:
             raise ValueError("author is required when tracked=True")
         if tracked:
@@ -882,8 +918,12 @@ class Span:
             narrowed = self._narrow_to_change(new_text)
             if narrowed is not None:
                 sub_span, sub_new = narrowed
-                return sub_span.replace(
-                    sub_new, tracked=tracked, author=author, date=date
+                return sub_span._replace(
+                    sub_new,
+                    tracked=tracked,
+                    author=author,
+                    date=date,
+                    use_transaction=use_transaction,
                 )
         self._validate_replaceable()
         if not tracked:
