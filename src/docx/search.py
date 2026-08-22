@@ -361,8 +361,8 @@ class ReplaceResult:
 
 
 @dataclass(frozen=True)
-class _TextAssignment:  # pyright: ignore[reportUnusedClass]
-    """One preflighted text-only mutation for a replacement plan."""
+class _TextAssignment:
+    """One preflighted text-only mutation for exact-structure replacement."""
 
     element: "_Element"
     before: str
@@ -850,17 +850,9 @@ class Span:
                 "span crosses a hyperlink boundary; edit the linked text and"
                 " the surrounding text separately"
             )
-        hollowed = (
-            _hollowed_bookmarks(self._atoms, self._end_offset)
-            if validate_bookmarks
-            else []
-        )
-        if hollowed:
-            raise UnsupportedStructureError(
-                f"replacing this span would hollow out bookmark(s) {hollowed}"
-                " — the targets of REF/PAGEREF cross-references and TOC"
-                " entries; narrow the span to inside the bookmark, or remove"
-                " the bookmark deliberately first"
+        if validate_bookmarks:
+            _refuse_hollowed_bookmarks(
+                _hollowed_bookmarks(self._atoms, self._end_offset)
             )
 
     # -- replace ----------------------------------------------------------
@@ -872,26 +864,39 @@ class Span:
         tracked: bool = False,
         author: Optional[str] = None,
         date: Optional[dt.datetime] = None,
+        preserve_structure: bool = False,
         preserve_revision: bool = False,
     ) -> ReplaceResult:
-        """Replace this span's text, preserving run formatting.
+        """Replace this span's text and return machine-readable change evidence.
 
-        Untracked, this edits in place: untouched runs retain their run properties, the
-        replacement takes the start run's formatting, and the span stays usable. Tracked, it
-        emits a minimal `w:del`/`w:ins` pair and consumes the span.
+        The default is an untracked edit: untouched runs retain their run properties, the
+        replacement takes the start run's formatting, and the span stays usable. `tracked=True`
+        instead emits a minimal `w:del`/`w:ins` pair and consumes the span; a direct tracked
+        no-op is refused.
 
-        `preserve_revision=True` permits a current-view span wholly owned by one existing
-        `w:ins` to be corrected without changing its id, author, date, or accept/reject meaning.
-        Outside revision markup it behaves like an ordinary untracked edit. The result reports
-        the retained insertion in `preserved_revision_ids`; `revision_ids` remains reserved for
-        newly authored revisions. Refuses mixed, nested, moved, stale, protected, field,
-        control, bookmark, hyperlink, and paragraph-boundary structures before mutation.
+        `preserve_revision=True` explicitly permits a current-view span wholly owned by one
+        existing `w:ins` to be corrected without changing that insertion's id, author, date,
+        or accept/reject meaning; outside revision markup it behaves like an ordinary untracked
+        edit. The corrected text remains attributed to the existing insertion's author and date.
+        `preserve_structure=True` changes only the selected `w:t` values: each node receives up
+        to its selected original capacity from left to right, and the final node receives the
+        remainder. Text elements, attributes, runs, intervening markers, and empty nodes are
+        retained. A mutating exact-structure edit consumes the span and refuses text that would
+        require changing `xml:space`. A fully preflighted no-op reports preservation evidence
+        but does not consume the span. The two preservation options can be combined, but neither
+        can be combined with `tracked=True`.
+
+        `preserved_structure` and `preserved_revision_ids` report the guarantees applied;
+        `revision_ids` remains reserved for newly authored tracked revisions. Refuses a protected
+        document, a stale or foreign span, and unsafe field, control, revision, bookmark,
+        whitespace, or paragraph-boundary structures before mutation.
         """
         return self._replace(
             new_text,
             tracked=tracked,
             author=author,
             date=date,
+            preserve_structure=preserve_structure,
             preserve_revision=preserve_revision,
             use_transaction=self._freshness_census is None,
         )
@@ -903,18 +908,16 @@ class Span:
         tracked: bool,
         author: Optional[str],
         date: Optional[dt.datetime],
+        preserve_structure: bool,
         preserve_revision: bool,
         use_transaction: bool,
     ) -> ReplaceResult:
-        """Implementation shared with the already-transactional batch path.
-
-        `use_transaction` is consumed by replacement plans that need multiple
-        assignments; ordinary and tracked paths retain their current behavior.
-        """
-        if tracked and preserve_revision:
-            raise ValueError(
-                "tracked=True cannot be combined with preserve_revision=True"
-            )
+        """Implementation shared with the already-transactional batch path."""
+        _validate_replacement_options(
+            tracked=tracked,
+            preserve_structure=preserve_structure,
+            preserve_revision=preserve_revision,
+        )
         if tracked and not author:
             raise ValueError("author is required when tracked=True")
         if tracked:
@@ -926,7 +929,10 @@ class Span:
         _validate_writable_text(new_text, argument="new_text")
         _refuse_if_protected(self._document, "replace text")
         self._validate_fresh()
-        if any(atom.is_synthetic for atom in self._atoms) or self.crosses_paragraphs:
+        if (
+            not preserve_structure
+            and (any(atom.is_synthetic for atom in self._atoms) or self.crosses_paragraphs)
+        ):
             # spans matched ACROSS a tab/break/paragraph boundary may still
             # edit safely when the actual change lies within one segment:
             # narrow to the changed region; if the change itself crosses a
@@ -939,11 +945,14 @@ class Span:
                     tracked=tracked,
                     author=author,
                     date=date,
+                    preserve_structure=False,
                     preserve_revision=preserve_revision,
                     use_transaction=use_transaction,
                 )
         preservation_noop = preserve_revision and new_text == self.text
-        self._validate_replaceable(validate_bookmarks=not preservation_noop)
+        self._validate_replaceable(
+            validate_bookmarks=not preserve_structure and not preservation_noop
+        )
         preserved_revision_ids = _preserved_insertion_ids(
             self, authorize=preserve_revision
         )
@@ -958,6 +967,11 @@ class Span:
                     )
         placeholder_sdts = _placeholder_controls_of(self._atoms)
         if placeholder_sdts:
+            if preserve_structure and new_text != self.text:
+                raise UnsupportedStructureError(
+                    "span lies in placeholder prompt text whose successful fill"
+                    " requires structural cleanup; exact structure cannot be preserved"
+                )
             if tracked:
                 raise UnsupportedStructureError(
                     "span lies in a form control still showing PLACEHOLDER"
@@ -974,6 +988,40 @@ class Span:
                         " to real content — replace the whole prompt"
                         f" ({prompt!r}) or use docx.controls.set_control_value"
                     )
+        if preserve_structure:
+            assignments = _exact_text_assignments(self, new_text)
+            _refuse_hollowed_bookmarks(
+                _hollowed_bookmarks_after(assignments, self._atoms)
+            )
+            result = ReplaceResult(
+                story=self.story,
+                deleted_text=self.text,
+                inserted_text=new_text,
+                tracked=False,
+                revision_ids=(),
+                preserved_structure=True,
+                preserved_revision_ids=preserved_revision_ids,
+            )
+            if new_text == self.text:
+                return result
+            if use_transaction:
+                with rollback_on_error(self._document, self):
+                    _apply_text_assignments(assignments)
+                    self.text = new_text
+                    self._consumed = True
+            else:
+                try:
+                    _apply_text_assignments(assignments)
+                except BaseException:
+                    # The batch owns the package transaction. Restore this
+                    # text-only attempt locally so a late PaperRefusal can be
+                    # recorded and an unexpected error can roll back the batch.
+                    for assignment in assignments:
+                        assignment.element.text = assignment.before
+                    raise
+                self.text = new_text
+                self._consumed = True
+            return result
         if preserve_revision and new_text == self.text:
             return ReplaceResult(
                 story=self.story,
@@ -1481,6 +1529,108 @@ def _hollowed_bookmarks(atoms: "Sequence[_Atom]", end_offset: int) -> "List[str]
     return hollowed
 
 
+def _exact_text_assignments(span: Span, new_text: str) -> "Tuple[_TextAssignment, ...]":
+    """Plan deterministic text-only assignments without changing the tree."""
+    assignments: "List[_TextAssignment]" = []
+    cursor = 0
+    atoms = span._atoms  # pyright: ignore[reportPrivateUsage]
+    last_index = len(atoms) - 1
+    for index, atom in enumerate(atoms):
+        start = span._start_offset if index == 0 else 0  # pyright: ignore[reportPrivateUsage]
+        end = (
+            span._end_offset  # pyright: ignore[reportPrivateUsage]
+            if index == last_index
+            else len(atom.text)
+        )
+        capacity = end - start
+        if index == last_index:
+            replacement_piece = new_text[cursor:]
+        else:
+            piece_length = min(capacity, len(new_text) - cursor)
+            replacement_piece = new_text[cursor : cursor + piece_length]
+            cursor += piece_length
+        after = atom.text[:start] + replacement_piece + atom.text[end:]
+        if (
+            after != atom.text
+            and (after[:1].isspace() or after[-1:].isspace())
+            and atom.element.get(_XML_SPACE) != "preserve"
+        ):
+            raise UnsupportedStructureError(
+                "exact structure would leave significant edge whitespace in a"
+                " w:t without its existing xml:space='preserve' attribute"
+            )
+        assignments.append(
+            _TextAssignment(element=atom.element, before=atom.text, after=after)
+        )
+    return tuple(assignments)
+
+
+def _apply_text_assignments(assignments: "Sequence[_TextAssignment]") -> None:
+    """Apply a fully validated exact-structure assignment collection."""
+    for assignment in assignments:
+        assignment.element.text = assignment.after
+
+
+def _hollowed_bookmarks_after(
+    assignments: "Sequence[_TextAssignment]", atoms: "Sequence[_Atom]"
+) -> "List[str]":
+    """Non-point bookmarks emptied by the planned exact assignments."""
+    paragraph = atoms[0].paragraph
+    if paragraph is None:
+        return []
+    planned = {id(item.element): item.after for item in assignments}
+    # A character replacement is same-paragraph, but the bookmark containing
+    # it need not be. Scan the complete story tree so markers in adjacent
+    # paragraphs still protect their sole enclosed text from being emptied.
+    stream = list(paragraph.getroottree().getroot().iter())
+    starts: "dict[Optional[str], Tuple[int, str]]" = {}
+    hollowed: "List[str]" = []
+    for position, node in enumerate(stream):
+        if node.tag == _BOOKMARK_START:
+            starts[node.get(_W_ID)] = (position, node.get(_W_NAME) or "")
+        elif node.tag == _BOOKMARK_END:
+            entry = starts.get(node.get(_W_ID))
+            if entry is None:
+                continue
+            start_pos, name = entry
+            if name == "_GoBack":
+                continue
+            text_elements = [
+                inner
+                for inner in stream[start_pos + 1 : position]
+                if inner.tag in (_T, _DEL_TEXT) and (inner.text or "")
+            ]
+            if text_elements and all(
+                not planned.get(id(inner), inner.text or "")
+                for inner in text_elements
+            ):
+                hollowed.append(name)
+    return hollowed
+
+
+def _refuse_hollowed_bookmarks(hollowed: "Sequence[str]") -> None:
+    if hollowed:
+        raise UnsupportedStructureError(
+            f"replacing this span would hollow out bookmark(s) {list(hollowed)}"
+            " — the targets of REF/PAGEREF cross-references and TOC entries;"
+            " narrow the span to inside the bookmark, or remove the bookmark"
+            " deliberately first"
+        )
+
+
+def _validate_replacement_options(
+    *, tracked: bool, preserve_structure: bool, preserve_revision: bool
+) -> None:
+    if tracked and preserve_structure:
+        raise ValueError(
+            "tracked=True cannot be combined with preserve_structure=True"
+        )
+    if tracked and preserve_revision:
+        raise ValueError(
+            "tracked=True cannot be combined with preserve_revision=True"
+        )
+
+
 def _set_preserved_text(element: "_Element", text: str) -> None:
     element.text = text
     if text[:1].isspace() or text[-1:].isspace():
@@ -1674,6 +1824,7 @@ def replace_all(
     tracked: bool = False,
     author: Optional[str] = None,
     date: Optional[dt.datetime] = None,
+    preserve_structure: bool = False,
     preserve_revision: bool = False,
 ) -> ReplaceAllResult:
     """Replace every match of `needle` in one pass, and return a `ReplaceAllResult`.
@@ -1681,15 +1832,17 @@ def replace_all(
     One scan finds all matches, then replacements apply in reverse document order within each
     story, so no pending match shifts. A refusal on one match is recorded in `refused` and the
     rest proceed; a stale span aborts the batch instead, rolling back every replacement already
-    applied. Matches already equal to `new_text` are skipped. `preserve_revision` forwards the
-    same existing-insertion contract to every match without adding a transaction per match.
+    applied. Matches already equal to `new_text` are skipped. `preserve_structure` and
+    `preserve_revision` have the same contracts as |Span| ``.replace`` and are forwarded to
+    every match without adding a transaction per match.
     """
     from docx.errors import PaperRefusal
 
-    if tracked and preserve_revision:
-        raise ValueError(
-            "tracked=True cannot be combined with preserve_revision=True"
-        )
+    _validate_replacement_options(
+        tracked=tracked,
+        preserve_structure=preserve_structure,
+        preserve_revision=preserve_revision,
+    )
     if tracked and not author:
         raise ValueError("author is required when tracked=True")
     _validate_writable_text(new_text, argument="new_text")
@@ -1735,6 +1888,7 @@ def replace_all(
                                 tracked=tracked,
                                 author=author,
                                 date=date,
+                                preserve_structure=preserve_structure,
                                 preserve_revision=preserve_revision,
                             )
                         )
