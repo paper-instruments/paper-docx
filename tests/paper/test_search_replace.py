@@ -12,6 +12,7 @@ import shutil
 from pathlib import Path
 
 import pytest
+from lxml import etree
 
 import docx
 import docx._clock
@@ -212,7 +213,7 @@ class DescribePlainReplace:
         assert_changed_parts(working, out, {"word/document.xml"})
 
 
-class DescribeRevisionPreservation:
+class DescribePreservationPolicies:
     def _insertion_document(self, *, revision_id: str = "41"):
         document = docx.Document()
         insertion = parse_xml(
@@ -310,7 +311,95 @@ class DescribeRevisionPreservation:
         with pytest.raises(UnsupportedStructureError, match="view='current'"):
             span.replace("revised", preserve_revision=True)
 
-    def it_keeps_a_noop_reusable_across_a_bookmark(self):
+    def it_preserves_the_exact_text_element_graph_and_distribution(self, tmp_path: Path):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        for text in ("alpha", " pay", "ment", " terms"):
+            paragraph.add_run(text)
+        paragraph.runs[1].bold = True
+        proofing_marker = parse_xml(f'<w:proofErr {W} w:type="spellStart"/>')
+        paragraph.runs[1]._r.addnext(proofing_marker)
+        elements = tuple(paragraph._p.iter(qn("w:t")))
+        runs = tuple(paragraph._p.iter(qn("w:r")))
+        graph = tuple((e, e.tag, tuple(e.attrib.items()), tuple(e)) for e in elements)
+        run_properties = tuple(
+            etree.tostring(run.find(qn("w:rPr")))
+            if run.find(qn("w:rPr")) is not None else None
+            for run in runs
+        )
+        result = find_one(document, "alpha payment terms").replace(
+            "alpha settlement terms", preserve_structure=True
+        )
+        assert result.preserved_structure
+        assert [e.text for e in elements] == ["alpha", " set", "tlem", "ent terms"]
+        assert tuple((e, e.tag, tuple(e.attrib.items()), tuple(e)) for e in elements) == graph
+        assert tuple(paragraph._p.iter(qn("w:r"))) == runs
+        assert proofing_marker.getparent() is paragraph._p
+        assert tuple(
+            etree.tostring(run.find(qn("w:rPr")))
+            if run.find(qn("w:rPr")) is not None else None
+            for run in runs
+        ) == run_properties
+        reopened = save_and_reopen(document, tmp_path / "exact.docx")
+        assert reopened.paragraphs[-1].text == "alpha settlement terms"
+
+    def it_keeps_empty_nodes_and_consumes_a_mutated_exact_span(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        for text in ("ab", "cd", "ef"):
+            paragraph.add_run(text)
+        elements = tuple(paragraph._p.iter(qn("w:t")))
+        span = find_one(document, "abcdef")
+        span.replace("x", preserve_structure=True)
+        assert [e.text for e in elements] == ["x", "", ""]
+        with pytest.raises(TargetNotFoundError, match="structure-preserving"):
+            span.replace("again")
+        assert find_one(document, "x").text == "x"
+
+    def it_refuses_exact_edge_whitespace_without_changing_xml_space(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph("plain")
+        element = paragraph._p.find(".//" + qn("w:t"))
+        assert element is not None
+        assert element.get(qn("xml:space")) is None
+        before = etree.tostring(paragraph._p)
+        with pytest.raises(UnsupportedStructureError, match="edge whitespace"):
+            find_one(document, "plain").replace(" plain", preserve_structure=True)
+        assert etree.tostring(paragraph._p) == before
+
+    def it_refuses_an_exact_plan_that_would_hollow_a_bookmark(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("outside")
+        start = parse_xml(f'<w:bookmarkStart {W} w:id="9" w:name="target"/>')
+        first._r.addnext(start)
+        inside = paragraph.add_run("inside")
+        end = parse_xml(f'<w:bookmarkEnd {W} w:id="9"/>')
+        inside._r.addnext(end)
+        before = etree.tostring(paragraph._p)
+        with pytest.raises(UnsupportedStructureError, match="hollow"):
+            find_one(document, "outsideinside").replace(
+                "x", preserve_structure=True
+            )
+        assert etree.tostring(paragraph._p) == before
+
+    def it_refuses_hollowing_a_bookmark_whose_markers_span_paragraphs(self):
+        document = docx.Document()
+        first = document.add_paragraph()._p
+        first.append(
+            parse_xml(f'<w:bookmarkStart {W} w:id="10" w:name="target"/>')
+        )
+        document.add_paragraph("inside")
+        last = document.add_paragraph()._p
+        last.append(parse_xml(f'<w:bookmarkEnd {W} w:id="10"/>'))
+        before = document.element.xml
+
+        with pytest.raises(UnsupportedStructureError, match="hollow"):
+            find_one(document, "inside").replace("", preserve_structure=True)
+
+        assert document.element.xml == before
+
+    def it_keeps_a_revision_preserving_noop_reusable_across_a_bookmark(self):
         document = docx.Document()
         insertion = parse_xml(
             f'<w:ins {W} w:id="42" w:author="Alice">'
@@ -330,6 +419,37 @@ class DescribeRevisionPreservation:
         assert document.element.xml == before
         span.replace("outsideinside", preserve_revision=True)
 
+    def it_leaves_an_exact_noop_reusable(self):
+        document = docx.Document()
+        document.add_paragraph("same")
+        span = find_one(document, "same")
+        before = document.element.xml
+        assert span.replace("same", preserve_structure=True).preserved_structure
+        assert document.element.xml == before
+        span.replace("same", preserve_structure=True)
+
+    def it_combines_revision_and_structure_preservation(self):
+        document, insertion = self._insertion_document()
+        text_element = next(insertion.iter(qn("w:t")))
+        result = find_one(document, "pending").replace(
+            "current", preserve_revision=True, preserve_structure=True
+        )
+        assert result.preserved_structure
+        assert result.preserved_revision_ids == (41,)
+        assert text_element.getparent() is not None
+
+    def it_keeps_an_exact_patch_save_to_the_changed_story(self, tmp_path: Path):
+        source = fixture_path(FRAGMENTED)
+        working = tmp_path / "work.docx"
+        shutil.copyfile(source, working)
+        document = docx.Document(str(working))
+        find_one(document, "$75-100/hr").replace(
+            "$85–110/hr", preserve_structure=True
+        )
+        out = tmp_path / "out.docx"
+        docx.package.patch_save(working, document, out)
+        assert_changed_parts(working, out, {"word/document.xml"})
+
     @pytest.mark.parametrize("revision_id", ["bad", ""])
     def it_refuses_unreportable_insertion_ids(self, revision_id: str):
         document, insertion = self._insertion_document(revision_id=revision_id)
@@ -338,15 +458,13 @@ class DescribeRevisionPreservation:
         with pytest.raises(UnsupportedStructureError, match="w:id"):
             find_one(document, "pending").replace("current", preserve_revision=True)
 
-    def it_refuses_tracked_revision_preservation(self):
+    @pytest.mark.parametrize("policy", ["preserve_structure", "preserve_revision"])
+    def it_refuses_tracked_preservation_combinations(self, policy: str):
         document = docx.Document()
         document.add_paragraph("target")
-        with pytest.raises(ValueError, match="preserve_revision"):
+        with pytest.raises(ValueError, match=policy):
             find_one(document, "target").replace(
-                "changed",
-                tracked=True,
-                author="Editor",
-                preserve_revision=True,
+                "changed", tracked=True, author="Editor", **{policy: True}
             )
 
 

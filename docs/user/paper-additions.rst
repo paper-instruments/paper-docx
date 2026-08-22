@@ -57,7 +57,7 @@ naming the layer it came from.
 Edit one document
 -----------------
 
-|Span| replaces matched text while untouched runs keep their formatting byte-for-byte.
+|Span| replaces matched text while untouched runs retain their formatting.
 
 ::
 
@@ -66,13 +66,29 @@ Edit one document
     span = find_one(doc, "rate: $75-100/hr")     # matches “rate: $75–100/hr”
     span.replace("rate: $85-110/hr")             # formatting intact
 
-The same call, with ``tracked=True``, emits a minimal genuine ``w:ins``/
-``w:del`` redline that Word renders natively. Use
-``preserve_revision=True`` instead to correct current-view text wholly inside
-one existing insertion while retaining its ID, attribution, and accept/reject
-behavior. :ref:`docx.blocks
-<paper_blocks_api>` does the clause-level equivalent (insert, delete or
-replace whole paragraphs). :ref:`docx.tableops <paper_tableops_api>` and
+Choose the option that matches the edit's preservation contract:
+
+- Use the default for an ordinary untracked correction. The replacement takes
+  the start run's formatting.
+- Use ``tracked=True`` with ``author=...`` to author a new ``w:ins``/``w:del``
+  redline.
+- Use ``preserve_revision=True`` only to correct current-view text wholly
+  inside one existing insertion while retaining that insertion's attribution
+  and accept/reject behavior. The correction remains attributed to the
+  recorded author and date. Base text encountered by ``replace_all`` still
+  uses the ordinary untracked behavior.
+- Use ``preserve_structure=True`` when the existing text-node and run topology
+  must remain exact. This mode changes only text values and may refuse text
+  whose whitespace cannot be represented without changing ``xml:space``.
+- Combine the two preservation options when both contracts apply. Neither can
+  be combined with ``tracked=True``.
+
+These are text-structure contracts, not a promise that the serialized bytes of
+the changed XML part remain identical. The full refusal rules and result
+evidence are in :ref:`docx.search <paper_search_api>`.
+
+:ref:`docx.blocks <paper_blocks_api>` does the clause-level equivalent (insert,
+delete or replace whole paragraphs). :ref:`docx.tableops <paper_tableops_api>` and
 :ref:`docx.numbering <paper_numbering_api>` cover validated table edits and
 list numbering. :ref:`docx.controls <paper_controls_api>` fills content
 controls, clearing placeholder state so Word treats them as filled.
