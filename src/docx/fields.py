@@ -200,7 +200,7 @@ def insert_toc_after(
 
     Marked dirty so the renderer builds the real table on open; heading `levels` maps to the
     \\o "1-3" switch. Refuses a protected document, and an anchor that is missing, ambiguous
-    or foreign.
+    foreign, or spans more than one paragraph.
     """
     from docx.blocks import _insert_after, _resolve_anchor_paragraph
 

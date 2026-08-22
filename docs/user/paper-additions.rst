@@ -110,6 +110,13 @@ The normalized span is an intentional mutation target, not an inspection-only
 result. APIs outside ``docx.search`` do not repeat the ``match`` keyword; use
 this explicit preselection workflow when they need normalized targeting.
 
+Search can also return spans that cross paragraph boundaries, representing the
+boundary as a literal ``"\\n"``. Those spans are valid for inspection. APIs
+that need one paragraph—block edits, composition endpoints, TOC insertion,
+and ``surrounding_format()``—raise |BoundaryViolationError| instead of choosing
+the first or last paragraph. Refine the text to one paragraph or pass an
+explicit live block endpoint.
+
 When repeated text needs context, use ``near`` to rank the complete candidate
 set for inspection:
 

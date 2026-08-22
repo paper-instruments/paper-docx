@@ -11,6 +11,7 @@ import pytest
 
 import docx
 from docx.enum.style import WD_STYLE_TYPE
+from docx.errors import BoundaryViolationError
 from docx.formatting import format_of, surrounding_format
 from docx.search import find_one
 from docx.shared import Pt
@@ -100,8 +101,8 @@ class DescribeStyleChainResolution:
         assert resolved["size_pt"].source == "character_style:Emph"
 
     def it_survives_a_based_on_cycle(self):
-        from docx.oxml.parser import parse_xml
         from docx.oxml.ns import nsdecls
+        from docx.oxml.parser import parse_xml
 
         document = _doc()
         styles = document.styles.element
@@ -197,3 +198,14 @@ class DescribeSurroundingFormat:
         assert resolved["style_name"].value == "Heading 1"
         # Heading 1 in the default template resolves sz through its chain
         assert resolved["size_pt"].value is not None
+
+    @pytest.mark.parametrize("as_string", [True, False])
+    def it_refuses_a_cross_paragraph_target(self, as_string: bool):
+        document = docx.Document()
+        document.add_paragraph("alpha end")
+        document.add_paragraph("beta start")
+        span = find_one(document, "alpha end\nbeta start")
+        target = span.text if as_string else span
+
+        with pytest.raises(BoundaryViolationError, match="one paragraph"):
+            surrounding_format(document, target)

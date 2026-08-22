@@ -87,12 +87,13 @@ class DescribeFindText:
         assert "Net 30" in span.text  # captured text preserves the raw NBSP
 
     def it_matches_across_a_paragraph_boundary(self):
-        spans = find_text(
-            _doc(MINIMAL), "ordinary text.\nSecond body paragraph"
-        )
+        document = _doc(MINIMAL)
+        needle = "ordinary text.\nSecond body paragraph"
+        spans = find_text(document, needle)
         assert len(spans) == 1
-        assert spans[0].text == "ordinary text.\nSecond body paragraph"
+        assert spans[0].text == needle
         assert spans[0].crosses_paragraphs
+        assert find_one(document, needle).crosses_paragraphs
 
     @pytest.mark.parametrize(
         ("document_text", "needle"),
@@ -695,6 +696,19 @@ class DescribePreservationPolicies:
 
 
 class DescribeReplaceRefusals:
+    def it_narrows_a_cross_paragraph_match_to_a_same_paragraph_change(self):
+        document = docx.Document()
+        document.add_paragraph("alpha end")
+        document.add_paragraph("beta start")
+        span = find_one(document, "alpha end\nbeta start")
+
+        span.replace("ALPHA end beta start")
+
+        assert [paragraph.text for paragraph in document.paragraphs] == [
+            "ALPHA end",
+            "beta start",
+        ]
+
     def it_refuses_spans_over_deleted_text(self):
         document = _doc(TRACKED)
         span = find_one(document, "forty-two", view="all")

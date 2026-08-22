@@ -67,6 +67,12 @@ endpoints are translated to the existing physical body slice, so unsupported
 children between them still reach composition preflight and refuse rather
 than disappearing silently.
 
+Every source endpoint and the destination insertion target must resolve wholly
+inside one paragraph. A multi-paragraph search span remains useful for
+inspection, but composition raises |BoundaryViolationError| instead of
+inferring its first or last block. Select exact text inside one paragraph, or
+pass an explicit live block for each endpoint.
+
 .. currentmodule:: docx.composition
 
 

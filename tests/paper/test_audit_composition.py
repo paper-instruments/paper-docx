@@ -165,6 +165,43 @@ def it_refuses_foreign_span_anchors_before_destination_protection() -> None:
     assert _package_state(destination) == destination_before
 
 
+@pytest.mark.parametrize("invalid_endpoint", ["source_start", "source_end", "destination"])
+def it_preflights_every_composition_endpoint_before_destination_protection(
+    invalid_endpoint: str,
+) -> None:
+    source = docx.Document()
+    source.add_paragraph("Source before")
+    source.add_paragraph("source alpha end")
+    source.add_paragraph("source beta start")
+    source.add_paragraph("Source after")
+    destination = docx.Document()
+    destination.add_paragraph("Destination before")
+    destination.add_paragraph("destination alpha end")
+    destination.add_paragraph("destination beta start")
+    source_cross = find_one(source, "source alpha end\nsource beta start")
+    destination_cross = find_one(
+        destination, "destination alpha end\ndestination beta start"
+    )
+    start_anchor = source_cross if invalid_endpoint == "source_start" else "Source before"
+    end_anchor = source_cross if invalid_endpoint == "source_end" else None
+    anchor = destination_cross if invalid_endpoint == "destination" else "Destination before"
+    _protect(destination)
+    source_before = _package_state(source)
+    destination_before = _package_state(destination)
+
+    with pytest.raises(BoundaryViolationError, match="wholly within one paragraph"):
+        insert_blocks_from(
+            destination,
+            source,
+            start_anchor,
+            end_anchor=end_anchor,
+            anchor=anchor,
+        )
+
+    assert _package_state(source) == source_before
+    assert _package_state(destination) == destination_before
+
+
 def it_refuses_a_foreign_comment_proxy_even_with_a_colliding_id() -> None:
     source = docx.Document()
     source_run = source.add_paragraph("Source anchor").runs[0]

@@ -15,14 +15,14 @@ from docx.commentops import COMMENTS_IDS_RELATIONSHIP_TYPE, delete_comment
 from docx.composition import CompositionReport, _copy_letterhead, append_document
 from docx.controls import _part_root, get_control, set_control_value
 from docx.drawing import Drawing
+from docx.enum.style import WD_STYLE_TYPE
 from docx.errors import (
     BoundaryViolationError,
     DocumentProtectedError,
     TargetNotFoundError,
     UnsupportedStructureError,
 )
-from docx.fields import add_caption
-from docx.enum.style import WD_STYLE_TYPE
+from docx.fields import add_caption, insert_toc_after
 from docx.links import add_hyperlink
 from docx.notes import add_endnote, add_footnote
 from docx.numbering import apply_numbering, ensure_decimal_definition, list_numbering
@@ -35,7 +35,7 @@ from docx.oxml.parser import OxmlElement, parse_xml
 from docx.protection import acknowledge_protection, set_protection
 from docx.search import find_one
 
-from .harness.contract import save_and_reopen
+from .harness.contract import assert_refusal_atomic, save_and_reopen
 from .harness.paths import fixture_path
 
 MINIMAL = "generated/minimal-clean/minimal.docx"
@@ -44,6 +44,24 @@ STORE_ID = "{11111111-1111-1111-1111-111111111111}"
 
 def _doc(relpath: str = MINIMAL):
     return docx.Document(str(fixture_path(relpath)))
+
+
+@pytest.mark.parametrize("as_string", [True, False])
+def it_toc_refuses_cross_paragraph_targets_before_protection(as_string: bool):
+    document = docx.Document()
+    document.add_paragraph("alpha end")
+    document.add_paragraph("beta start")
+    span = find_one(document, "alpha end\nbeta start")
+    target = span.text if as_string else span
+    set_protection(document, edit="readOnly")
+
+    error = assert_refusal_atomic(
+        document,
+        lambda doc: insert_toc_after(doc, target),
+        BoundaryViolationError,
+    )
+
+    assert "one paragraph" in str(error)
 
 
 def _bmp(red: int, green: int, blue: int) -> bytes:

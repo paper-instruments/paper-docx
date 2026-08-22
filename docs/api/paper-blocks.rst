@@ -21,6 +21,12 @@ inspection, but they do not authorize a current-document mutation. Reacquire
 the intended target from the current view before editing. Exact strings use
 exact lookup in the current view.
 
+An exact string or live span used as a paragraph target must resolve wholly
+inside one paragraph. Search may return a multi-paragraph span for inspection,
+but block operations raise |BoundaryViolationError| rather than guessing its
+first or last paragraph. Select exact text inside the intended paragraph, or
+pass an explicit live block endpoint.
+
 Legacy |Anchor| values are inert location evidence and are refused with
 migration guidance. Reacquire a live block with ``iter_blocks()``/``outline()``,
 or pass an exact string or live span. Do not use an old index/hash payload as a

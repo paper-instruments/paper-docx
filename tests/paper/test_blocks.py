@@ -61,6 +61,115 @@ def _memory_doc(*texts: str):
     return document
 
 
+def _cross_paragraph_target(document):
+    return find_one(document, "alpha end\nbeta start")
+
+
+class DescribeOneParagraphTargets:
+    @pytest.mark.parametrize(
+        ("operation", "as_string"),
+        [
+            (
+                lambda document, target: insert_section_after(
+                    document, target, heading="wrong", paragraphs=[]
+                ),
+                True,
+            ),
+            (
+                lambda document, target: insert_blocks_after(
+                    document,
+                    target,
+                    blocks=[RichParagraph(runs=[TextRun("wrong")])],
+                ),
+                False,
+            ),
+        ],
+    )
+    def it_refuses_string_derived_and_supplied_cross_paragraph_targets_atomically(
+        self, operation, as_string: bool
+    ):
+        document = _memory_doc("alpha end", "beta start", "after")
+        span = _cross_paragraph_target(document)
+        target = span.text if as_string else span
+        set_protection(document, edit="readOnly")
+
+        error = assert_refusal_atomic(
+            document,
+            lambda doc: operation(doc, target),
+            BoundaryViolationError,
+        )
+
+        assert "wholly within one paragraph" in str(error)
+        assert "explicit live Block" in str(error)
+
+    @pytest.mark.parametrize("crosses_paragraphs", [False, True])
+    def it_checks_both_summary_evidence_and_concrete_atom_identity(
+        self, crosses_paragraphs: bool
+    ):
+        document = _memory_doc("alpha end", "beta start")
+        if crosses_paragraphs:
+            span = find_one(document, "alpha end")
+            span.crosses_paragraphs = True
+        else:
+            span = _cross_paragraph_target(document)
+            span.crosses_paragraphs = False
+
+        with pytest.raises(BoundaryViolationError, match="one paragraph"):
+            insert_section_after(document, span, heading="wrong", paragraphs=[])
+
+    @pytest.mark.parametrize("invalid_endpoint", ["start", "end"])
+    @pytest.mark.parametrize("operation", ["delete", "replace"])
+    def it_validates_both_range_endpoints_before_protection(
+        self, invalid_endpoint: str, operation: str
+    ):
+        document = _memory_doc("before", "alpha end", "beta start", "after")
+        cross = _cross_paragraph_target(document)
+        start = cross if invalid_endpoint == "start" else "before"
+        end = cross if invalid_endpoint == "end" else "after"
+        set_protection(document, edit="readOnly")
+
+        def mutate(doc):
+            if operation == "delete":
+                return tracked_delete_paragraphs(
+                    doc, start, end_anchor=end, author="Reviewer"
+                )
+            return tracked_replace_paragraphs(
+                doc, start, ["wrong"], end_anchor=end, author="Reviewer"
+            )
+
+        assert_refusal_atomic(document, mutate, BoundaryViolationError)
+
+    def it_keeps_a_live_one_paragraph_span_as_a_valid_target(self):
+        document = _memory_doc("before", "target text", "after")
+        target = find_one(document, "target")
+
+        insert_section_after(document, target, heading="inserted", paragraphs=[])
+
+        assert _texts(document) == ["before", "target text", "inserted", "after"]
+
+    def it_keeps_stale_span_taxonomy_before_protection(self):
+        document = _memory_doc("target text")
+        target = find_one(document, "target")
+        document.paragraphs[0].text = "changed text"
+        set_protection(document, edit="readOnly")
+
+        assert_refusal_atomic(
+            document,
+            lambda doc: insert_section_after(
+                doc, target, heading="wrong", paragraphs=[]
+            ),
+            TargetNotFoundError,
+        )
+
+    def it_keeps_missing_paragraph_taxonomy(self):
+        document = _memory_doc("target text")
+        target = find_one(document, "target")
+        target._atoms[0].paragraph = None  # noqa: SLF001 - defensive same-package shape
+
+        with pytest.raises(TargetNotFoundError, match="not inside a paragraph"):
+            insert_section_after(document, target, heading="wrong", paragraphs=[])
+
+
 class DescribeLiveBlockTargets:
     def it_follows_the_exact_element_across_an_index_shift(self):
         document = _memory_doc("A", "target", "C")
