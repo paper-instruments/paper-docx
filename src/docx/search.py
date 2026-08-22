@@ -361,7 +361,7 @@ class ReplaceResult:
 
 
 @dataclass(frozen=True)
-class _TextAssignment:
+class _TextAssignment:  # pyright: ignore[reportUnusedClass]
     """One preflighted text-only mutation for a replacement plan."""
 
     element: "_Element"
@@ -785,7 +785,7 @@ class Span:
                 " interval has changed"
             )
 
-    def _validate_replaceable(self) -> None:
+    def _validate_replaceable(self, *, validate_bookmarks: bool = True) -> None:
         for atom in self._atoms:
             if atom.is_synthetic:
                 detail = (
@@ -850,7 +850,11 @@ class Span:
                 "span crosses a hyperlink boundary; edit the linked text and"
                 " the surrounding text separately"
             )
-        hollowed = _hollowed_bookmarks(self._atoms, self._end_offset)
+        hollowed = (
+            _hollowed_bookmarks(self._atoms, self._end_offset)
+            if validate_bookmarks
+            else []
+        )
         if hollowed:
             raise UnsupportedStructureError(
                 f"replacing this span would hollow out bookmark(s) {hollowed}"
@@ -868,20 +872,27 @@ class Span:
         tracked: bool = False,
         author: Optional[str] = None,
         date: Optional[dt.datetime] = None,
+        preserve_revision: bool = False,
     ) -> ReplaceResult:
         """Replace this span's text, preserving run formatting.
 
-        Untracked, this edits in place: untouched runs keep their `rPr` byte-identical, the
+        Untracked, this edits in place: untouched runs retain their run properties, the
         replacement takes the start run's formatting, and the span stays usable. Tracked, it
-        emits a minimal `w:del`/`w:ins` pair and CONSUMES the span. Refuses a protected document,
-        a stale or foreign span, a span crossing a field or control boundary, and a tracked
-        no-op.
+        emits a minimal `w:del`/`w:ins` pair and consumes the span.
+
+        `preserve_revision=True` permits a current-view span wholly owned by one existing
+        `w:ins` to be corrected without changing its id, author, date, or accept/reject meaning.
+        Outside revision markup it behaves like an ordinary untracked edit. The result reports
+        the retained insertion in `preserved_revision_ids`; `revision_ids` remains reserved for
+        newly authored revisions. Refuses mixed, nested, moved, stale, protected, field,
+        control, bookmark, hyperlink, and paragraph-boundary structures before mutation.
         """
         return self._replace(
             new_text,
             tracked=tracked,
             author=author,
             date=date,
+            preserve_revision=preserve_revision,
             use_transaction=self._freshness_census is None,
         )
 
@@ -892,6 +903,7 @@ class Span:
         tracked: bool,
         author: Optional[str],
         date: Optional[dt.datetime],
+        preserve_revision: bool,
         use_transaction: bool,
     ) -> ReplaceResult:
         """Implementation shared with the already-transactional batch path.
@@ -899,6 +911,10 @@ class Span:
         `use_transaction` is consumed by replacement plans that need multiple
         assignments; ordinary and tracked paths retain their current behavior.
         """
+        if tracked and preserve_revision:
+            raise ValueError(
+                "tracked=True cannot be combined with preserve_revision=True"
+            )
         if tracked and not author:
             raise ValueError("author is required when tracked=True")
         if tracked:
@@ -923,12 +939,17 @@ class Span:
                     tracked=tracked,
                     author=author,
                     date=date,
+                    preserve_revision=preserve_revision,
                     use_transaction=use_transaction,
                 )
-        self._validate_replaceable()
+        preservation_noop = preserve_revision and new_text == self.text
+        self._validate_replaceable(validate_bookmarks=not preservation_noop)
+        preserved_revision_ids = _preserved_insertion_ids(
+            self, authorize=preserve_revision
+        )
         if not tracked:
             for atom in self._atoms:
-                if atom.in_insert:
+                if atom.in_insert and not preserve_revision:
                     raise UnsupportedStructureError(
                         "span intersects a pending tracked insertion; an"
                         " untracked edit there would silently rewrite text the"
@@ -953,15 +974,31 @@ class Span:
                         " to real content — replace the whole prompt"
                         f" ({prompt!r}) or use docx.controls.set_control_value"
                     )
+        if preserve_revision and new_text == self.text:
+            return ReplaceResult(
+                story=self.story,
+                deleted_text=self.text,
+                inserted_text=new_text,
+                tracked=False,
+                revision_ids=(),
+                preserved_revision_ids=preserved_revision_ids,
+            )
         if tracked:
             result = self._tracked_replace(new_text, author=author, date=date)  # type: ignore[arg-type]
         else:
-            result = self._plain_replace(new_text)
+            result = self._plain_replace(
+                new_text, preserved_revision_ids=preserved_revision_ids
+            )
         for sdt in placeholder_sdts:
             _clear_placeholder_state(sdt)
         return result
 
-    def _plain_replace(self, new_text: str) -> ReplaceResult:
+    def _plain_replace(
+        self,
+        new_text: str,
+        *,
+        preserved_revision_ids: "Tuple[int, ...]" = (),
+    ) -> ReplaceResult:
         first, last = self._atoms[0], self._atoms[-1]
         if first is last:
             text = first.text
@@ -982,6 +1019,7 @@ class Span:
             inserted_text=new_text,
             tracked=False,
             revision_ids=(),
+            preserved_revision_ids=preserved_revision_ids,
         )
         self.text = new_text
         self._end_offset = self._start_offset + len(new_text)
@@ -1197,6 +1235,72 @@ def _enclosing_insertion(element: "_Element") -> "Optional[_Element]":
             return node
         node = node.getparent()
     return None
+
+
+def _revision_ancestors(element: "_Element") -> "Tuple[_Element, ...]":
+    """Run-level revision wrappers containing `element`, nearest first."""
+    revisions: "List[_Element]" = []
+    node = element.getparent()
+    while node is not None:
+        if node.tag in (_INS, _DEL, _MOVE_FROM, _MOVE_TO):
+            revisions.append(node)
+        node = node.getparent()
+    return tuple(revisions)
+
+
+def _preserved_insertion_ids(
+    span: Span, *, authorize: bool
+) -> "Tuple[int, ...]":
+    """Validate and identify the one insertion explicitly kept by `span`."""
+    if not authorize:
+        return ()
+
+    selected_wrappers = [
+        _enclosing_insertion(atom.element)
+        for atom in span._atoms  # pyright: ignore[reportPrivateUsage]
+    ]
+    if all(wrapper is None for wrapper in selected_wrappers):
+        return ()
+    if span._view != "current":  # pyright: ignore[reportPrivateUsage]
+        raise UnsupportedStructureError(
+            "preserve_revision requires a span selected with view='current'"
+        )
+    if any(wrapper is None for wrapper in selected_wrappers):
+        raise UnsupportedStructureError(
+            "span mixes base text and insertion-owned text; preserve one"
+            " existing insertion at a time"
+        )
+    wrapper = selected_wrappers[0]
+    assert wrapper is not None
+    if wrapper.tag != _INS:
+        raise UnsupportedStructureError(
+            "tracked moves cannot be edited in place; resolve the move first"
+        )
+    if any(candidate is not wrapper for candidate in selected_wrappers[1:]):
+        raise UnsupportedStructureError(
+            "span crosses multiple tracked insertion wrappers; preserve one"
+            " existing insertion at a time"
+        )
+    for element in span._atom_sequence:  # pyright: ignore[reportPrivateUsage]
+        # the captured range covers atoms hidden by the current view too, and
+        # a plain replace writes only the SELECTED ones — so every element in
+        # it must be owned by exactly this insertion and nothing else
+        ancestors = _revision_ancestors(element)
+        if len(ancestors) != 1 or ancestors[0] is not wrapper:
+            raise UnsupportedStructureError(
+                "span contains nested or mixed revision history that cannot be"
+                " edited while preserving one insertion"
+            )
+    value = wrapper.get(_W_ID)
+    try:
+        revision_id = int(value) if value is not None else None
+    except ValueError:
+        revision_id = None
+    if revision_id is None:
+        raise UnsupportedStructureError(
+            "the preserved insertion has a missing or non-decimal w:id"
+        )
+    return (revision_id,)
 
 
 def _run_content_after(run: "Optional[_Element]", element: "_Element"):
@@ -1570,16 +1674,22 @@ def replace_all(
     tracked: bool = False,
     author: Optional[str] = None,
     date: Optional[dt.datetime] = None,
+    preserve_revision: bool = False,
 ) -> ReplaceAllResult:
     """Replace every match of `needle` in one pass, and return a `ReplaceAllResult`.
 
     One scan finds all matches, then replacements apply in reverse document order within each
     story, so no pending match shifts. A refusal on one match is recorded in `refused` and the
     rest proceed; a stale span aborts the batch instead, rolling back every replacement already
-    applied. Matches already equal to `new_text` are skipped.
+    applied. Matches already equal to `new_text` are skipped. `preserve_revision` forwards the
+    same existing-insertion contract to every match without adding a transaction per match.
     """
     from docx.errors import PaperRefusal
 
+    if tracked and preserve_revision:
+        raise ValueError(
+            "tracked=True cannot be combined with preserve_revision=True"
+        )
     if tracked and not author:
         raise ValueError("author is required when tracked=True")
     _validate_writable_text(new_text, argument="new_text")
@@ -1625,6 +1735,7 @@ def replace_all(
                                 tracked=tracked,
                                 author=author,
                                 date=date,
+                                preserve_revision=preserve_revision,
                             )
                         )
                     except TargetNotFoundError:
