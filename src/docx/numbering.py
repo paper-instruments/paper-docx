@@ -20,10 +20,10 @@ from docx.opc.constants import RELATIONSHIP_TYPE as RT
 from docx.oxml.ns import qn
 from docx.protection import _refuse_if_protected
 from docx.story import (
-    _build_block,
     _first_choice_children,
     _iter_block_elements,
     _story_elements,
+    _subtree_text,
 )
 
 if TYPE_CHECKING:
@@ -256,22 +256,20 @@ def list_numbering(document: "Document") -> NumberingReport:
                         f"paragraph resolves to undefined numbering level {level}"
                         f" for numId={num_id}; nothing was changed"
                     )
-                block = _build_block(
-                    story,
-                    "paragraph",
-                    index,
+                text = _subtree_text(
                     paragraph,
                     "current",
+                    skip_text_boxes=True,
                     in_sdt=in_sdt,
                     in_txbx=in_txbx,
-                )
+                ).text
                 numbered.append(
                     NumberedParagraph(
                         story=story,
                         index=index,
                         num_id=num_id,
                         level=level,
-                        text=block.text,
+                        text=text,
                         table_cell=_table_cell_address(paragraph),
                     )
                 )

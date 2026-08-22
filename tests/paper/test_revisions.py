@@ -13,6 +13,8 @@ import pytest
 import docx
 from docx.blocks import tracked_delete_paragraphs, tracked_replace_paragraphs
 from docx.errors import UnsupportedStructureError
+from docx.oxml.ns import nsdecls
+from docx.oxml.parser import parse_xml
 from docx.search import find_one
 from docx.story import iter_blocks
 
@@ -61,6 +63,8 @@ class DescribeEnumeration:
     def it_carries_block_anchors(self):
         revision = _doc(TRACKED).revisions[0]
         assert revision.anchor.story == "word/document.xml"
+        assert revision.block_locator is not None
+        assert revision.block_locator.story == revision.story
         assert revision.story == "word/document.xml"
 
     def it_serializes_deterministically(self):
@@ -68,8 +72,36 @@ class DescribeEnumeration:
         payload_2 = json.dumps(_doc(TRACKED).revisions.to_dict())
         assert payload_1 == payload_2
         parsed = json.loads(payload_1)
-        assert parsed["schema"] == "paper_revisions" and parsed["version"] == 3
+        assert parsed["schema"] == "paper_revisions"
+        assert parsed["version"] == 4
         assert parsed["remaining_unsupported"] == {}
+        assert parsed["revisions"][0]["anchor"]
+        assert parsed["revisions"][0]["anchor_role"] == (
+            "legacy_inert_location_evidence"
+        )
+        assert parsed["revisions"][0]["block_locator"]["schema"] == (
+            "paper_block_locator"
+        )
+
+    def it_keeps_story_level_section_changes_outside_block_locator_space(self):
+        document = docx.Document()
+        document.sections[-1]._sectPr.append(  # noqa: SLF001
+            parse_xml(
+                f'<w:sectPrChange {nsdecls("w")} w:id="991" w:author="A">'
+                "<w:sectPr/></w:sectPrChange>"
+            )
+        )
+        revision = next(
+            item
+            for item in document.revisions
+            if item.revision_type == "section_property_change"
+        )
+        assert revision.anchor.index == -1
+        assert revision.block_locator is None
+        assert revision.to_dict()["anchor_role"] == (
+            "legacy_inert_location_evidence"
+        )
+        assert revision.to_dict()["block_locator"] is None
 
 
 class DescribeAcceptReject:

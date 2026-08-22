@@ -34,10 +34,10 @@ from docx.errors import PaperRefusal, UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.story import (
     Anchor,
-    _build_block,
     _iter_block_elements,
     _story_elements,
     _subtree_text,
+    _table_text,
     content_hash,
 )
 
@@ -672,11 +672,19 @@ def _numbering_ids(document: "Document") -> frozenset:
 
 def _story_blocks(story: str, root: "_Element") -> "List[Tuple[str, _Element, str]]":
     blocks = []
-    for kind, index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
-        block = _build_block(
-            story, kind, index, element, "current", in_sdt=in_sdt, in_txbx=in_txbx
+    for kind, _index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
+        text = (
+            _table_text(element, "current")
+            if kind == "table"
+            else _subtree_text(
+                element,
+                "current",
+                skip_text_boxes=True,
+                in_sdt=in_sdt,
+                in_txbx=in_txbx,
+            ).text
         )
-        blocks.append((kind, element, block.text))
+        blocks.append((kind, element, text))
     return blocks
 
 

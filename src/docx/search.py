@@ -4,11 +4,12 @@
 text when requested. Both policies assemble across Word's fragmented runs and
 across paragraph boundaries. The returned |Span| is the pivotal object of the
 editing surface: it maps a visible-text interval back to the concrete `w:t`
-text atoms that hold it, carries a stable block anchor, and is the receiver of
-the safe replace operations (`Span.replace`).
+text atoms that hold it, retains their exact live identity, and is the receiver
+of the safe replace operations (`Span.replace`). Its `Anchor` is inert location
+evidence, not mutation authority.
 
 Search space and block identity are shared with `docx.story` (one walker
-defines both), so a span's anchor always agrees with the outline.
+defines both), so a span's location evidence agrees with the outline.
 """
 
 from __future__ import annotations

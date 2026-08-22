@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from dataclasses import replace
 from pathlib import Path
 from typing import List
 
@@ -16,7 +17,8 @@ import pytest
 
 import docx
 from docx._normalize import normalize_text
-from docx.story import Block, iter_blocks, outline, story_parts
+from docx.oxml.ns import qn
+from docx.story import Block, BlockLocator, iter_blocks, outline, story_parts
 
 from .harness.paths import fixture_path, sidecar_path
 
@@ -74,18 +76,22 @@ class DescribeTrackedViews:
         truth = _ground_truth(TRACKED)["revised_paragraph"]
         block = _blocks(TRACKED, "current")[1]
         assert block.text == truth["visible_text_current"]
-        assert block.in_insert and not block.in_delete
+        assert block.in_insert
+        assert not block.in_delete
 
     def it_shows_the_pre_change_text_in_the_original_view(self):
         truth = _ground_truth(TRACKED)["revised_paragraph"]
         block = _blocks(TRACKED, "original")[1]
         assert block.text == truth["visible_text_original"]
-        assert block.in_delete and not block.in_insert
+        assert block.in_delete
+        assert not block.in_insert
 
     def it_shows_everything_in_the_all_view(self):
         block = _blocks(TRACKED, "all")[1]
-        assert "forty-two" in block.text and "forty-seven" in block.text
-        assert block.in_insert and block.in_delete
+        assert "forty-two" in block.text
+        assert "forty-seven" in block.text
+        assert block.in_insert
+        assert block.in_delete
 
     def it_rejects_unknown_views(self):
         with pytest.raises(ValueError, match="view"):
@@ -231,7 +237,134 @@ class DescribeAnchors:
             normalize_text(block.text).encode("utf-8")
         ).hexdigest()[:8]
         assert block.anchor.content_hash == expected
-        assert block.anchor.story == block.story and block.anchor.index == block.index
+        assert block.anchor.story == block.story
+        assert block.anchor.index == block.index
+
+
+class DescribeLiveBlocksAndLocators:
+    def it_keeps_live_identity_private_and_out_of_serialization(self):
+        document = _doc(MINIMAL)
+        block = next(iter(iter_blocks(document)))
+        assert block._document is document  # noqa: SLF001
+        assert block._element is document.paragraphs[0]._p  # noqa: SLF001
+        assert block._story_root is document.element  # noqa: SLF001
+        payload = json.dumps(block.to_dict())
+        assert "_document" not in payload
+        assert "_element" not in payload
+        assert "memory" not in payload
+
+    def it_round_trips_every_exact_locator_field_without_becoming_live(self):
+        document = _doc(MINIMAL)
+        locator = tuple(iter_blocks(document, view="original"))[1].locator
+        assert locator is not None
+        payload = json.loads(json.dumps(locator.to_dict(), ensure_ascii=False))
+        restored = BlockLocator.from_dict(payload)
+        assert restored == locator
+        assert restored.to_dict() == payload
+        assert not hasattr(restored, "_document")
+
+    @pytest.mark.parametrize(
+        "changes",
+        [
+            lambda locator: {"view": "bogus"},
+            lambda locator: {"position_hint": True},
+            lambda locator: {"paragraph_id": 42},
+            lambda locator: {
+                "evidence": replace(locator.evidence, container_path=[])
+            },
+            lambda locator: {
+                "previous": replace(locator.previous, boundary="end")
+            },
+        ],
+    )
+    def it_refuses_invalid_direct_locator_construction(self, changes):
+        locator = next(iter(iter_blocks(_doc(MINIMAL)))).locator
+        assert locator is not None
+        values = {
+            "story": locator.story,
+            "view": locator.view,
+            "kind": locator.kind,
+            "evidence": locator.evidence,
+            "previous": locator.previous,
+            "next": locator.next,
+            "position_hint": locator.position_hint,
+            "paragraph_id": locator.paragraph_id,
+        }
+        values.update(changes(locator))
+        with pytest.raises(ValueError, match="."):
+            BlockLocator(**values)
+
+    @pytest.mark.parametrize(
+        "mutate",
+        [
+            lambda payload: payload.update(schema="legacy_anchor"),
+            lambda payload: payload.update(version=99),
+            lambda payload: payload.pop("evidence"),
+            lambda payload: payload.update(position_hint=True),
+            lambda payload: payload["context"].update(previous={"boundary": "end"}),
+            lambda payload: payload.update(paragraph_id=42),
+        ],
+    )
+    def it_refuses_malformed_or_unsupported_locator_payloads(self, mutate):
+        locator = next(iter(iter_blocks(_doc(MINIMAL)))).locator
+        assert locator is not None
+        payload = json.loads(json.dumps(locator.to_dict()))
+        mutate(payload)
+        with pytest.raises(ValueError, match="."):
+            BlockLocator.from_dict(payload)
+
+    def it_never_upgrades_a_legacy_anchor_payload(self):
+        anchor = next(iter(iter_blocks(_doc(MINIMAL)))).anchor
+        with pytest.raises(ValueError, match="block locator"):
+            BlockLocator.from_dict(anchor.to_dict())
+
+    def it_records_exact_case_whitespace_punctuation_and_unicode(self):
+        document = docx.Document()
+        document.add_paragraph("Case  — café\u00ad!")
+        locator = next(iter(iter_blocks(document))).locator
+        assert locator is not None
+        assert locator.to_dict()["evidence"]["text"] == "Case  — café\u00ad!"
+
+    def it_keeps_table_cell_topology_beyond_flattened_text(self):
+        first = docx.Document()
+        table = first.add_table(rows=1, cols=2)
+        table.cell(0, 0).text = "A"
+        table.cell(0, 1).text = "B"
+        second = docx.Document()
+        second.add_table(rows=2, cols=1).cell(0, 0).text = "A"
+        second.tables[0].cell(1, 0).text = "B"
+        left = next(b for b in iter_blocks(first) if b.kind == "table")
+        right = next(b for b in iter_blocks(second) if b.kind == "table")
+        assert left.text == right.text == "A\nB"
+        assert left.locator is not None
+        assert right.locator is not None
+        assert left.locator.evidence != right.locator.evidence
+
+    def it_records_nested_table_topology_recursively(self):
+        document = docx.Document()
+        outer = document.add_table(rows=1, cols=1)
+        nested = outer.cell(0, 0).add_table(rows=1, cols=1)
+        nested.cell(0, 0).text = "nested"
+        locator = next(b for b in iter_blocks(document) if b.kind == "table").locator
+        assert locator is not None
+        table_evidence = locator.to_dict()["evidence"]["table"]
+        nested_evidence = table_evidence["rows"][0][0]["nested_tables"]
+        assert nested_evidence[0]["rows"][0][0]["text"] == "nested"
+        assert BlockLocator.from_dict(locator.to_dict()) == locator
+
+    def it_observes_but_does_not_generate_word_paragraph_ids(self):
+        document = docx.Document()
+        plain = document.add_paragraph("plain")._p
+        identified = document.add_paragraph("identified")._p
+        identified.set(qn("w14:paraId"), "1234ABCD")
+        before = document.element.xml
+        blocks = tuple(iter_blocks(document))
+        assert blocks[0].locator is not None
+        assert blocks[0].locator.paragraph_id is None
+        assert blocks[1].locator is not None
+        assert blocks[1].locator.paragraph_id == "1234ABCD"
+        assert document.element.xml == before
+        assert plain.get(qn("w14:paraId")) is None
 
 
 class DescribeInspectionDeterminism:
@@ -250,6 +383,15 @@ class DescribeInspectionDeterminism:
             "outline JSON shape drifted from the golden; if deliberate, update"
             " tests/paper/golden/outline-minimal.json in the same reviewed commit"
         )
+
+    def it_marks_inert_anchor_and_portable_locator_data_separately(self):
+        payload = outline(_doc(MINIMAL)).to_dict()
+        assert payload["version"] == 3
+        assert payload["blocks"][0]["anchor"]
+        assert payload["blocks"][0]["anchor_role"] == (
+            "legacy_inert_location_evidence"
+        )
+        assert payload["blocks"][0]["locator"]["schema"] == "paper_block_locator"
 
 
 class DescribeBlindRegionCounts:

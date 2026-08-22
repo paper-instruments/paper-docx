@@ -25,8 +25,18 @@ Traversal rules:
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import (
+    TYPE_CHECKING,
+    AbstractSet,
+    ClassVar,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+    cast,
+)
 
 from docx import _textatoms
 from docx._guard import check_install
@@ -118,18 +128,18 @@ def _story_sort_key(name: str) -> Tuple[int, str]:
 
 @dataclass(frozen=True)
 class Anchor:
-    """Stable block address: story part + index + content hash.
+    """Legacy, inert location evidence: story part + index + content hash.
 
-    The hash (first 8 hex chars of SHA-256 over the block's normalized text)
-    is what detects staleness — a raw index alone is forbidden as a public
-    anchor because it goes stale across edits.
+    ``Anchor`` remains serializable for historical search and revision result
+    data. It is not a mutation-capable block target; reacquire a live |Block|
+    or |Span|, or persist a ``BlockLocator`` instead.
     """
 
     story: str
     index: int
     content_hash: str
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> "Dict[str, object]":
         return {"story": self.story, "index": self.index, "content_hash": self.content_hash}
 
 
@@ -140,7 +150,7 @@ class TableShape:
     has_merges: bool
     has_nested_table: bool
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> "Dict[str, object]":
         return {
             "rows": self.rows,
             "columns": self.columns,
@@ -149,9 +159,370 @@ class TableShape:
         }
 
 
+def _strict_keys(
+    value: object, expected: "AbstractSet[str]", *, label: str
+) -> "Dict[str, object]":
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must contain exactly {sorted(expected)!r}")
+    data = cast("Dict[object, object]", value)
+    if not all(isinstance(key, str) for key in data) or set(data) != expected:
+        raise ValueError(f"{label} must contain exactly {sorted(expected)!r}")
+    return cast("Dict[str, object]", data)
+
+
+def _strict_str(value: object, *, label: str) -> str:
+    if not isinstance(value, str):
+        raise ValueError(f"{label} must be a string")
+    return value
+
+
+def _strict_optional_str(value: object, *, label: str) -> Optional[str]:
+    if value is not None and not isinstance(value, str):
+        raise ValueError(f"{label} must be a string or null")
+    return value
+
+
+def _strict_bool(value: object, *, label: str) -> bool:
+    if not isinstance(value, bool):
+        raise ValueError(f"{label} must be a boolean")
+    return value
+
+
+def _strict_int(value: object, *, label: str) -> int:
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{label} must be an integer")
+    return value
+
+
+@dataclass(frozen=True)
+class _TableCellEvidence:
+    text: str
+    grid_span: int
+    vertical_merge: Optional[str]
+    nested_tables: "Tuple[_TableEvidence, ...]"
+
+    def to_dict(self) -> "Dict[str, object]":
+        return {
+            "text": self.text,
+            "grid_span": self.grid_span,
+            "vertical_merge": self.vertical_merge,
+            "nested_tables": [table.to_dict() for table in self.nested_tables],
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> "_TableCellEvidence":
+        data = _strict_keys(
+            value,
+            {"text", "grid_span", "vertical_merge", "nested_tables"},
+            label="table cell evidence",
+        )
+        nested = data["nested_tables"]
+        if not isinstance(nested, list):
+            raise ValueError("table cell nested_tables must be a list")
+        nested_items = cast("List[object]", nested)
+        grid_span = _strict_int(data["grid_span"], label="table cell grid_span")
+        if grid_span < 1:
+            raise ValueError("table cell grid_span must be >= 1")
+        return cls(
+            text=_strict_str(data["text"], label="table cell text"),
+            grid_span=grid_span,
+            vertical_merge=_strict_optional_str(
+                data["vertical_merge"], label="table cell vertical_merge"
+            ),
+            nested_tables=tuple(
+                _TableEvidence.from_dict(item) for item in nested_items
+            ),
+        )
+
+
+@dataclass(frozen=True)
+class _TableEvidence:
+    shape: TableShape
+    rows: "Tuple[Tuple[_TableCellEvidence, ...], ...]"
+
+    def to_dict(self) -> "Dict[str, object]":
+        return {
+            "shape": self.shape.to_dict(),
+            "rows": [[cell.to_dict() for cell in row] for row in self.rows],
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> "_TableEvidence":
+        data = _strict_keys(value, {"shape", "rows"}, label="table evidence")
+        shape_data = _strict_keys(
+            data["shape"],
+            {"rows", "columns", "has_merges", "has_nested_table"},
+            label="table shape",
+        )
+        shape = TableShape(
+            rows=_strict_int(shape_data["rows"], label="table shape rows"),
+            columns=_strict_int(shape_data["columns"], label="table shape columns"),
+            has_merges=_strict_bool(
+                shape_data["has_merges"], label="table shape has_merges"
+            ),
+            has_nested_table=_strict_bool(
+                shape_data["has_nested_table"],
+                label="table shape has_nested_table",
+            ),
+        )
+        rows = data["rows"]
+        if not isinstance(rows, list):
+            raise ValueError("table evidence rows must be a list of lists")
+        row_items = cast("List[object]", rows)
+        if not all(isinstance(row, list) for row in row_items):
+            raise ValueError("table evidence rows must be a list of lists")
+        parsed_rows = tuple(
+            tuple(
+                _TableCellEvidence.from_dict(cell)
+                for cell in cast("List[object]", row)
+            )
+            for row in row_items
+        )
+        if shape.rows != len(parsed_rows) or shape.columns != max(
+            (len(row) for row in parsed_rows), default=0
+        ):
+            raise ValueError("table evidence rows do not match its declared shape")
+        return cls(shape=shape, rows=parsed_rows)
+
+
+@dataclass(frozen=True)
+class _BlockEvidence:
+    kind: str
+    text: str
+    style_id: Optional[str]
+    in_content_control: bool
+    in_text_box: bool
+    container_path: "Tuple[Tuple[str, Optional[str]], ...]"
+    table: Optional[_TableEvidence]
+
+    def to_dict(self) -> "Dict[str, object]":
+        return {
+            "kind": self.kind,
+            "text": self.text,
+            "style_id": self.style_id,
+            "in_content_control": self.in_content_control,
+            "in_text_box": self.in_text_box,
+            "container_path": [
+                {"tag": tag, "id": identifier}
+                for tag, identifier in self.container_path
+            ],
+            "table": self.table.to_dict() if self.table else None,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> "_BlockEvidence":
+        data = _strict_keys(
+            value,
+            {
+                "kind",
+                "text",
+                "style_id",
+                "in_content_control",
+                "in_text_box",
+                "container_path",
+                "table",
+            },
+            label="block evidence",
+        )
+        kind = _strict_str(data["kind"], label="block evidence kind")
+        if kind not in ("paragraph", "table"):
+            raise ValueError("block evidence kind must be 'paragraph' or 'table'")
+        path_data = data["container_path"]
+        if not isinstance(path_data, list) or not path_data:
+            raise ValueError("block evidence container_path must be a non-empty list")
+        path: "List[Tuple[str, Optional[str]]]" = []
+        for item in cast("List[object]", path_data):
+            entry = _strict_keys(item, {"tag", "id"}, label="container path item")
+            path.append(
+                (
+                    _strict_str(entry["tag"], label="container path tag"),
+                    _strict_optional_str(entry["id"], label="container path id"),
+                )
+            )
+        table_data = data["table"]
+        table = None if table_data is None else _TableEvidence.from_dict(table_data)
+        if (kind == "table") != (table is not None):
+            raise ValueError("block evidence table details must match its kind")
+        style_id = _strict_optional_str(data["style_id"], label="block style_id")
+        if kind == "table" and style_id is not None:
+            raise ValueError("table block evidence cannot carry a paragraph style_id")
+        return cls(
+            kind=kind,
+            text=_strict_str(data["text"], label="block evidence text"),
+            style_id=style_id,
+            in_content_control=_strict_bool(
+                data["in_content_control"], label="block in_content_control"
+            ),
+            in_text_box=_strict_bool(data["in_text_box"], label="block in_text_box"),
+            container_path=tuple(path),
+            table=table,
+        )
+
+
+@dataclass(frozen=True)
+class _NeighborEvidence:
+    boundary: Optional[str] = None
+    block: Optional[_BlockEvidence] = None
+
+    def to_dict(self) -> "Dict[str, object]":
+        if self.boundary is not None:
+            return {"boundary": self.boundary}
+        assert self.block is not None
+        return {"block": self.block.to_dict()}
+
+    @classmethod
+    def from_dict(cls, value: object, *, side: str) -> "_NeighborEvidence":
+        if not isinstance(value, dict):
+            raise ValueError(f"{side} context must be an object")
+        data = cast("Dict[object, object]", value)
+        if set(data) == {"boundary"}:
+            boundary = _strict_str(data["boundary"], label=f"{side} boundary")
+            expected = "start" if side == "previous" else "end"
+            if boundary != expected:
+                raise ValueError(f"{side} boundary must be {expected!r}")
+            return cls(boundary=boundary)
+        if set(data) == {"block"}:
+            return cls(block=_BlockEvidence.from_dict(data["block"]))
+        raise ValueError(
+            f"{side} context must contain exactly 'boundary' or exactly 'block'"
+        )
+
+
+@dataclass(frozen=True)
+class BlockLocator:
+    """Versioned, portable block evidence resolved fail-closed.
+
+    A locator is inert data until an operation evaluates all of its exact
+    story/view/kind/content/topology and adjacent-block evidence against a
+    document. Its positional hint and optional Word paragraph ID never select
+    a candidate on their own.
+    """
+
+    SCHEMA: ClassVar[str] = "paper_block_locator"
+    VERSION: ClassVar[int] = 1
+
+    story: str
+    view: str
+    kind: str
+    evidence: _BlockEvidence
+    previous: _NeighborEvidence
+    next: _NeighborEvidence
+    position_hint: int
+    paragraph_id: Optional[str]
+
+    def __post_init__(self) -> None:
+        _strict_str(self.story, label="block locator story")
+        view = _strict_str(self.view, label="block locator view")
+        if view not in VIEWS:
+            raise ValueError(f"block locator view must be one of {VIEWS!r}")
+        kind = _strict_str(self.kind, label="block locator kind")
+        if kind not in ("paragraph", "table"):
+            raise ValueError("block locator kind must be 'paragraph' or 'table'")
+        evidence_value = cast("object", self.evidence)
+        previous_value = cast("object", self.previous)
+        next_value = cast("object", self.next)
+        if not isinstance(evidence_value, _BlockEvidence):
+            raise ValueError("block locator evidence must contain block evidence")
+        if evidence_value.kind != kind:
+            raise ValueError("block locator kind contradicts its evidence")
+        if not isinstance(previous_value, _NeighborEvidence):
+            raise ValueError("block locator previous context is invalid")
+        if not isinstance(next_value, _NeighborEvidence):
+            raise ValueError("block locator next context is invalid")
+        try:
+            evidence = _BlockEvidence.from_dict(evidence_value.to_dict())
+            previous = _NeighborEvidence.from_dict(
+                previous_value.to_dict(), side="previous"
+            )
+            next_evidence = _NeighborEvidence.from_dict(
+                next_value.to_dict(), side="next"
+            )
+        except (AttributeError, AssertionError, TypeError) as exc:
+            raise ValueError("block locator contains malformed evidence") from exc
+        if (
+            evidence != evidence_value
+            or previous != previous_value
+            or next_evidence != next_value
+        ):
+            raise ValueError("block locator evidence must use canonical field types")
+        position_hint = _strict_int(
+            self.position_hint, label="block locator position_hint"
+        )
+        if position_hint < 0:
+            raise ValueError("block locator position_hint must be >= 0")
+        paragraph_id = _strict_optional_str(
+            self.paragraph_id, label="block locator paragraph_id"
+        )
+        if kind == "table" and paragraph_id is not None:
+            raise ValueError("table block locators cannot carry a paragraph_id")
+
+    def to_dict(self) -> "Dict[str, object]":
+        return {
+            "schema": self.SCHEMA,
+            "version": self.VERSION,
+            "story": self.story,
+            "view": self.view,
+            "kind": self.kind,
+            "evidence": self.evidence.to_dict(),
+            "context": {
+                "previous": self.previous.to_dict(),
+                "next": self.next.to_dict(),
+            },
+            "position_hint": self.position_hint,
+            "paragraph_id": self.paragraph_id,
+        }
+
+    @classmethod
+    def from_dict(cls, value: object) -> "BlockLocator":
+        data = _strict_keys(
+            value,
+            {
+                "schema",
+                "version",
+                "story",
+                "view",
+                "kind",
+                "evidence",
+                "context",
+                "position_hint",
+                "paragraph_id",
+            },
+            label="block locator",
+        )
+        if data["schema"] != cls.SCHEMA:
+            raise ValueError(f"block locator schema must be {cls.SCHEMA!r}")
+        if _strict_int(data["version"], label="block locator version") != cls.VERSION:
+            raise ValueError(f"unsupported block locator version {data['version']!r}")
+        story = _strict_str(data["story"], label="block locator story")
+        view = _strict_str(data["view"], label="block locator view")
+        kind = _strict_str(data["kind"], label="block locator kind")
+        evidence = _BlockEvidence.from_dict(data["evidence"])
+        context = _strict_keys(
+            data["context"], {"previous", "next"}, label="block locator context"
+        )
+        position_hint = _strict_int(
+            data["position_hint"], label="block locator position_hint"
+        )
+        paragraph_id = _strict_optional_str(
+            data["paragraph_id"], label="block locator paragraph_id"
+        )
+        return cls(
+            story=story,
+            view=view,
+            kind=kind,
+            evidence=evidence,
+            previous=_NeighborEvidence.from_dict(
+                context["previous"], side="previous"
+            ),
+            next=_NeighborEvidence.from_dict(context["next"], side="next"),
+            position_hint=position_hint,
+            paragraph_id=paragraph_id,
+        )
+
+
 @dataclass(frozen=True)
 class Block:
-    """One block-level item (paragraph or table) somewhere in the document."""
+    """One live, owner-bound paragraph or table observed during traversal."""
 
     story: str
     kind: str  # "paragraph" | "table"
@@ -165,13 +536,23 @@ class Block:
     in_text_box: bool
     has_field: bool
     table: Optional[TableShape]
+    locator: Optional[BlockLocator] = None
+    _document: "Optional[Document]" = field(default=None, repr=False, compare=False)
+    _element: "Optional[_Element]" = field(default=None, repr=False, compare=False)
+    _story_root: "Optional[_Element]" = field(default=None, repr=False, compare=False)
+    _parent: "Optional[_Element]" = field(default=None, repr=False, compare=False)
+    _container_elements: "Tuple[_Element, ...]" = field(
+        default=(), repr=False, compare=False
+    )
+    _view: str = field(default="current", repr=False, compare=False)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> "Dict[str, object]":
         return {
             "story": self.story,
             "kind": self.kind,
             "index": self.index,
             "anchor": self.anchor.to_dict(),
+            "anchor_role": "legacy_inert_location_evidence",
             "text": self.text,
             "style_id": self.style_id,
             "in_insert": self.in_insert,
@@ -180,6 +561,7 @@ class Block:
             "in_text_box": self.in_text_box,
             "has_field": self.has_field,
             "table": self.table.to_dict() if self.table else None,
+            "locator": self.locator.to_dict() if self.locator else None,
         }
 
 
@@ -191,11 +573,10 @@ class Outline:
     blocks: Tuple[Block, ...]
     blind_region_counts: Dict[str, int]
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> "Dict[str, object]":
         return {
             "schema": "paper_outline",
-            "version": 2,  # v2: moves/format_changes/fields + confession keys,
-            #     per-block has_field
+            "version": 3,  # v3: inert Anchor evidence + exact BlockLocator data
             "story_parts": list(self.story_parts),
             "blind_region_counts": dict(sorted(self.blind_region_counts.items())),
             "blocks": [block.to_dict() for block in self.blocks],
@@ -472,23 +853,91 @@ def _count_fldchar_delta(element: "_Element") -> int:
     return delta
 
 
-def _build_block(
-    story: str,
+def _container_elements(element: "_Element", root: "_Element") -> "Tuple[_Element, ...]":
+    elements: "List[_Element]" = []
+    current = element.getparent()
+    while current is not None:
+        elements.append(current)
+        if current is root:
+            return tuple(elements)
+        current = current.getparent()
+    return tuple(elements)
+
+
+def _container_path(
+    element: "_Element", root: "_Element"
+) -> "Tuple[Tuple[str, Optional[str]], ...]":
+    identifying_tags = {
+        qn("w:footnote"),
+        qn("w:endnote"),
+        qn("w:comment"),
+        qn("w:sdt"),
+    }
+    return tuple(
+        (
+            str(container.tag),
+            container.get(qn("w:id")) if container.tag in identifying_tags else None,
+        )
+        for container in _container_elements(element, root)
+    )
+
+
+def _nested_tables(cell: "_Element") -> "Tuple[_Element, ...]":
+    return tuple(
+        element
+        for kind, _index, element, _in_sdt, _in_txbx in _walk_container(
+            cell, [0], in_sdt=False, in_txbx=False
+        )
+        if kind == "table"
+    )
+
+
+def _table_evidence(table: "_Element", view: str) -> _TableEvidence:
+    rows: "List[Tuple[_TableCellEvidence, ...]]" = []
+    for row in table.findall(qn("w:tr")):
+        cells: "List[_TableCellEvidence]" = []
+        for cell in row.findall(qn("w:tc")):
+            tc_pr = cell.find(qn("w:tcPr"))
+            grid_span = tc_pr.find(qn("w:gridSpan")) if tc_pr is not None else None
+            vertical_merge = tc_pr.find(qn("w:vMerge")) if tc_pr is not None else None
+            cells.append(
+                _TableCellEvidence(
+                    text=_subtree_text(cell, view, skip_text_boxes=False).text,
+                    grid_span=(
+                        int(grid_span.get(qn("w:val")) or 1)
+                        if grid_span is not None
+                        else 1
+                    ),
+                    vertical_merge=(
+                        vertical_merge.get(qn("w:val")) or "continue"
+                        if vertical_merge is not None
+                        else None
+                    ),
+                    nested_tables=tuple(
+                        _table_evidence(nested, view) for nested in _nested_tables(cell)
+                    ),
+                )
+            )
+        rows.append(tuple(cells))
+    return _TableEvidence(shape=_table_shape(table), rows=tuple(rows))
+
+
+def _block_snapshot(
     kind: str,
-    index: int,
     element: "_Element",
     view: str,
+    root: "_Element",
     *,
     in_sdt: bool,
     in_txbx: bool,
-    in_open_field: bool = False,
-) -> Block:
+) -> "Tuple[str, Optional[str], Optional[TableShape], _TextVisitor, _BlockEvidence]":
     if kind == "table":
         visitor = _subtree_text(element, view, skip_text_boxes=False,
                                 in_sdt=in_sdt, in_txbx=in_txbx)
         text = _table_text(element, view)
         style_id = None
         table = _table_shape(element)
+        table_evidence = _table_evidence(element, view)
     else:
         visitor = _subtree_text(element, view, skip_text_boxes=True,
                                 in_sdt=in_sdt, in_txbx=in_txbx)
@@ -496,22 +945,115 @@ def _build_block(
         style_values = element.xpath(_P_STYLE_XPATH)
         style_id = str(style_values[0]) if style_values else None
         table = None
-    return Block(
-        story=story,
+        table_evidence = None
+    evidence = _BlockEvidence(
         kind=kind,
-        index=index,
-        anchor=Anchor(story=story, index=index, content_hash=content_hash(text)),
         text=text,
         style_id=style_id,
-        in_insert=visitor.in_insert,
-        in_delete=visitor.in_delete,
         in_content_control=in_sdt or visitor.in_content_control,
         in_text_box=in_txbx or visitor.in_text_box,
-        # a block BETWEEN a field's begin and end (TOC entry paragraphs) is
-        # field content even though neither marker lives in it
-        has_field=visitor.has_field or in_open_field,
-        table=table,
+        container_path=_container_path(element, root),
+        table=table_evidence,
     )
+    return text, style_id, table, visitor, evidence
+
+
+@dataclass(frozen=True)
+class _BlockRecord:
+    kind: str
+    index: int
+    element: "_Element"
+    text: str
+    style_id: Optional[str]
+    table: Optional[TableShape]
+    visitor: _TextVisitor
+    evidence: _BlockEvidence
+    in_open_field: bool
+
+
+def _build_story_blocks(
+    document: "Document", story: str, root: "_Element", view: str
+) -> "Tuple[Block, ...]":
+    """Canonical live-block and locator-evidence builder for one story."""
+    records: "List[_BlockRecord]" = []
+    open_field_depth = 0
+    for kind, index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
+        text, style_id, table, visitor, evidence = _block_snapshot(
+            kind, element, view, root, in_sdt=in_sdt, in_txbx=in_txbx
+        )
+        records.append(
+            _BlockRecord(
+                kind=kind,
+                index=index,
+                element=element,
+                text=text,
+                style_id=style_id,
+                table=table,
+                visitor=visitor,
+                evidence=evidence,
+                in_open_field=open_field_depth > 0,
+            )
+        )
+        open_field_depth = max(0, open_field_depth + _count_fldchar_delta(element))
+
+    blocks: "List[Block]" = []
+    for position, record in enumerate(records):
+        previous = (
+            _NeighborEvidence(boundary="start")
+            if position == 0
+            else _NeighborEvidence(block=records[position - 1].evidence)
+        )
+        next_evidence = (
+            _NeighborEvidence(boundary="end")
+            if position == len(records) - 1
+            else _NeighborEvidence(block=records[position + 1].evidence)
+        )
+        paragraph_id = (
+            record.element.get(qn("w14:paraId"))
+            if record.kind == "paragraph"
+            else None
+        )
+        locator = BlockLocator(
+            story=story,
+            view=view,
+            kind=record.kind,
+            evidence=record.evidence,
+            previous=previous,
+            next=next_evidence,
+            position_hint=record.index,
+            paragraph_id=paragraph_id,
+        )
+        containers = _container_elements(record.element, root)
+        blocks.append(
+            Block(
+                story=story,
+                kind=record.kind,
+                index=record.index,
+                anchor=Anchor(
+                    story=story,
+                    index=record.index,
+                    content_hash=content_hash(record.text),
+                ),
+                text=record.text,
+                style_id=record.style_id,
+                in_insert=record.visitor.in_insert,
+                in_delete=record.visitor.in_delete,
+                in_content_control=record.evidence.in_content_control,
+                in_text_box=record.evidence.in_text_box,
+                # a block BETWEEN a field's begin and end (TOC entry paragraphs) is
+                # field content even though neither marker lives in it
+                has_field=record.visitor.has_field or record.in_open_field,
+                table=record.table,
+                locator=locator,
+                _document=document,
+                _element=record.element,
+                _story_root=root,
+                _parent=record.element.getparent(),
+                _container_elements=containers,
+                _view=view,
+            )
+        )
+    return tuple(blocks)
 
 
 def _table_text(table: "_Element", view: str) -> str:
@@ -604,14 +1146,7 @@ def iter_blocks(document: "Document", *, view: str = "current") -> Iterator[Bloc
     if view not in VIEWS:
         raise ValueError(f"view must be one of {VIEWS}, got {view!r}")
     for story, root in _story_elements(document):
-        open_field_depth = 0
-        for kind, index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
-            yield _build_block(
-                story, kind, index, element, view,
-                in_sdt=in_sdt, in_txbx=in_txbx,
-                in_open_field=open_field_depth > 0,
-            )
-            open_field_depth = max(0, open_field_depth + _count_fldchar_delta(element))
+        yield from _build_story_blocks(document, story, root, view)
 
 
 def outline(document: "Document", *, view: str = "current") -> Outline:

@@ -44,6 +44,33 @@ at once (``"all"``). |Outline| reports what it could not read.
     o.blind_region_counts                    # {"tracked_insertions": 2, "text_boxes": 1, ...}
     [b.text for b in o.blocks if b.in_text_box]
 
+Blocks in an outline are live targets bound to the exact document element.
+Use them directly during the current in-memory editing session. Persist the
+separate versioned locator when a later process must attempt fail-closed
+reacquisition:
+
+::
+
+    from docx.story import BlockLocator, iter_blocks
+
+    block = next(b for b in iter_blocks(doc) if b.text == "Termination")
+    locator_payload = block.locator.to_dict()       # JSON-safe exact evidence
+    locator = BlockLocator.from_dict(locator_payload)
+    insert_section_after(doc, locator, heading="Notice", paragraphs=[])
+
+A live block follows its exact element across harmless index shifts. A locator
+is portable but not guaranteed durable: its recorded view, exact content and
+table topology, structural facts, and immediate neighbors must identify one
+candidate. Zero candidates are stale and repeated complete evidence is
+ambiguous; reacquire after adjacent edits or third-party rewrites. Its index is
+only a hint, and an existing Word paragraph ID is only supporting evidence.
+
+The older ``block.anchor`` and ``revision.anchor`` values remain inert result
+locations for compatibility. They cannot authorize paragraph mutation. Use a
+live block/span, an exact string, ``block.locator``, or a block-contained
+``revision.block_locator`` instead. Section-level revisions have no block
+locator.
+
 :ref:`docx.search <paper_search_api>` matches literal visible text by default,
 across the multiple runs Word fragments text into. Callers can explicitly opt
 into normalization of smart quotes, dashes, exotic spaces, whitespace and

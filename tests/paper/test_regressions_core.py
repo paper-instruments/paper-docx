@@ -7,7 +7,6 @@ import datetime as dt
 from pathlib import Path
 
 import pytest
-from lxml import etree
 
 import docx
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
@@ -57,11 +56,12 @@ class DescribeKernelComparison:
             ("a", b'<!DOCTYPE x [<!ENTITY e "SAFE">]><x>&e;</x>'),
             ("b", b'<!DOCTYPE x [<!ENTITY e "EVIL">]><x>&e;</x>'),
         ):
-            with zipfile.ZipFile(source) as zin:
-                with zipfile.ZipFile(tmp_path / f"{label}.docx", "w") as zout:
-                    for name in zin.namelist():
-                        zout.writestr(name, zin.read(name))
-                    zout.writestr("word/custom.xml", payload)
+            with zipfile.ZipFile(source) as zin, zipfile.ZipFile(
+                tmp_path / f"{label}.docx", "w"
+            ) as zout:
+                for name in zin.namelist():
+                    zout.writestr(name, zin.read(name))
+                zout.writestr("word/custom.xml", payload)
         diff = diff_package(tmp_path / "a.docx", tmp_path / "b.docx")
         assert "word/custom.xml" in diff.semantic_changed_parts()
 
@@ -306,7 +306,8 @@ class DescribeTrackedReplaceRunIntegrity:
         result = find_one(document, "carries a footnote").replace(
             "bears a footnote", tracked=True, author="Carol QA", date=FROZEN
         )
-        assert result.tracked and result.revision_ids
+        assert result.tracked
+        assert result.revision_ids
 
 
 class DescribeParagraphMarkResolution:
@@ -347,7 +348,6 @@ class DescribeParagraphMarkResolution:
         """Accepting the deletion of a cell's only paragraph must leave a
         (possibly empty) paragraph — a block-less w:tc is schema-invalid."""
         from docx.blocks import tracked_delete_paragraphs
-        from docx.search import find_one as find
 
         document = _doc()
         table = document.add_table(rows=1, cols=1)
@@ -361,17 +361,30 @@ class DescribeParagraphMarkResolution:
 
 
 class DescribeRevisionAnchors:
-    def it_carries_block_anchors_usable_for_block_operations(self):
+    def it_carries_block_locators_usable_for_block_operations(self):
         from docx.blocks import insert_section_after
 
         document = _doc("generated/feature-isolated/tracked-ins-del.docx")
         revision = next(
             r for r in document.revisions if not r.is_paragraph_mark
         )
+        assert revision.block_locator is not None
         insert_section_after(
-            document, revision.anchor, heading="After Revision", paragraphs=[]
+            document, revision.block_locator, heading="After Revision", paragraphs=[]
         )
         assert "After Revision" in [b.text for b in iter_blocks(document)]
+
+    def it_refuses_a_revisions_legacy_location_evidence(self):
+        from docx.blocks import insert_section_after
+
+        document = _doc("generated/feature-isolated/tracked-ins-del.docx")
+        revision = next(r for r in document.revisions if not r.is_paragraph_mark)
+        before = document.element.xml
+        with pytest.raises(UnsupportedStructureError, match="inert location evidence"):
+            insert_section_after(
+                document, revision.anchor, heading="Wrong", paragraphs=[]
+            )
+        assert document.element.xml == before
 
 
 class DescribeTableGuardsAndFormatting:

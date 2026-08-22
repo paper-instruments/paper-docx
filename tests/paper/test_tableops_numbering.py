@@ -14,7 +14,12 @@ from docx.errors import (
     TargetNotFoundError,
     UnsupportedStructureError,
 )
-from docx.numbering import apply_list_style, apply_numbering, list_numbering
+from docx.numbering import (
+    apply_list_style,
+    apply_numbering,
+    ensure_bullet_definition,
+    list_numbering,
+)
 from docx.tableops import delete_row, find_table, insert_row_after, update_cell
 
 from .harness.contract import assert_refusal_atomic, save_and_reopen
@@ -169,7 +174,8 @@ class DescribeUpdateCell:
     def it_supports_tracked_updates(self, tmp_path: Path):
         document, table = _doc_with_simple_table()
         result = update_cell(table, 0, 0, "cell 99", tracked=True, author="Carol QA", date=FROZEN)
-        assert result.tracked and result.revision_ids
+        assert result.tracked
+        assert result.revision_ids
         reopened = save_and_reopen(document, tmp_path / "out.docx")
         assert reopened.tables[0].cell(0, 0).text.startswith("cell")
         revisions = reopened.revisions
@@ -309,6 +315,17 @@ class DescribeListNumbering:
         assert payload["version"] == 2
         assert json.dumps(payload) == json.dumps(list_numbering(_doc(NUMBERING)).to_dict())
 
+    def it_reports_numbered_table_cell_paragraphs_without_top_level_block_identity(self):
+        document = docx.Document()
+        table = document.add_table(rows=1, cols=1)
+        paragraph = table.cell(0, 0).paragraphs[0]
+        paragraph.add_run("numbered cell")
+        num_id = ensure_bullet_definition(document)
+        apply_numbering(paragraph, num_id=num_id)
+        (reported,) = list_numbering(document).numbered_paragraphs
+        assert reported.text == "numbered cell"
+        assert reported.table_cell == (0, 0, 0)
+
 
 class DescribeApplyNumbering:
     def it_applies_an_existing_definition(self, tmp_path: Path):
@@ -340,15 +357,16 @@ class DescribeApplyNumbering:
         import re
 
         stripped = tmp_path / "no-numbering.docx"
-        with zipfile.ZipFile(fixture_path(MINIMAL)) as zin:
-            with zipfile.ZipFile(stripped, "w") as zout:
-                for name in zin.namelist():
-                    if "numbering" in name:
-                        continue
-                    blob = zin.read(name)
-                    if name == "word/_rels/document.xml.rels":
-                        blob = re.sub(rb"<Relationship [^>]*numbering[^>]*/>", b"", blob)
-                    zout.writestr(name, blob)
+        with zipfile.ZipFile(fixture_path(MINIMAL)) as zin, zipfile.ZipFile(
+            stripped, "w"
+        ) as zout:
+            for name in zin.namelist():
+                if "numbering" in name:
+                    continue
+                blob = zin.read(name)
+                if name == "word/_rels/document.xml.rels":
+                    blob = re.sub(rb"<Relationship [^>]*numbering[^>]*/>", b"", blob)
+                zout.writestr(name, blob)
         document = docx.Document(str(stripped))
         paragraph = document.add_paragraph("target")
         with pytest.raises(TargetNotFoundError, match="does not exist"):
