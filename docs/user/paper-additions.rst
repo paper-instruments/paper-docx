@@ -62,7 +62,7 @@ Edit one document
 
 ::
 
-    from docx.search import find_one
+    from docx.search import find_one, find_text
 
     span = find_one(doc, "rate: $75–100/hr")
     span.replace("rate: $85-110/hr")             # formatting intact
@@ -84,6 +84,24 @@ resulting live span to the mutation API:
 The normalized span is an intentional mutation target, not an inspection-only
 result. APIs outside ``docx.search`` do not repeat the ``match`` keyword; use
 this explicit preselection workflow when they need normalized targeting.
+
+When repeated text needs context, use ``near`` as a unique-nearest selector:
+
+::
+
+    candidates = find_text(doc, "Payment terms", near="Renewal")
+    # inspection stays complete and proximity-ranked, including ties
+
+    span = find_one(doc, "Payment terms", near="Renewal")
+    # authoritative only when context exists and one candidate is nearest
+
+``find_one`` raises |TargetNotFoundError| when the context is absent from the
+same story, view, or match policy, even if the target itself is unique. It
+raises |AmbiguousTargetError| when multiple candidates share the minimum
+distance. Refine ``near`` or narrow ``story`` in that case; document order is
+only presentation order, not identity. ``nth`` remains available as an
+explicit positional selector when no context is supplied, but cannot be
+combined with ``near``.
 
 Choose the option that matches the edit's preservation contract:
 
@@ -189,7 +207,7 @@ hierarchy, so a caller can tell a *safe refusal* apart from a bug:
     try:
         find_one(doc, "the")                     # matches everywhere
     except AmbiguousTargetError:
-        ...                                      # disambiguate: nth=, near=, story=
+        ...                                      # use context, story scope, or inspect candidates
     except PaperRefusal:
         ...                                      # any safe refusal, distinct from bugs
 
