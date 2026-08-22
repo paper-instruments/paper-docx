@@ -91,7 +91,7 @@ APPROVED_SIGNATURES = [
         "docx.search",
         "Span.replace",
         "(self, new_text, *, tracked=False, author=None, date=None,"
-        " preserve_revision=False)",
+        " preserve_structure=False, preserve_revision=False)",
     ),
     # -- block operations ----------------------------------------------------
     (
@@ -138,7 +138,8 @@ APPROVED_SIGNATURES = [
         "docx.search",
         "replace_all",
         "(document, needle, new_text, *, story=None, view='current',"
-        " tracked=False, author=None, date=None, preserve_revision=False)",
+        " tracked=False, author=None, date=None, preserve_structure=False,"
+        " preserve_revision=False)",
     ),
     (
         "docx.search",
