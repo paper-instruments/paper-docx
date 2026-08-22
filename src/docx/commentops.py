@@ -680,11 +680,13 @@ def reply(
     initials: Optional[str] = None,
     date: Optional[dt.datetime] = None,
 ) -> "Comment":
-    """Add a threaded reply to `comment`, anchored to the same range; returns the new `Comment`.
+    """Add a threaded reply to `comment` and return the new `Comment`.
 
-    Creates `commentsExtended` on first use, since Word keeps threading outside `w:comment`.
-    Refuses a protected document, a stale or foreign comment, and a comments part that is
-    missing or ambiguous.
+    The reply gets its own comment-range start, range end, and reference around the same
+    selected text. Its `w15:paraIdParent` names the parent's final comment-body paragraph; the
+    reply does not reuse the parent's marker id. Creates `commentsExtended` on first use, since
+    Word keeps threading outside `w:comment`. Refuses a protected document, a stale or foreign
+    comment, and a comments part that is missing or ambiguous.
     """
     if not author:
         raise ValueError("author is required")
