@@ -15,9 +15,9 @@ Safety contract
 The fork exists to prevent **silent corruption**: a document that opens fine
 and is quietly wrong after direct XML edits. Every added operation either does
 exactly what it claims or refuses atomically. Mutating operations validate fully
-before they touch anything, so a raised |PaperRefusal| leaves the document
-byte-for-byte unchanged in memory and on disk. Callers can handle the refusal
-separately from programmer errors.
+before they touch anything or restore the captured state on failure, so a
+raised |PaperRefusal| leaves the document and supplied live proxies unchanged.
+Callers can handle the refusal separately from programmer errors.
 
 .. contents::
    :local:
@@ -118,13 +118,27 @@ rather than silently editing a locked template. The gate follows Word's per-mode
 rules, so a comments-only restriction still permits commenting.
 
 
+Save a bounded edit
+-------------------
+
+Use ordinary ``Document.save()`` for a new document or when whole-package
+normalization is intentional. For a bounded edit to an existing file,
+``patch_save(original_path, document, out_path)`` is the recommended path when
+unrelated package-part bytes must remain untouched. It restores original bytes
+for semantically unchanged XML parts; it does not preserve byte ranges inside
+an XML part that the edit changed or the original ZIP container bytes after a
+non-no-op save.
+
+Use ``diff_package(original_path, out_path)`` as package-level evidence of the
+changed-part budget, and reopen ``out_path`` as evidence that the saved document
+remains semantically readable.
+
+
 Compose across documents
 ------------------------
 
-:ref:`docx.package <paper_package_api>` is the byte-preserving package layer.
-``patch_save`` writes a compare-based narrow save. Parts you did not
-semantically change keep their original bytes, so a file-level diff shows your
-edit and nothing else. ``compare`` generates a native tracked-change redline
+:ref:`docx.package <paper_package_api>` is the package inspection and compare
+layer. ``compare`` generates a native tracked-change redline
 transforming one document into another. Accepting it yields the revised
 document; rejecting it yields the original. Before returning, ``compare``
 proves both outcomes on private copies. Style, relationship, or package-part
