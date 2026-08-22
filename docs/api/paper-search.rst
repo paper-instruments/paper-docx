@@ -12,6 +12,25 @@ the matched text; untouched runs keep their formatting byte-for-byte. With
 ``tracked=True``, it emits a minimal genuine ``w:ins``/``w:del`` redline.
 |Span| ``.comment`` anchors a comment to exactly the span.
 
+Correct an existing insertion
+-----------------------------
+
+``span.replace(text, preserve_revision=True)`` corrects a current-view span
+wholly owned by one existing ``w:ins`` without reauthoring or restamping it.
+The text remains attributed to the insertion's recorded author and date, the
+wrapper ID is retained, and accepting or rejecting the revision keeps its
+original meaning. Outside revision markup the option behaves like an ordinary
+untracked edit, so ``replace_all`` can update base text and insertion-owned
+matches in one batch.
+
+The operation refuses deletions, tracked moves, mixed base/insertion text,
+multiple or nested revision wrappers, and non-current views. ``tracked=True``
+cannot be combined with ``preserve_revision=True``. A fully preflighted no-op
+changes nothing and leaves the span reusable. |ReplaceResult|
+``preserved_revision_ids`` reports the existing insertion actually retained;
+``revision_ids`` continues to report only newly authored revisions. Direct and
+batch serialized results retain their schema discriminators and earlier keys.
+
 .. currentmodule:: docx.search
 
 
