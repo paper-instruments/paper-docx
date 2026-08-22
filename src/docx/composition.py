@@ -160,21 +160,36 @@ def insert_blocks_from(
     end_anchor=None,
     count: int = 1,
     styles: str = "match_by_name",
+    include_start: bool = True,
+    include_end: bool = True,
 ) -> CompositionReport:
     """Copy a block range from `source` after `anchor`, and return a `CompositionReport`.
 
     Reconciles styles, numbering, media and bookmarks so the copy keeps its appearance.
-    `start_anchor`/`end_anchor` address SOURCE body paragraphs. Refuses a protected
-    destination, an anchor that is missing or ambiguous, and source content this package
-    cannot carry over: revisions, comments, OLE objects, EMF/WMF images.
+    `start_anchor`/`end_anchor` address SOURCE top-level body blocks. Both endpoints are included
+    by default; setting either inclusion flag false excludes that endpoint's block. With no
+    `end_anchor`, `count` blocks are copied beginning at the start block or the following block
+    when `include_start=False`. With an `end_anchor`, `count` is validated but does not limit the
+    range. `include_end=False` without an end anchor raises `ValueError`. Refuses an empty
+    adjusted range, a protected destination, an anchor that is missing or ambiguous, and source
+    content this package cannot carry over: revisions, comments, OLE objects, EMF/WMF images.
     """
     _validate_styles_mode(styles)
+    if end_anchor is None and not include_end:
+        raise ValueError("include_end=False requires end_anchor")
     require_anchor_owner(source, start_anchor, argument="start_anchor")
     if end_anchor is not None:
         require_anchor_owner(source, end_anchor, argument="end_anchor")
     require_anchor_owner(document, anchor)
     _refuse_if_protected(document, "compose content into the document")
-    range_elements = _source_range(source, start_anchor, end_anchor, count)
+    range_elements = _source_range(
+        source,
+        start_anchor,
+        end_anchor,
+        count,
+        include_start=include_start,
+        include_end=include_end,
+    )
     with rollback_on_error(document):
         return _compose(document, source, range_elements, anchor, styles)
 
@@ -321,7 +336,15 @@ def _defined_header_footer(hf):
     return None
 
 
-def _source_range(source: "Document", start_anchor, end_anchor, count: int) -> "List[_Element]":
+def _source_range(
+    source: "Document",
+    start_anchor,
+    end_anchor,
+    count: int,
+    *,
+    include_start: bool,
+    include_end: bool,
+) -> "List[_Element]":
     from docx.blocks import _locate_anchor_paragraph
 
     if count < 1:
@@ -351,7 +374,15 @@ def _source_range(source: "Document", start_anchor, end_anchor, count: int) -> "
         end_index = blocks.index(end_block)
         if end_index < start_index:
             raise TargetNotFoundError("end anchor precedes start anchor in the source body")
+        if not include_start:
+            start_index += 1
+        if not include_end:
+            end_index -= 1
+        if start_index > end_index:
+            raise TargetNotFoundError("the adjusted source range is empty")
     else:
+        if not include_start:
+            start_index += 1
         end_index = start_index + count - 1
         if end_index >= len(blocks):
             raise TargetNotFoundError(

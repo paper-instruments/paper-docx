@@ -7,7 +7,7 @@ import pytest
 import docx
 from docx.composition import insert_blocks_from
 from docx.enum.style import WD_STYLE_TYPE
-from docx.errors import UnsupportedStructureError
+from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.numbering import apply_numbering, ensure_decimal_definition
 from docx.opc.constants import CONTENT_TYPE as CT
 from docx.opc.constants import RELATIONSHIP_TYPE as RT
@@ -59,6 +59,125 @@ def _append_style_reference(paragraph, tag: str, style_id: str) -> None:
     reference = OxmlElement(tag)
     reference.set(qn("w:val"), style_id)
     properties.append(reference)
+
+
+def _clear_body(document) -> None:
+    body = document.element.body
+    for child in list(body):
+        if child.tag != qn("w:sectPr"):
+            body.remove(child)
+
+
+def _insert_before_section_properties(document, element) -> None:
+    section_properties = document.element.body.find(qn("w:sectPr"))
+    if section_properties is None:
+        document.element.body.append(element)
+    else:
+        section_properties.addprevious(element)
+
+
+def _top_level_control(text: str):
+    control = OxmlElement("w:sdt")
+    content = OxmlElement("w:sdtContent")
+    paragraph = OxmlElement("w:p")
+    run = OxmlElement("w:r")
+    run.add_t(text)
+    paragraph.append(run)
+    content.append(paragraph)
+    control.append(content)
+    return control
+
+
+@pytest.mark.parametrize(
+    ("start", "end", "include_start", "include_end", "count"),
+    [
+        pytest.param("Block A", "Block A", False, True, 1, id="same-exclude-start"),
+        pytest.param("Block A", "Block A", True, False, 1, id="same-exclude-end"),
+        pytest.param("Block A", "Block B", False, False, 1, id="adjacent-exclude-both"),
+        pytest.param("Block B", "Block A", True, True, 1, id="reversed"),
+        pytest.param("Block C", None, False, True, 1, id="adjusted-out-of-bounds"),
+    ],
+)
+def it_refuses_empty_reversed_and_out_of_bounds_adjusted_ranges_atomically(
+    start: str,
+    end: str | None,
+    include_start: bool,
+    include_end: bool,
+    count: int,
+) -> None:
+    source = docx.Document()
+    for text in ("Block A", "Block B", "Block C"):
+        source.add_paragraph(text)
+    destination = docx.Document()
+    destination.add_paragraph("Destination anchor")
+    before = _package_state(destination)
+
+    with pytest.raises(TargetNotFoundError):
+        insert_blocks_from(
+            destination,
+            source,
+            start,
+            end_anchor=end,
+            count=count,
+            include_start=include_start,
+            include_end=include_end,
+            anchor="Destination anchor",
+        )
+
+    assert _package_state(destination) == before
+
+
+@pytest.mark.parametrize("include_control", [True, False])
+def it_treats_a_top_level_control_as_one_includable_endpoint(
+    include_control: bool,
+) -> None:
+    source = docx.Document()
+    _clear_body(source)
+    source.add_paragraph("Selected paragraph")
+    _insert_before_section_properties(source, _top_level_control("Control boundary"))
+    destination = docx.Document()
+    destination.add_paragraph("Destination anchor")
+
+    report = insert_blocks_from(
+        destination,
+        source,
+        "Selected paragraph",
+        end_anchor="Control boundary",
+        include_end=include_control,
+        anchor="Destination anchor",
+    )
+
+    copied_controls = destination.element.body.findall(qn("w:sdt"))
+    assert report.inserted_blocks == (2 if include_control else 1)
+    assert len(copied_controls) == int(include_control)
+
+
+def it_preserves_unsupported_physical_children_inside_an_adjusted_slice() -> None:
+    source = docx.Document()
+    _clear_body(source)
+    source.add_paragraph("Start boundary")
+    first = source.add_paragraph("First selected block")
+    source.add_paragraph("Second selected block")
+    source.add_paragraph("End boundary")
+    unsupported = OxmlElement("w:customXml")
+    unsupported.append(OxmlElement("w:p"))
+    first._p.addnext(unsupported)
+    destination = docx.Document()
+    destination.add_paragraph("Destination anchor")
+    before = _package_state(destination)
+
+    with pytest.raises(UnsupportedStructureError, match="customXml"):
+        insert_blocks_from(
+            destination,
+            source,
+            "Start boundary",
+            end_anchor="End boundary",
+            include_start=False,
+            include_end=False,
+            anchor="Destination anchor",
+        )
+
+    assert _package_state(destination) == before
 
 
 def it_refuses_a_chart_relationship_before_copying_stale_rids() -> None:

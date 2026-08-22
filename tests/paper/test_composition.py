@@ -11,7 +11,6 @@ import docx
 from docx.composition import append_document, insert_blocks_from
 from docx.errors import (
     DocumentProtectedError,
-    TargetNotFoundError,
     UnsupportedStructureError,
 )
 
@@ -40,6 +39,13 @@ def _source_with_styles():
     source.add_paragraph("Indemnity: the supplier shall hold harmless.")
     source.add_heading("Payment Terms", level=2)
     source.add_paragraph("Payment falls due after thirty days.")
+    return source
+
+
+def _source_with_named_blocks():
+    source = docx.Document()
+    for name in ("Block A", "Block B", "Block C", "Block D"):
+        source.add_paragraph(name)
     return source
 
 
@@ -79,6 +85,117 @@ class DescribeInsertBlocksFrom:
             anchor="Second body paragraph",
         )
         assert report.inserted_blocks == 4
+        out = _saved(destination, tmp_path / "inclusive-defaults.docx")
+        reopened = docx.Document(str(out))
+        expected = [
+            "Clause Library",
+            "Indemnity: the supplier shall hold harmless.",
+            "Payment Terms",
+            "Payment falls due after thirty days.",
+        ]
+        assert [p.text for p in reopened.paragraphs if p.text in expected] == expected
+
+    @pytest.mark.parametrize(
+        ("include_start", "include_end", "expected"),
+        [
+            pytest.param(
+                True,
+                True,
+                ["Block A", "Block B", "Block C", "Block D"],
+                id="both",
+            ),
+            pytest.param(
+                False,
+                True,
+                ["Block B", "Block C", "Block D"],
+                id="exclude-start",
+            ),
+            pytest.param(
+                True,
+                False,
+                ["Block A", "Block B", "Block C"],
+                id="exclude-end",
+            ),
+            pytest.param(
+                False,
+                False,
+                ["Block B", "Block C"],
+                id="exclude-both",
+            ),
+        ],
+    )
+    def it_controls_endpoint_inclusion_and_ignores_count_with_an_end_anchor(
+        self,
+        include_start: bool,
+        include_end: bool,
+        expected: list[str],
+        tmp_path: Path,
+    ):
+        source = _source_with_named_blocks()
+        destination = docx.Document()
+        destination.add_paragraph("Destination anchor")
+
+        report = insert_blocks_from(
+            destination,
+            source,
+            "Block A",
+            end_anchor="Block D",
+            count=99,
+            include_start=include_start,
+            include_end=include_end,
+            anchor="Destination anchor",
+        )
+
+        assert report.inserted_blocks == len(expected)
+        out = _saved(destination, tmp_path / "endpoint-range.docx")
+        reopened = docx.Document(str(out))
+        assert [
+            paragraph.text
+            for paragraph in reopened.paragraphs
+            if paragraph.text.startswith("Block")
+        ] == expected
+
+    def it_excludes_the_count_based_start_without_consuming_the_count(
+        self, tmp_path: Path
+    ):
+        source = _source_with_named_blocks()
+        destination = docx.Document()
+        destination.add_paragraph("Destination anchor")
+
+        report = insert_blocks_from(
+            destination,
+            source,
+            "Block A",
+            count=2,
+            include_start=False,
+            anchor="Destination anchor",
+        )
+
+        assert report.inserted_blocks == 2
+        out = _saved(destination, tmp_path / "count-range.docx")
+        reopened = docx.Document(str(out))
+        assert [
+            paragraph.text
+            for paragraph in reopened.paragraphs
+            if paragraph.text.startswith("Block")
+        ] == ["Block B", "Block C"]
+
+    def it_requires_an_end_anchor_to_exclude_the_end(self):
+        source = _source_with_named_blocks()
+        destination = docx.Document()
+        destination.add_paragraph("Destination anchor")
+        before = destination.element.xml
+
+        with pytest.raises(ValueError, match="requires end_anchor"):
+            insert_blocks_from(
+                destination,
+                source,
+                "Block A",
+                include_end=False,
+                anchor="Destination anchor",
+            )
+
+        assert destination.element.xml == before
 
     def it_imports_missing_style_definitions(self, tmp_path: Path):
         from docx.enum.style import WD_STYLE_TYPE
@@ -132,7 +249,8 @@ class DescribeInsertBlocksFrom:
         assert copied.style.name == "HouseTerm (imported)"
         assert copied.style.font.size.pt == 16
         original = {s.name for s in reopened.styles}
-        assert "HouseTerm" in original and "HouseTerm (imported)" in original
+        assert "HouseTerm" in original
+        assert "HouseTerm (imported)" in original
 
     def it_remaps_numbering_to_fresh_restarted_definitions(self, tmp_path: Path):
         from docx.numbering import apply_numbering, ensure_decimal_definition, list_numbering
@@ -181,8 +299,8 @@ class DescribeInsertBlocksFrom:
 
     def it_recreates_external_hyperlinks(self, tmp_path: Path):
         from docx.opc.constants import RELATIONSHIP_TYPE as RT
-        from docx.oxml.parser import parse_xml
         from docx.oxml.ns import nsdecls
+        from docx.oxml.parser import parse_xml
 
         source = docx.Document()
         paragraph = source.add_paragraph("Visit ")
@@ -209,8 +327,8 @@ class DescribeInsertBlocksFrom:
         assert "https://paper.example/terms" in external
 
     def it_renames_colliding_bookmarks_and_remaps_refs(self, tmp_path: Path):
-        from docx.oxml.parser import parse_xml
         from docx.oxml.ns import nsdecls
+        from docx.oxml.parser import parse_xml
 
         w = nsdecls("w")
         source = docx.Document()
@@ -281,8 +399,8 @@ class DescribeInsertBlocksFrom:
             )
 
     def it_refuses_embedded_objects(self):
-        from docx.oxml.parser import parse_xml
         from docx.oxml.ns import nsdecls
+        from docx.oxml.parser import parse_xml
 
         source = docx.Document()
         p = source.add_paragraph("Embedded thing: ")
