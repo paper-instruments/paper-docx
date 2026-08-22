@@ -189,7 +189,7 @@ APPROVED_SIGNATURES = [
         "docx.composition",
         "insert_blocks_from",
         "(document, source, start_anchor, *, anchor, end_anchor=None,"
-        " count=1, styles='match_by_name')",
+        " count=1, styles='match_by_name', include_start=True, include_end=True)",
     ),
     (
         "docx.composition",
