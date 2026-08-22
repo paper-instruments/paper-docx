@@ -7,10 +7,11 @@ Release v\ |version| (:ref:`Installation <install>`)
 *paper-docx* is an agent-first, strict-superset hard fork of `python-docx`_ for
 safely inspecting, editing, reviewing, and composing existing Word documents.
 The distribution is renamed; the import name stays ``docx``, so existing code
-keeps working unchanged. It adds complete document traversal, normalized
-find-and-replace, native tracked changes and their resolution, compare,
-and cross-document composition. Every added operation either does exactly what
-it claims or refuses atomically instead of risking silent corruption. See
+keeps working unchanged. It adds complete document traversal, exact-by-default
+find-and-replace with normalized opt-in, native tracked changes and their
+resolution, compare, and cross-document composition. Every added operation
+either does exactly what it claims or refuses atomically instead of risking
+silent corruption. See
 :ref:`Paper additions <paper_additions>` for the added APIs.
 
 .. _python-docx: https://github.com/python-openxml/python-docx

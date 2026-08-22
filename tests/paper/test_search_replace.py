@@ -71,18 +71,90 @@ class DescribeNormalizeText:
 
 class DescribeFindText:
     def it_matches_ascii_needles_against_smart_characters_across_runs(self):
-        span = find_one(_doc(FRAGMENTED), '$75-100/hr on a "full-service" basis')
+        span = find_one(
+            _doc(FRAGMENTED),
+            '$75-100/hr on a "full-service" basis',
+            match="normalized",
+        )
         assert span.text == RATE_TEXT  # raw text captured verbatim, 8 runs deep
+        assert span.match_policy == "normalized"
         assert not span.crosses_paragraphs
 
     def it_matches_through_no_break_spaces(self):
-        span = find_one(_doc(FRAGMENTED), "Net 30 payment terms")
+        span = find_one(
+            _doc(FRAGMENTED), "Net 30 payment terms", match="normalized"
+        )
         assert "Net 30" in span.text  # captured text preserves the raw NBSP
 
     def it_matches_across_a_paragraph_boundary(self):
-        spans = find_text(_doc(MINIMAL), "ordinary text. Second body paragraph")
+        spans = find_text(
+            _doc(MINIMAL), "ordinary text.\nSecond body paragraph"
+        )
         assert len(spans) == 1
+        assert spans[0].text == "ordinary text.\nSecond body paragraph"
         assert spans[0].crosses_paragraphs
+
+    @pytest.mark.parametrize(
+        ("document_text", "needle"),
+        [
+            ("Company", "company"),
+            ("“quoted”", '"quoted"'),
+            ("Net Income – Adjusted", "Net Income - Adjusted"),
+            ("Net 30", "Net 30"),
+            ("alpha   beta", "alpha beta"),
+            ("soft­hyphen", "softhyphen"),
+        ],
+    )
+    def it_keeps_literal_distinctions_by_default(
+        self, document_text: str, needle: str
+    ):
+        document = docx.Document()
+        document.add_paragraph(document_text)
+        assert find_text(document, needle) == []
+        assert find_one(document, needle, match="normalized").text == document_text
+
+    def it_matches_exact_text_through_run_fragmentation(self):
+        span = find_one(_doc(FRAGMENTED), RATE_TEXT)
+        assert span.text == RATE_TEXT
+        assert span.match_policy == "exact"
+
+    def it_treats_exact_whitespace_literally(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("alpha ")
+        paragraph.add_run(" beta")
+        assert find_one(document, "  ").text == "  "
+        assert find_text(document, " ")
+        assert find_text(document, "   ") == []
+        assert find_text(document, " ", match="normalized") == []
+
+    def it_uses_only_newline_as_the_exact_paragraph_separator(self):
+        document = _doc(MINIMAL)
+        assert find_text(document, "ordinary text.\nSecond body paragraph")
+        assert find_text(document, "ordinary text. Second body paragraph") == []
+        assert find_text(document, "ordinary text.\rSecond body paragraph") == []
+        assert find_text(document, "\n") == []
+        assert find_text(document, "\nSecond body paragraph") == []
+        assert find_text(document, "") == []
+        assert find_text(document, "\N{SOFT HYPHEN}", match="normalized") == []
+        assert find_text(
+            document,
+            "ordinary text. Second body paragraph",
+            match="normalized",
+        )
+
+        line_break_document = docx.Document()
+        paragraph = line_break_document.add_paragraph()
+        paragraph.add_run("alpha").add_break()
+        paragraph.add_run("beta")
+        line_break = find_one(line_break_document, "\n")
+        assert line_break.text == "\n"
+        assert not line_break.crosses_paragraphs
+
+    @pytest.mark.parametrize("api", [find_text, find_one])
+    def it_rejects_an_invalid_policy_before_scanning(self, api):
+        with pytest.raises(ValueError, match="match must be one of"):
+            api(object(), "target", match="fuzzy")
 
     def it_returns_matches_in_document_order_with_nth_selection(self):
         document = _doc(TRACKED)
@@ -108,6 +180,27 @@ class DescribeFindText:
         texts = [b.text for b in iter_blocks(document)]
         assert "Gauntlet numbered item one" in texts
         assert "Gauntlet renumbered item two" in texts
+
+    def it_applies_the_same_policy_to_target_and_near(self):
+        document = docx.Document()
+        document.add_paragraph("Near")
+        document.add_paragraph("target")
+        document.add_paragraph("near")
+        document.add_paragraph("target")
+        exact = find_text(document, "target", near="near", nth=1)[0]
+        normalized = find_text(
+            document, "TARGET", near="NEAR", nth=1, match="normalized"
+        )[0]
+        assert exact.anchor.index == 3
+        assert normalized.anchor.index == 1
+
+    def it_keeps_raw_order_separate_from_normalized_match_offsets(self):
+        document = docx.Document()
+        document.add_paragraph("Straße x Straße")
+        spans = find_text(document, "strasse", match="normalized")
+        assert [span.text for span in spans] == ["Straße", "Straße"]
+        assert [span._raw_start for span in spans] == [0, 9]
+        assert [span._match_start for span in spans] == [0, 10]
 
     def it_honors_the_view_parameter(self):
         document = _doc(TRACKED)
@@ -141,7 +234,7 @@ class DescribeFindOne:
 class DescribePlainReplace:
     def it_preserves_untouched_run_formatting(self, tmp_path: Path):
         document = _doc(FRAGMENTED)
-        find_one(document, "$75-100/hr").replace("$85–110/hr")
+        find_one(document, "$75–100/hr").replace("$85–110/hr")
         reopened = save_and_reopen(document, tmp_path / "out.docx")
         paragraph = reopened.paragraphs[0]
         assert paragraph.text == (
@@ -155,7 +248,7 @@ class DescribePlainReplace:
 
     def it_survives_a_bold_to_italic_formatting_transition(self, tmp_path: Path):
         document = _doc(FRAGMENTED)
-        find_one(document, '100/hr on a "full-').replace("90/hr on any “full-")
+        find_one(document, "100/hr on a “full-").replace("90/hr on any “full-")
         reopened = save_and_reopen(document, tmp_path / "out.docx")
         assert "90/hr on any “full-service”" in reopened.paragraphs[0].text
 
@@ -207,7 +300,7 @@ class DescribePlainReplace:
         working = tmp_path / "work.docx"
         shutil.copyfile(source, working)
         document = docx.Document(str(working))
-        find_one(document, "$75-100/hr").replace("$95–120/hr")
+        find_one(document, "$75–100/hr").replace("$95–120/hr")
         out = tmp_path / "out.docx"
         docx.package.patch_save(working, document, out)
         assert_changed_parts(working, out, {"word/document.xml"})
@@ -461,7 +554,7 @@ class DescribePreservationPolicies:
         working = tmp_path / "work.docx"
         shutil.copyfile(source, working)
         document = docx.Document(str(working))
-        find_one(document, "$75-100/hr").replace(
+        find_one(document, "$75–100/hr").replace(
             "$85–110/hr", preserve_structure=True
         )
         out = tmp_path / "out.docx"
@@ -495,7 +588,7 @@ class DescribeReplaceRefusals:
 
     def it_refuses_cross_paragraph_spans(self):
         document = _doc(MINIMAL)
-        span = find_one(document, "ordinary text. Second body paragraph")
+        span = find_one(document, "ordinary text.\nSecond body paragraph")
         with pytest.raises(BoundaryViolationError, match="paragraph boundary"):
             span.replace("anything")
 
@@ -528,7 +621,7 @@ class DescribeTrackedReplace:
     def it_marks_only_the_minimal_changed_span(self, tmp_path: Path):
         """The redline marks `75-10 -> 85-11`, not the sentence (pinned)."""
         document = _doc(FRAGMENTED)
-        result = find_one(document, "$75-100/hr").replace(
+        result = find_one(document, "$75–100/hr").replace(
             "$85–110/hr", tracked=True, author="Carol QA", date=FROZEN
         )
         assert result.deleted_text == "75–10"
@@ -541,7 +634,7 @@ class DescribeTrackedReplace:
 
     def it_keeps_deleted_text_in_delText_never_live_wt(self, tmp_path: Path):
         document = _doc(FRAGMENTED)
-        find_one(document, "$75-100/hr").replace(
+        find_one(document, "$75–100/hr").replace(
             "$85–110/hr", tracked=True, author="Carol QA", date=FROZEN
         )
         reopened = save_and_reopen(document, tmp_path / "out.docx")
@@ -577,7 +670,7 @@ class DescribeTrackedReplace:
 
     def it_preserves_run_formatting_on_both_sides(self, tmp_path: Path):
         document = _doc(FRAGMENTED)
-        find_one(document, "$75-100/hr").replace(
+        find_one(document, "$75–100/hr").replace(
             "$85–110/hr", tracked=True, author="Carol QA", date=FROZEN
         )
         reopened = save_and_reopen(document, tmp_path / "out.docx")
@@ -605,7 +698,7 @@ class DescribeTrackedReplace:
 
     def it_refuses_cross_paragraph_tracked_targets(self):
         document = _doc(MINIMAL)
-        span = find_one(document, "ordinary text. Second body paragraph")
+        span = find_one(document, "ordinary text.\nSecond body paragraph")
         with pytest.raises(BoundaryViolationError):
             span.replace("anything", tracked=True, author="Carol QA")
 
@@ -616,7 +709,7 @@ class DescribeTrackedReplace:
         working = tmp_path / "work.docx"
         shutil.copyfile(source, working)
         document = docx.Document(str(working))
-        find_one(document, "$75-100/hr").replace(
+        find_one(document, "$75–100/hr").replace(
             "$85–110/hr", tracked=True, author="Carol QA", date=FROZEN
         )
         out = tmp_path / "out.docx"
@@ -629,7 +722,7 @@ class DescribeTrackedReplace:
         from .harness.lo import assert_libreoffice_opens
 
         document = _doc(FRAGMENTED)
-        find_one(document, "$75-100/hr").replace(
+        find_one(document, "$75–100/hr").replace(
             "$85–110/hr", tracked=True, author="Carol QA", date=FROZEN
         )
         out = tmp_path / "out.docx"

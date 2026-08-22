@@ -1448,5 +1448,6 @@ def _paragraph_span(ctx: _Ctx, paragraph: "_Element", start: int, end: int):
         _atoms=list(span_atoms),
         _start_offset=start_offset,
         _end_offset=end_offset + 1,
-        _norm_start=0,
+        _raw_start=0,
+        _match_start=0,
     )

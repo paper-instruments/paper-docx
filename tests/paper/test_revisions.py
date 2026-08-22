@@ -113,13 +113,13 @@ class DescribeTrackedEditAlgebra:
 
     def it_makes_accepted_span_replace_equal_plain_replace(self, tmp_path: Path):
         tracked_doc = _doc(FRAGMENTED)
-        find_one(tracked_doc, "$75-100/hr").replace(
+        find_one(tracked_doc, "$75–100/hr").replace(
             "$85–110/hr", tracked=True, author="Carol QA", date=FROZEN
         )
         tracked_doc.revisions.accept_all()
 
         plain_doc = _doc(FRAGMENTED)
-        find_one(plain_doc, "$75-100/hr").replace("$85–110/hr")
+        find_one(plain_doc, "$75–100/hr").replace("$85–110/hr")
 
         tracked_out = save_and_reopen(tracked_doc, tmp_path / "tracked.docx")
         plain_out = save_and_reopen(plain_doc, tmp_path / "plain.docx")
@@ -128,7 +128,7 @@ class DescribeTrackedEditAlgebra:
     def it_makes_rejected_span_replace_equal_the_original(self, tmp_path: Path):
         document = _doc(FRAGMENTED)
         pristine_texts = _texts(document)
-        find_one(document, "$75-100/hr").replace(
+        find_one(document, "$75–100/hr").replace(
             "$85–110/hr", tracked=True, author="Carol QA", date=FROZEN
         )
         document.revisions.reject_all()

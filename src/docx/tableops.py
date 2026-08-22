@@ -303,7 +303,8 @@ def update_cell(
         _atoms=atoms,
         _start_offset=0,
         _end_offset=len(atoms[-1].text),
-        _norm_start=0,
+        _raw_start=0,
+        _match_start=0,
     )
     return span.replace(new_text, tracked=tracked, author=author, date=date)
 

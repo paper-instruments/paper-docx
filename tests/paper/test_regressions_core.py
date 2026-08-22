@@ -73,7 +73,26 @@ class DescribeCasefoldExpansion:
         assert find_one(document, "Straße").text == "Straße"
         # matches AFTER the expansion point must stay aligned
         assert find_one(document, "Haus").text == "Haus"
-        assert find_one(document, "strasse").text == "Straße"  # casefold equal
+        assert find_one(document, "strasse", match="normalized").text == "Straße"
+
+    def it_does_not_select_part_of_an_expanding_casefold(self):
+        document = docx.Document()
+        document.add_paragraph("aßb")
+        assert find_text(document, "s", match="normalized") == []
+        assert find_text(document, "as", match="normalized") == []
+        assert find_text(document, "sb", match="normalized") == []
+
+        overlapping = docx.Document()
+        overlapping.add_paragraph("sß")
+        assert find_one(overlapping, "ss", match="normalized").text == "ß"
+
+    def it_does_not_use_part_of_an_expanding_casefold_as_near_context(self):
+        document = docx.Document()
+        document.add_paragraph("target")
+        document.add_paragraph("target")
+        document.add_paragraph("ß")
+        matches = find_text(document, "target", near="s", match="normalized")
+        assert [span.anchor.index for span in matches] == [0, 1]
 
 
 class DescribeTabAndBreakMatching:
@@ -83,7 +102,7 @@ class DescribeTabAndBreakMatching:
         paragraph.add_run("alpha")
         paragraph.add_run().add_tab()
         paragraph.add_run("beta")
-        span = find_one(document, "alpha beta")  # tab normalizes to a space
+        span = find_one(document, "alpha beta", match="normalized")
         with pytest.raises(UnsupportedStructureError, match="tab or line break"):
             span.replace("gamma delta")
 

@@ -4,12 +4,37 @@
 Find and replace
 ================
 
-*paper-docx addition.* Match normalized text across run fragmentation.
-``find_text`` and ``find_one`` locate visible text the way a person quotes it,
-normalizing smart quotes, dashes, exotic spaces, and case. They return a |Span|
-that maps the match back to its concrete text nodes. |Span| ``.replace`` covers
-five replacement intents; |Span| ``.comment`` anchors a comment to exactly the
-span.
+*paper-docx addition.* Match visible text across run fragmentation.
+``find_text`` and ``find_one`` use literal exact matching by default. They
+return a |Span| that maps the match back to its concrete text nodes. |Span|
+``.replace`` covers five replacement intents; |Span| ``.comment`` anchors a
+comment to exactly the span.
+
+Choose a matching policy
+------------------------
+
+Exact matching is the mutation-safe default for ``find_text``, ``find_one``,
+and ``replace_all``. It compares Unicode codepoints literally, including case,
+punctuation, and whitespace. Ordinary Word run boundaries do not insert text,
+so an exact match can cross any number of runs in one paragraph. A paragraph
+boundary is represented in raw search text by exactly one ``"\n"``; a space or
+``"\r"`` does not substitute for it. A candidate consisting only of a paragraph
+separator cannot form a live span because that separator does not belong to a
+text atom. An inline Word line break is itself a visible text atom and also has
+the exact representation ``"\n"``.
+
+Pass ``match="normalized"`` when the caller intentionally wants the previous
+convenience behavior. Normalized matching case-folds, maps smart quotes and
+dashes to their ASCII forms, maps exotic spaces and tabs to spaces, collapses
+whitespace runs, and removes soft hyphens. It still returns the exact document
+characters in ``Span.text`` and the resulting live span remains a valid
+mutation target. The selected policy applies to both ``needle`` and ``near``.
+
+Search-produced spans expose that evidence as ``Span.match_policy``
+(``"exact"`` or ``"normalized"``). Spans derived from already-known live
+offsets have no search policy and report ``None``. Empty needles never match;
+exact whitespace is literal searchable content, while normalized input that
+folds to only whitespace does not match.
 
 Choose a replacement policy
 ---------------------------
@@ -71,7 +96,8 @@ reusable.
 and satisfied. ``preserved_revision_ids`` contains the existing insertion ID
 only when an insertion was actually retained; it is empty for base text.
 ``revision_ids`` continues to identify only newly authored revisions.
-``replace_all`` accepts the same options, records each per-match
+``replace_all`` accepts the same replacement options plus the same exact-by-
+default ``match`` policy, records each per-match
 |PaperRefusal| while continuing independent matches, and retains one batch
 transaction. A stale target aborts and rolls back the batch. Matches already
 equal to the replacement are skipped rather than producing no-op results.

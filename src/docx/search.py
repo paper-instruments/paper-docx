@@ -1,12 +1,11 @@
-"""Normalized text search over visibility-complete traversal.
+"""Exact and normalized text search over visibility-complete traversal.
 
-`find_text` matches the way people (and models) actually quote documents:
-smart quotes, dashes, exotic spaces and case differences are normalized away
-(`normalize_text`), and matches assemble across Word's fragmented runs and
+`find_text` matches exact visible text by default, or explicitly normalized
+text when requested. Both policies assemble across Word's fragmented runs and
 across paragraph boundaries. The returned |Span| is the pivotal object of the
-editing surface: it maps a visible-text interval back to the concrete
-`w:t` text atoms that hold it, carries a stable block anchor, and is the
-receiver of the safe replace operations (`Span.replace`).
+editing surface: it maps a visible-text interval back to the concrete `w:t`
+text atoms that hold it, carries a stable block anchor, and is the receiver of
+the safe replace operations (`Span.replace`).
 
 Search space and block identity are shared with `docx.story` (one walker
 defines both), so a span's anchor always agrees with the outline.
@@ -64,6 +63,7 @@ _XML_SPACE = qn("xml:space")
 _FLD_SIMPLE = qn("w:fldSimple")
 _FLD_CHAR = qn("w:fldChar")
 _FLD_CHAR_TYPE = qn("w:fldCharType")
+_MATCH_POLICIES = ("exact", "normalized")
 
 
 @dataclass
@@ -346,6 +346,25 @@ def _normalized_with_map(value: str) -> Tuple[str, List[int]]:
     return "".join(compact), compact_map
 
 
+def _match_space(value: str, match: str) -> Tuple[str, List[int]]:
+    """Return policy-space text and a map from it to raw `value` offsets."""
+    if match == "exact":
+        return value, list(range(len(value)))
+    return _normalized_with_map(value)
+
+
+def _source_aligned(start: int, end: int, source_map: "Sequence[int]") -> bool:
+    """Whether a policy-space interval maps to whole raw characters."""
+    return (start == 0 or source_map[start - 1] != source_map[start]) and (
+        end == len(source_map) or source_map[end - 1] != source_map[end]
+    )
+
+
+def _validate_match_policy(match: str) -> None:
+    if match not in _MATCH_POLICIES:
+        raise ValueError(f"match must be one of {_MATCH_POLICIES}, got {match!r}")
+
+
 @dataclass(frozen=True)
 class ReplaceResult:
     """Outcome of a `Span.replace` call.
@@ -392,7 +411,9 @@ class Span:
 
     Spans hold live references into the document tree and go stale when the
     underlying text changes; every operation revalidates first and raises
-    |TargetNotFoundError| on staleness.
+    |TargetNotFoundError| on staleness. ``match_policy`` records the policy
+    that selected a search-produced span, or is ``None`` for a span constructed
+    from already-known live offsets.
     """
 
     text: str
@@ -408,7 +429,9 @@ class Span:
     _atoms: "List[_Atom]" = field(repr=False)
     _start_offset: int = field(repr=False)  # into first atom's text
     _end_offset: int = field(repr=False)  # exclusive, into last atom's text
-    _norm_start: int = field(repr=False)  # position in the story's normalized text
+    _raw_start: int = field(repr=False)  # position in the story's raw visible text
+    _match_start: int = field(repr=False)  # position in the selected policy space
+    match_policy: "Optional[str]" = field(default=None, init=False)
     _consumed: bool = field(default=False, repr=False)  # set by tracked replace
     _context_signatures: "Tuple[tuple, ...]" = field(init=False, repr=False)
     _atom_sequence: "Tuple[_Element, ...]" = field(init=False, repr=False)
@@ -669,7 +692,8 @@ class Span:
             _atoms=list(sub_atoms),
             _start_offset=start_off,
             _end_offset=end_off,
-            _norm_start=self._norm_start,
+            _raw_start=0,
+            _match_start=0,
         )
         sub_span._view = self._view
         sub_span._sequence_view = self._sequence_view
@@ -1708,26 +1732,35 @@ def _spans_for_story(
     document: "Document",
     story_name: str,
     atoms: "List[_Atom]",
-    needle_norm: str,
+    needle_match: str,
     *,
     all_atoms: "Sequence[_Atom]",
     view: str,
+    match: str,
 ) -> "List[Span]":
     raw_text, char_map = _assemble(atoms)
-    normalized, norm_map = _normalized_with_map(raw_text)
+    match_text, match_map = _match_space(raw_text, match)
     all_atom_positions = {
         id(atom.element): index for index, atom in enumerate(all_atoms)
     }
     spans: "List[Span]" = []
     search_from = 0
     while True:
-        found_at = normalized.find(needle_norm, search_from)
+        found_at = match_text.find(needle_match, search_from)
         if found_at < 0:
             break
-        search_from = found_at + len(needle_norm)
-        raw_start = norm_map[found_at]
-        raw_end = norm_map[found_at + len(needle_norm) - 1] + 1
+        match_end = found_at + len(needle_match)
+        if not _source_aligned(found_at, match_end, match_map):
+            search_from = found_at + 1
+            continue
+        search_from = match_end
+        raw_start = match_map[found_at]
+        raw_end = match_map[match_end - 1] + 1
         # trim paragraph-separator chars at the edges (they hold no atom text)
+        if match == "exact" and (
+            char_map[raw_start][1] == -1 or char_map[raw_end - 1][1] == -1
+        ):
+            continue
         while raw_start < raw_end and char_map[raw_start][1] == -1:
             raw_start += 1
         while raw_end > raw_start and char_map[raw_end - 1][1] == -1:
@@ -1761,8 +1794,10 @@ def _spans_for_story(
             _atoms=list(span_atoms),
             _start_offset=start_offset,
             _end_offset=end_offset + 1,
-            _norm_start=found_at,
+            _raw_start=raw_start,
+            _match_start=found_at,
         )
+        span.match_policy = match
         sequence_start = all_atom_positions[id(span_atoms[0].element)]
         sequence_end = all_atom_positions[id(span_atoms[-1].element)]
         span._atom_sequence = tuple(
@@ -1774,10 +1809,10 @@ def _spans_for_story(
     return spans
 
 
-def _near_distance(span_norm_start: int, near_positions: "List[int]") -> float:
+def _near_distance(span_match_start: int, near_positions: "List[int]") -> float:
     if not near_positions:
         return float("inf")
-    return min(abs(span_norm_start - position) for position in near_positions)
+    return min(abs(span_match_start - position) for position in near_positions)
 
 
 def find_text(
@@ -1788,21 +1823,24 @@ def find_text(
     near: Optional[str] = None,
     story: Optional[str] = None,
     view: str = "current",
+    match: str = "exact",
 ) -> "List[Span]":
-    """Every span of `needle` in `document`, normalized matching.
+    """Every span of `needle` in `document` under the selected match policy.
 
     `story` limits the search to one story part (e.g. "word/document.xml");
     `near` ranks matches by distance to the nearest occurrence of `near`'s
-    normalized text in the same story; `nth` (1-based) then selects a single
-    match. Matching assembles across fragmented runs and across paragraph
-    boundaries (a paragraph break matches a single space in the needle).
+    text under the same policy in the same story; `nth` (1-based) then selects
+    a single match. Exact matching is the default. Normalized matching folds
+    case, typography, and whitespace. Both assemble across fragmented runs;
+    exact matching represents each paragraph boundary as one literal ``\\n``.
     """
+    _validate_match_policy(match)
     if view not in VIEWS:
         raise ValueError(f"view must be one of {VIEWS}, got {view!r}")
-    needle_norm = normalize_text(needle)
-    if not needle_norm.strip():
+    needle_match, _ = _match_space(needle, match)
+    if not needle_match or (match == "normalized" and not needle_match.strip()):
         return []
-    near_norm = normalize_text(near) if near else None
+    near_match = _match_space(near, match)[0] if near else None
 
     all_spans: "List[Tuple[float, int, Span]]" = []
     order = 0
@@ -1817,23 +1855,26 @@ def find_text(
             document,
             story_name,
             atoms,
-            needle_norm,
+            needle_match,
             all_atoms=all_atoms,
             view=view,
+            match=match,
         )
         if not spans:
             continue
         near_positions: "List[int]" = []
-        if near_norm:
+        if near_match:
             raw_text, _ = _assemble(atoms)
-            normalized, _ = _normalized_with_map(raw_text)
-            start = normalized.find(near_norm)
+            match_text, match_map = _match_space(raw_text, match)
+            start = match_text.find(near_match)
             while start >= 0:
-                near_positions.append(start)
-                start = normalized.find(near_norm, start + 1)
+                end = start + len(near_match)
+                if _source_aligned(start, end, match_map):
+                    near_positions.append(start)
+                start = match_text.find(near_match, start + 1)
         for span in spans:
             distance = (
-                _near_distance(span._norm_start, near_positions) if near_norm else 0.0
+                _near_distance(span._match_start, near_positions) if near_match else 0.0
             )
             all_spans.append((distance, order, span))
             order += 1
@@ -1871,6 +1912,7 @@ def replace_all(
     *,
     story: Optional[str] = None,
     view: str = "current",
+    match: str = "exact",
     tracked: bool = False,
     author: Optional[str] = None,
     date: Optional[dt.datetime] = None,
@@ -1879,15 +1921,19 @@ def replace_all(
 ) -> ReplaceAllResult:
     """Replace every match of `needle` in one pass, and return a `ReplaceAllResult`.
 
-    One scan finds all matches, then replacements apply in reverse document order within each
-    story, so no pending match shifts. A refusal on one match is recorded in `refused` and the
-    rest proceed; a stale span aborts the batch instead, rolling back every replacement already
-    applied. Matches already equal to `new_text` are skipped. `preserve_structure` and
-    `preserve_revision` have the same contracts as |Span| ``.replace`` and are forwarded to
-    every match without adding a transaction per match.
+    ``match`` defaults to literal exact matching; ``"normalized"`` explicitly
+    enables folded matching. One scan finds all matches, then replacements
+    apply in reverse raw document order within each story, so no pending match
+    shifts. A refusal on one match is recorded in `refused` and the rest
+    proceed; a stale span aborts the batch instead, rolling back every
+    replacement already applied. Matches already equal to `new_text` are
+    skipped. `preserve_structure` and `preserve_revision` have the same
+    contracts as |Span| ``.replace`` and are forwarded to every match without
+    adding a transaction per match.
     """
     from docx.errors import PaperRefusal
 
+    _validate_match_policy(match)
     _validate_replacement_options(
         tracked=tracked,
         preserve_structure=preserve_structure,
@@ -1899,7 +1945,7 @@ def replace_all(
     _refuse_if_protected(document, "replace text")
     spans = [
         span
-        for span in find_text(document, needle, story=story, view=view)
+        for span in find_text(document, needle, story=story, view=view, match=match)
         if span.text != new_text
     ]
     by_story: "dict[str, List[Span]]" = {}
@@ -1929,7 +1975,7 @@ def replace_all(
         with rollback_on_error(document):
             for story_name in sorted(by_story):
                 ordered = sorted(
-                    by_story[story_name], key=lambda s: s._norm_start, reverse=True
+                    by_story[story_name], key=lambda s: s._raw_start, reverse=True
                 )
                 for span in ordered:
                     try:
@@ -1973,14 +2019,18 @@ def find_one(
     near: Optional[str] = None,
     story: Optional[str] = None,
     view: str = "current",
+    match: str = "exact",
 ) -> Span:
     """The single span matching `needle`, or a typed refusal.
 
-    Zero matches raise `TargetNotFoundError`. Two or more raise `AmbiguousTargetError`:
-    `nth` and `story` narrow the set, while `near` only ranks `find_text` results and never
-    reduces them.
+    Exact matching is the default; pass ``match="normalized"`` to opt into
+    folded targeting. Zero matches raise `TargetNotFoundError`. Two or more
+    raise `AmbiguousTargetError`: `nth` and `story` narrow the set, while
+    `near` only ranks `find_text` results and never reduces them.
     """
-    matches = find_text(document, needle, nth=nth, near=near, story=story, view=view)
+    matches = find_text(
+        document, needle, nth=nth, near=near, story=story, view=view, match=match
+    )
     if not matches:
         raise TargetNotFoundError(f"no match for {needle!r} in any story part")
     if len(matches) > 1:

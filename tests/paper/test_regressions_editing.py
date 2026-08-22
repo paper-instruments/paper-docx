@@ -274,7 +274,7 @@ class DescribeMiscEdgeCases:
         document = _doc()
         document.add_paragraph("Alpha beta.")
         document.add_paragraph("Gamma delta.")
-        span = find_one(document, "Alpha beta. Gamma delta.")
+        span = find_one(document, "Alpha beta.\nGamma delta.")
         span.replace("Alpha beta. Gamma omega.")
         texts = [b.text for b in iter_blocks(document)]
         assert "Gamma omega." in texts and "Alpha beta." in texts

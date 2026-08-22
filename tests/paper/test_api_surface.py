@@ -79,12 +79,14 @@ APPROVED_SIGNATURES = [
     (
         "docx.search",
         "find_text",
-        "(document, needle, *, nth=None, near=None, story=None, view='current')",
+        "(document, needle, *, nth=None, near=None, story=None, view='current',"
+        " match='exact')",
     ),
     (
         "docx.search",
         "find_one",
-        "(document, needle, *, nth=None, near=None, story=None, view='current')",
+        "(document, needle, *, nth=None, near=None, story=None, view='current',"
+        " match='exact')",
     ),
     # -- replace -------------------------------------------------------------
     (
@@ -137,7 +139,7 @@ APPROVED_SIGNATURES = [
     (
         "docx.search",
         "replace_all",
-        "(document, needle, new_text, *, story=None, view='current',"
+        "(document, needle, new_text, *, story=None, view='current', match='exact',"
         " tracked=False, author=None, date=None, preserve_structure=False,"
         " preserve_revision=False)",
     ),

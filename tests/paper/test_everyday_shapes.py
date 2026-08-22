@@ -91,24 +91,26 @@ class DescribeBreakTolerantReplace:
 
     def it_edits_one_segment_of_a_tab_crossing_span(self):
         document, paragraph = self._tabbed_doc()
-        span = find_one(document, "Section 3. Termination")
+        span = find_one(document, "Section 3. Termination", match="normalized")
         span.replace("Section 4. Termination")
         assert paragraph.text == "Section 4.\tTermination"
 
     def it_edits_the_trailing_segment_too(self):
         document, paragraph = self._tabbed_doc()
-        find_one(document, "Section 3. Termination").replace("Section 3. Renewal")
+        find_one(
+            document, "Section 3. Termination", match="normalized"
+        ).replace("Section 3. Renewal")
         assert paragraph.text == "Section 3.\tRenewal"
 
     def it_narrows_tracked_replaces_the_same_way(self):
         document, paragraph = self._tabbed_doc()
-        find_one(document, "Section 3. Termination").replace(
+        find_one(document, "Section 3. Termination", match="normalized").replace(
             "Section 4. Termination", tracked=True, author="Carol QA", date=FROZEN
         )
         document.revisions.accept_all()
         assert paragraph.text == "Section 4.\tTermination"
         document2, paragraph2 = self._tabbed_doc()
-        find_one(document2, "Section 3. Termination").replace(
+        find_one(document2, "Section 3. Termination", match="normalized").replace(
             "Section 4. Termination", tracked=True, author="Carol QA", date=FROZEN
         )
         document2.revisions.reject_all()
@@ -118,14 +120,14 @@ class DescribeBreakTolerantReplace:
         """Whitespace in the replacement aligns with the existing tab: the
         document keeps its tab, both text segments change."""
         document, paragraph = self._tabbed_doc()
-        find_one(document, "Section 3. Termination").replace(
+        find_one(document, "Section 3. Termination", match="normalized").replace(
             "Chapter Three - Termination"
         )
         assert paragraph.text == "Chapter Three -\tTermination"
 
     def it_still_refuses_changes_that_would_swallow_the_break(self):
         document, _ = self._tabbed_doc()
-        span = find_one(document, "Section 3. Termination")
+        span = find_one(document, "Section 3. Termination", match="normalized")
         with pytest.raises(UnsupportedStructureError, match="tab or line break"):
             span.replace("Section3Termination")  # no whitespace for the tab
 
@@ -188,6 +190,37 @@ class DescribeReplaceAll:
         assert not result.refused
         texts = [b.text for b in iter_blocks(document)]
         assert "VALUE then VALUE then VALUE in one run." in texts
+
+    def it_defaults_to_exact_and_supports_explicit_normalized_matching(self):
+        exact_document = _doc()
+        exact_document.add_paragraph("Token token TOKEN")
+        exact = replace_all(exact_document, "token", "value")
+        assert exact.replaced_count == 1
+        assert "Token value TOKEN" in [b.text for b in iter_blocks(exact_document)]
+
+        normalized_document = _doc()
+        normalized_document.add_paragraph("Token token TOKEN")
+        normalized = replace_all(
+            normalized_document, "token", "value", match="normalized"
+        )
+        assert normalized.replaced_count == 3
+        assert "value value value" in [
+            b.text for b in iter_blocks(normalized_document)
+        ]
+
+    def it_replaces_normalized_matches_in_raw_reverse_order(self):
+        document = _doc()
+        document.add_paragraph("Straße Straße")
+        result = replace_all(document, "strasse", "road", match="normalized")
+        assert result.replaced_count == 2
+        assert "road road" in [b.text for b in iter_blocks(document)]
+
+    def it_rejects_an_invalid_policy_before_mutation(self):
+        document = _doc()
+        before = document.element.xml
+        with pytest.raises(ValueError, match="match must be one of"):
+            replace_all(document, "token", "value", match="fuzzy")
+        assert document.element.xml == before
 
     def it_reports_refused_matches_instead_of_skipping_silently(self):
         document = _doc(FIELDS)
