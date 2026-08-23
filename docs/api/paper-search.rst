@@ -71,8 +71,12 @@ before the document is searched. To use contextual ranking for inspection:
 Choose a replacement policy
 ---------------------------
 
-All preservation modes are opt-in. Existing calls retain the ordinary
-untracked behavior.
+Ordinary replacement is preservation-safe by default. It first leaves the
+longest exact unchanged prefix and suffix in their existing text atoms, then
+changes only the residual interval. That interval must be one materially
+uniform formatting and structural region. Complete run-property XML, resolved
+effective values and provenance, and live semantic scopes must agree; a
+positional marker or non-text run node cannot sit inside the changed interval.
 
 .. list-table::
    :header-rows: 1
@@ -83,8 +87,9 @@ untracked behavior.
      - Contract
    * - Ordinary untracked edit
      - ``span.replace(text)``
-     - The replacement takes the start run's formatting. Untouched runs keep
-       their formatting, but selected text may be redistributed between runs.
+     - Preserves exact unchanged affixes and replaces one proved uniform
+       formatting/structural region. Mixed, unresolved, scope-crossing, or
+       marker-crossing intent refuses before mutation.
    * - Author a new redline
      - ``span.replace(text, tracked=True, author=...)``
      - Emits a minimal ``w:del``/``w:ins`` pair and consumes the span. A direct
@@ -124,17 +129,34 @@ no longer describe the same text. A no-op still runs the full preflight and
 reports preservation evidence, but changes nothing and leaves the span
 reusable.
 
-|ReplaceResult| sets ``preserved_structure`` when exact topology was requested
-and satisfied. ``preserved_revision_ids`` contains the existing insertion ID
-only when an insertion was actually retained; it is empty for base text.
+|ReplaceResult| sets ``preserved_formatting_regions`` only when the ordinary
+untracked planner proved this regional contract, including a fully preflighted
+no-op. Tracked edits and empty-cell creation report false. The flag is
+orthogonal to ``preserved_revision_ids``: an authorized correction inside one
+existing insertion reports both the preserved insertion ID and formatting-
+region evidence. ``preserved_structure`` remains separate, and
 ``revision_ids`` continues to identify only newly authored revisions.
 ``replace_all`` accepts the same replacement options plus the same exact-by-
 default ``match`` policy, records each per-match
 |PaperRefusal| while continuing independent matches, and retains one batch
 transaction. A stale target aborts and rolls back the batch. Matches already
 equal to the replacement are skipped rather than producing no-op results.
-The direct and batch ``to_dict()`` payloads retain their schema discriminators
-and earlier keys.
+After an ordinary no-op the span remains reusable. After mutation, the span is
+refreshed to the exact live contributing atoms and offsets when that interval
+is still representable after empty atoms are removed. A complete deletion or
+other unrepresentable result consumes it; re-find the text before another
+operation. No successful span retains stale coordinates. Because a no-op has
+no text assignments, it does not apply a hypothetical mutation's bookmark-
+hollowing check; all non-bookmark safety and uniform-region preflight still
+runs.
+
+When a replacement refuses because the changed interval is mixed or crosses a
+marker, target a smaller span wholly inside one formatting/structural region.
+Markers and differently formatted text wholly contained in exact unchanged
+affixes remain in their original elements and order.
+
+The direct and batch ``to_dict()`` payloads use schema version 2 and retain
+their earlier keys while adding ``preserved_formatting_regions``.
 
 These contracts describe the edited XML structure. They do not promise raw
 byte identity inside a changed package part; use :func:`docx.package.patch_save`

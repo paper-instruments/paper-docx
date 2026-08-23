@@ -372,7 +372,8 @@ class ReplaceResult:
 
     `deleted_text` and `inserted_text` cover the whole span for an untracked replace but only
     the affix-trimmed middle for a tracked one, so comparing them against `Span.text` is
-    wrong for tracked edits.
+    wrong for tracked edits. `preserved_formatting_regions` reports that the ordinary planner
+    proved one safe material region; it is independent of revision and topology evidence.
     """
 
     story: str
@@ -382,11 +383,12 @@ class ReplaceResult:
     revision_ids: Tuple[int, ...]
     preserved_structure: bool = False
     preserved_revision_ids: Tuple[int, ...] = ()
+    preserved_formatting_regions: bool = False
 
     def to_dict(self) -> dict:
         return {
             "schema": "paper_replace",
-            "version": 1,
+            "version": 2,
             "story": self.story,
             "deleted_text": self.deleted_text,
             "inserted_text": self.inserted_text,
@@ -394,16 +396,237 @@ class ReplaceResult:
             "revision_ids": list(self.revision_ids),
             "preserved_structure": self.preserved_structure,
             "preserved_revision_ids": list(self.preserved_revision_ids),
+            "preserved_formatting_regions": self.preserved_formatting_regions,
         }
 
 
 @dataclass(frozen=True)
 class _TextAssignment:
-    """One preflighted text-only mutation for exact-structure replacement."""
+    """One preflighted text-only mutation."""
 
     element: "_Element"
     before: str
     after: str
+    update_xml_space: bool = False
+    before_xml_space: "Optional[str]" = None
+    after_xml_space: "Optional[str]" = None
+
+
+@dataclass(frozen=True)
+class _FormattingRegionPlan:
+    """A complete ordinary-replacement plan plus its live-span boundaries."""
+
+    assignments: "Tuple[_TextAssignment, ...]"
+    before_prefix: str
+    after_suffix: str
+
+
+def _regional_text_assignments(
+    span: "Span", new_text: str
+) -> _FormattingRegionPlan:
+    """Preflight one materially uniform ordinary replacement region."""
+    old_text = span.text
+    prefix_len, suffix_len = _common_affix_lengths(old_text, new_text)
+    before_prefix = span._atoms[0].text[: span._start_offset]
+    after_suffix = span._atoms[-1].text[span._end_offset :]
+    if old_text == new_text:
+        return _FormattingRegionPlan((), before_prefix, after_suffix)
+
+    changed_start = prefix_len
+    changed_end = len(old_text) - suffix_len
+    pieces = span._in_span_pieces()
+    segments: "List[Tuple[int, int, int]]" = []
+    position = 0
+    for atom_index, piece in pieces:
+        piece_end = position + len(piece)
+        lo = max(changed_start, position)
+        hi = min(changed_end, piece_end)
+        if hi > lo:
+            if atom_index is None:
+                raise BoundaryViolationError(
+                    "the changed interval crosses a paragraph boundary;"
+                    " replace one paragraph at a time"
+                )
+            atom = span._atoms[atom_index]
+            base = span._start_offset if atom_index == 0 else 0
+            segments.append((atom_index, base + lo - position, base + hi - position))
+        position = piece_end
+
+    region_atoms: "Sequence[_Atom]"
+    if changed_start == changed_end:
+        insertion_candidates: "List[Tuple[int, int]]" = []
+        position = 0
+        for atom_index, piece in pieces:
+            piece_end = position + len(piece)
+            if atom_index is not None:
+                atom = span._atoms[atom_index]
+                base = span._start_offset if atom_index == 0 else 0
+                if position <= changed_start <= piece_end:
+                    insertion_candidates.append(
+                        (atom_index, base + changed_start - position)
+                    )
+            position = piece_end
+        unique_candidates: "List[Tuple[int, int]]" = []
+        for candidate in insertion_candidates:
+            if all(candidate[0] != existing[0] for existing in unique_candidates):
+                unique_candidates.append(candidate)
+        if not unique_candidates:
+            raise UnsupportedStructureError(
+                "the insertion point has no writable text region; re-find text"
+                " on one side of the insertion point"
+            )
+        candidate_atoms = [span._atoms[index] for index, _ in unique_candidates]
+        region_atoms = candidate_atoms
+        chosen_index, chosen_offset = unique_candidates[0]
+        segments.append((chosen_index, chosen_offset, chosen_offset))
+    else:
+        region_atoms = [
+            span._atoms[index] for index, _start, _end in segments
+        ]
+
+    changed_atoms = [span._atoms[index] for index, _start, _end in segments]
+    if any(atom.is_synthetic for atom in changed_atoms):
+        raise UnsupportedStructureError(
+            "the changed interval crosses a tab or line break, a no-break"
+            " hyphen, or other non-text run content; replace the text"
+            " segments on either side individually"
+        )
+    _validate_one_formatting_region(span, region_atoms)
+
+    replacement = new_text[prefix_len : len(new_text) - suffix_len]
+    assignments: "List[_TextAssignment]" = []
+    for segment_index, (atom_index, start, end) in enumerate(segments):
+        atom = span._atoms[atom_index]
+        inserted = replacement if segment_index == 0 else ""
+        after = atom.text[:start] + inserted + atom.text[end:]
+        if after == atom.text:
+            continue
+        assignments.append(
+            _TextAssignment(
+                element=atom.element,
+                before=atom.text,
+                after=after,
+                update_xml_space=True,
+                before_xml_space=atom.element.get(_XML_SPACE),
+                after_xml_space=(
+                    "preserve"
+                    if after[:1].isspace() or after[-1:].isspace()
+                    else None
+                ),
+            )
+        )
+    planned = tuple(assignments)
+    _refuse_hollowed_bookmarks(
+        _hollowed_bookmarks_after(planned, span._atoms)
+    )
+    _refuse_intervening_positional_nodes(region_atoms)
+    return _FormattingRegionPlan(planned, before_prefix, after_suffix)
+
+
+def _validate_one_formatting_region(span: "Span", atoms: "Sequence[_Atom]") -> None:
+    """Refuse unless every atom carries complete comparable region evidence."""
+    from lxml import etree
+
+    from docx.formatting import _resolve_run
+
+    supported_rpr_tags = {
+        qn(name)
+        for name in (
+            "w:b", "w:bCs", "w:i", "w:iCs", "w:caps", "w:smallCaps",
+            "w:strike", "w:emboss", "w:imprint", "w:outline", "w:shadow",
+            "w:vanish", "w:u", "w:sz", "w:rFonts", "w:color",
+            "w:highlight", "w:vertAlign", "w:rStyle", "w:rtl",
+        )
+    }
+    evidence = []
+    for atom in atoms:
+        if atom.run is None or atom.paragraph is None:
+            raise UnsupportedStructureError(
+                "the changed interval is not ordinary run text; target a"
+                " smaller plain-text span"
+            )
+        rpr = atom.run.find(_RPR)
+        unsupported = [] if rpr is None else [
+            child.tag.rpartition("}")[2]
+            for child in rpr
+            if child.tag not in supported_rpr_tags
+        ]
+        if unsupported:
+            raise UnsupportedStructureError(
+                "the changed interval contains run formatting the effective"
+                f" formatter cannot compare ({sorted(set(unsupported))});"
+                " target a smaller span with resolvable formatting"
+            )
+        effective = _resolve_run(span._document, atom.run, atom.paragraph)
+        if any(value.source == "mixed" for value in effective.properties.values()):
+            raise UnsupportedStructureError(
+                "the changed interval has mixed effective formatting; target"
+                " a smaller uniformly formatted span"
+            )
+        scopes = tuple(
+            (id(scope[0]), scope[1], scope[2], scope[3])
+            for scope in _atom_context_signature(atom)[-1]
+        )
+        evidence.append(
+            (
+                None if rpr is None else etree.tostring(rpr, method="c14n"),
+                effective,
+                atom.story,
+                id(atom.paragraph),
+                atom.in_field,
+                scopes,
+            )
+        )
+    if evidence and any(item != evidence[0] for item in evidence[1:]):
+        raise UnsupportedStructureError(
+            "the changed interval crosses formatting or structural regions;"
+            " target and replace a smaller span within one uniform region"
+        )
+
+
+def _refuse_intervening_positional_nodes(atoms: "Sequence[_Atom]") -> None:
+    """Refuse nodes between changed text atoms whose anchoring could move."""
+    if len(atoms) < 2:
+        return
+    paragraph = atoms[0].paragraph
+    if paragraph is None or any(atom.paragraph is not paragraph for atom in atoms):
+        return
+    stream = list(paragraph.iter())
+    positions = {id(node): index for index, node in enumerate(stream)}
+    bookmark_names = {
+        node.get(_W_ID): node.get(_W_NAME) or "<unnamed>"
+        for node in stream
+        if node.tag == _BOOKMARK_START
+    }
+    first = positions[id(atoms[0].element)]
+    last = positions[id(atoms[-1].element)]
+    changed_elements = tuple(atom.element for atom in atoms)
+
+    def is_ancestor_of_changed(node: "_Element") -> bool:
+        return any(
+            any(node is ancestor for ancestor in element.iterancestors())
+            for element in changed_elements
+        )
+
+    def is_run_property_markup(node: "_Element") -> bool:
+        return node.tag == _RPR or any(parent.tag == _RPR for parent in node.iterancestors())
+
+    for node in stream[first + 1 : last]:
+        if any(node is element for element in changed_elements):
+            continue
+        if is_ancestor_of_changed(node) or is_run_property_markup(node):
+            continue
+        if node.tag in (_BOOKMARK_START, _BOOKMARK_END):
+            name = bookmark_names.get(node.get(_W_ID), "<unnamed>")
+            raise UnsupportedStructureError(
+                f"the changed interval crosses bookmark {name!r}; target a"
+                " smaller span wholly inside or outside that bookmark"
+            )
+        raise UnsupportedStructureError(
+            "the changed interval crosses a positional marker or non-text"
+            " run node whose anchoring cannot be preserved; target a smaller"
+            " span on one side"
+        )
 
 
 @dataclass
@@ -743,8 +966,8 @@ class Span:
     def _validate_fresh(self) -> None:
         if self._consumed:
             raise TargetNotFoundError(
-                "span was consumed by a tracked or structure-preserving"
-                " replace; re-find the text"
+                "span was consumed by a tracked, structure-preserving, or"
+                " unrepresentable replacement; re-find the text"
             )
         if self._current_slice() != self.text:
             raise TargetNotFoundError(
@@ -911,10 +1134,11 @@ class Span:
     ) -> ReplaceResult:
         """Replace this span's text and return machine-readable change evidence.
 
-        The default is an untracked edit: untouched runs retain their run properties, the
-        replacement takes the start run's formatting, and the span stays usable. `tracked=True`
-        instead emits a minimal `w:del`/`w:ins` pair and consumes the span; a direct tracked
-        no-op is refused.
+        The default is an untracked edit over one proved formatting and structural region.
+        Exact unchanged prefix and suffix text stays in its existing atoms; mixed formatting,
+        semantic-scope crossings, unresolved run formatting, and positional-marker crossings
+        refuse instead of adopting one run's formatting. `tracked=True` instead emits a minimal
+        `w:del`/`w:ins` pair and consumes the span; a direct tracked no-op is refused.
 
         `preserve_revision=True` explicitly permits a current-view span wholly owned by one
         existing `w:ins` to be corrected without changing that insertion's id, author, date,
@@ -928,10 +1152,13 @@ class Span:
         but does not consume the span. The two preservation options can be combined, but neither
         can be combined with `tracked=True`.
 
-        `preserved_structure` and `preserved_revision_ids` report the guarantees applied;
-        `revision_ids` remains reserved for newly authored tracked revisions. Refuses a protected
-        document, a stale or foreign span, and unsafe field, control, revision, bookmark,
-        whitespace, or paragraph-boundary structures before mutation.
+        `preserved_formatting_regions`, `preserved_structure`, and
+        `preserved_revision_ids` report independent guarantees; `revision_ids` remains reserved
+        for newly authored tracked revisions. A successful ordinary mutation refreshes the live
+        span when its result remains exactly representable, otherwise consumes it with re-find
+        guidance. Refuses a protected document, a stale or foreign span, and unsafe field,
+        control, revision, bookmark, whitespace, or paragraph-boundary structures before
+        mutation.
         """
         return self._replace(
             new_text,
@@ -982,21 +1209,55 @@ class Span:
             narrowed = self._narrow_to_change(new_text)
             if narrowed is not None:
                 sub_span, sub_new = narrowed
-                return sub_span._replace(
-                    sub_new,
-                    tracked=tracked,
-                    author=author,
-                    date=date,
-                    preserve_structure=False,
-                    preserve_revision=preserve_revision,
-                    use_transaction=use_transaction,
+                before_prefix = self._atoms[0].text[: self._start_offset]
+                after_suffix = self._atoms[-1].text[self._end_offset :]
+
+                def apply_narrowed() -> ReplaceResult:
+                    result = sub_span._replace(
+                        sub_new,
+                        tracked=tracked,
+                        author=author,
+                        date=date,
+                        preserve_structure=False,
+                        preserve_revision=preserve_revision,
+                        use_transaction=False,
+                    )
+                    if not tracked:
+                        self._refresh_after_ordinary_mutation(
+                            before_prefix=before_prefix,
+                            after_suffix=after_suffix,
+                        )
+                    return result
+
+                if use_transaction:
+                    with rollback_on_error(self._document, self):
+                        return apply_narrowed()
+                text_state = tuple(
+                    _TextAssignment(
+                        element=atom.element,
+                        before=atom.text,
+                        after=atom.text,
+                        update_xml_space=True,
+                        before_xml_space=atom.element.get(_XML_SPACE),
+                        after_xml_space=atom.element.get(_XML_SPACE),
+                    )
+                    for atom in sub_span._atoms
+                    if not atom.is_synthetic
                 )
+                span_state = dict(self.__dict__)
+                try:
+                    return apply_narrowed()
+                except BaseException:
+                    _restore_text_assignments(text_state)
+                    self.__dict__.clear()
+                    self.__dict__.update(span_state)
+                    raise
         preserved_revision_ids = _preserved_insertion_ids(
             self, authorize=preserve_revision
         )
         preservation_noop = bool(preserved_revision_ids) and new_text == self.text
         self._validate_replaceable(
-            validate_bookmarks=not preserve_structure and not preservation_noop
+            validate_bookmarks=tracked and not preserve_structure
         )
         if not tracked:
             for atom in self._atoms:
@@ -1080,12 +1341,16 @@ class Span:
                 tracked=False,
                 revision_ids=(),
                 preserved_revision_ids=preserved_revision_ids,
+                preserved_formatting_regions=True,
             )
         if tracked:
             result = self._tracked_replace(new_text, author=author, date=date)  # type: ignore[arg-type]
         else:
-            result = self._plain_replace(
-                new_text, preserved_revision_ids=preserved_revision_ids
+            return self._plain_replace(
+                new_text,
+                preserved_revision_ids=preserved_revision_ids,
+                placeholder_sdts=placeholder_sdts,
+                use_transaction=use_transaction,
             )
         for sdt in placeholder_sdts:
             _clear_placeholder_state(sdt)
@@ -1096,21 +1361,10 @@ class Span:
         new_text: str,
         *,
         preserved_revision_ids: "Tuple[int, ...]" = (),
+        placeholder_sdts: "Sequence[_Element]" = (),
+        use_transaction: bool,
     ) -> ReplaceResult:
-        first, last = self._atoms[0], self._atoms[-1]
-        if first is last:
-            text = first.text
-            _set_preserved_text(
-                first.element,
-                text[: self._start_offset] + new_text + text[self._end_offset :],
-            )
-        else:
-            _set_preserved_text(
-                first.element, first.text[: self._start_offset] + new_text
-            )
-            for atom in self._atoms[1:-1]:
-                _set_preserved_text(atom.element, "")
-            _set_preserved_text(last.element, last.text[self._end_offset :])
+        plan = _regional_text_assignments(self, new_text)
         result = ReplaceResult(
             story=self.story,
             deleted_text=self.text,
@@ -1118,17 +1372,141 @@ class Span:
             tracked=False,
             revision_ids=(),
             preserved_revision_ids=preserved_revision_ids,
+            preserved_formatting_regions=True,
         )
-        self.text = new_text
-        self._end_offset = self._start_offset + len(new_text)
-        del self._atoms[1:]
-        self._context_signatures = tuple(
-            _atom_context_signature(atom) for atom in self._atoms
-        )
-        self._atom_sequence = (first.element,)
-        self._sequence_view = "current"
-        self._view = "current"
+        if not plan.assignments:
+            return result
+
+        def apply() -> None:
+            _apply_text_assignments(plan.assignments)
+            for sdt in placeholder_sdts:
+                _clear_placeholder_state(sdt)
+            self._refresh_after_ordinary_mutation(
+                before_prefix=plan.before_prefix,
+                after_suffix=plan.after_suffix,
+            )
+
+        if use_transaction:
+            with rollback_on_error(self._document, self):
+                apply()
+        else:
+            try:
+                apply()
+            except BaseException:
+                _restore_text_assignments(plan.assignments)
+                raise
         return result
+
+    def _refresh_after_ordinary_mutation(
+        self, *, before_prefix: str, after_suffix: str
+    ) -> None:
+        """Refresh this span to its exact live result, or consume it."""
+        story_root = next(
+            (
+                root
+                for story_name, root in _story_elements(self._document)
+                if story_name == self.story
+            ),
+            None,
+        )
+        if story_root is None:
+            self._consumed = True
+            return
+        all_atoms = (
+            tuple(_story_atoms(self._document, self.story, story_root))
+            if self._freshness_census is None
+            else tuple(
+                atom
+                for atom in self._freshness_census.atoms
+                if atom.text or atom.is_synthetic
+            )
+        )
+        current_by_element = {id(atom.element): atom for atom in all_atoms}
+        pieces: "List[Tuple[_Atom, int, int]]" = []
+        for index, captured in enumerate(self._atoms):
+            current = current_by_element.get(id(captured.element))
+            if current is None:
+                continue
+            start = len(before_prefix) if index == 0 else 0
+            end = (
+                len(current.text) - len(after_suffix)
+                if index == len(self._atoms) - 1
+                else len(current.text)
+            )
+            if start < 0 or end < start or end > len(current.text):
+                self._consumed = True
+                return
+            if end > start:
+                pieces.append((current, start, end))
+        if not pieces:
+            self.text = ""
+            self._consumed = True
+            return
+        visible_atoms = [atom for atom in all_atoms if _include_atom(atom, "current")]
+        visible_positions = {id(atom.element): index for index, atom in enumerate(visible_atoms)}
+        positions = [
+            visible_positions.get(id(atom.element))
+            for atom, _start, _end in pieces
+        ]
+        if any(position is None for position in positions):
+            self._consumed = True
+            return
+        first_position = positions[0]
+        assert first_position is not None
+        if positions != list(range(first_position, first_position + len(positions))):
+            self._consumed = True
+            return
+        text_parts: "List[str]" = []
+        previous: "Optional[_Atom]" = None
+        for atom, start, end in pieces:
+            if previous is not None and atom.paragraph is not previous.paragraph:
+                text_parts.append("\n")
+            text_parts.append(atom.text[start:end])
+            previous = atom
+        refreshed_text = "".join(text_parts)
+        selected_atoms = [atom for atom, _start, _end in pieces]
+        first_atom, first_start, _ = pieces[0]
+        last_atom, _, last_end = pieces[-1]
+        all_positions = {id(atom.element): index for index, atom in enumerate(all_atoms)}
+        sequence_start = all_positions[id(first_atom.element)]
+        sequence_end = all_positions[id(last_atom.element)]
+        raw_start = first_start
+        previous = None
+        for atom in visible_atoms[:first_position]:
+            if previous is not None and atom.paragraph is not previous.paragraph:
+                raw_start += 1
+            raw_start += len(atom.text)
+            previous = atom
+        if previous is not None and first_atom.paragraph is not previous.paragraph:
+            raw_start += 1
+        self.text = refreshed_text
+        self.anchor = Anchor(
+            story=self.story,
+            index=first_atom.block_index,
+            content_hash=content_hash(refreshed_text),
+        )
+        self.in_insert = any(atom.in_insert for atom in selected_atoms)
+        self.in_delete = any(atom.in_delete or atom.tag == _DEL_TEXT for atom in selected_atoms)
+        self.in_content_control = any(atom.sdt is not None for atom in selected_atoms)
+        self.in_text_box = any(atom.in_text_box for atom in selected_atoms)
+        self.in_field = any(atom.in_field for atom in selected_atoms)
+        self.crosses_paragraphs = any(
+            atom.paragraph is not first_atom.paragraph for atom in selected_atoms
+        )
+        self._atoms = selected_atoms
+        self._start_offset = first_start
+        self._end_offset = last_end
+        self._raw_start = raw_start
+        self._match_start = raw_start
+        self._context_signatures = tuple(
+            _atom_context_signature(atom) for atom in selected_atoms
+        )
+        self._atom_sequence = tuple(
+            atom.element for atom in all_atoms[sequence_start : sequence_end + 1]
+        )
+        self._sequence_view = None
+        self._view = "current"
+        self.match_policy = None
 
     def _tracked_replace(
         self, new_text: str, *, author: str, date: Optional[dt.datetime]
@@ -1616,9 +1994,26 @@ def _exact_text_assignments(span: Span, new_text: str) -> "Tuple[_TextAssignment
 
 
 def _apply_text_assignments(assignments: "Sequence[_TextAssignment]") -> None:
-    """Apply a fully validated exact-structure assignment collection."""
+    """Apply a fully validated text-assignment collection."""
     for assignment in assignments:
-        assignment.element.text = assignment.after
+        if assignment.update_xml_space:
+            assignment.element.text = assignment.after
+            if assignment.after_xml_space is None:
+                assignment.element.attrib.pop(_XML_SPACE, None)
+            else:
+                assignment.element.set(_XML_SPACE, assignment.after_xml_space)
+        else:
+            assignment.element.text = assignment.after
+
+
+def _restore_text_assignments(assignments: "Sequence[_TextAssignment]") -> None:
+    """Restore text and whitespace attributes after a local batch failure."""
+    for assignment in assignments:
+        assignment.element.text = assignment.before
+        if assignment.before_xml_space is None:
+            assignment.element.attrib.pop(_XML_SPACE, None)
+        else:
+            assignment.element.set(_XML_SPACE, assignment.before_xml_space)
 
 
 def _hollowed_bookmarks_after(
@@ -1942,7 +2337,7 @@ class ReplaceAllResult:
     def to_dict(self) -> dict:
         return {
             "schema": "paper_replace_all",
-            "version": 1,
+            "version": 2,
             "replaced_count": self.replaced_count,
             "results": [result.to_dict() for result in self.results],
             "refused": list(self.refused),

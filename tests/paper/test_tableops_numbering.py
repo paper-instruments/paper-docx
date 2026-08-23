@@ -10,9 +10,11 @@ import pytest
 from lxml import etree
 
 import docx
+from docx.enum.style import WD_STYLE_TYPE
 from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.errors import (
     AmbiguousTargetError,
+    BoundaryViolationError,
     TargetNotFoundError,
     UnsupportedStructureError,
 )
@@ -22,8 +24,8 @@ from docx.numbering import (
     ensure_bullet_definition,
     list_numbering,
 )
-from docx.oxml.ns import qn
-from docx.oxml.parser import OxmlElement
+from docx.oxml.ns import nsdecls, qn
+from docx.oxml.parser import OxmlElement, parse_xml
 from docx.shared import Inches
 from docx.tableops import delete_row, find_table, insert_row_after, update_cell
 
@@ -40,6 +42,7 @@ NUMBERING = "generated/feature-isolated/numbering-custom.docx"
 NUMBERING_LO = "libreoffice/feature-isolated/numbering-custom.docx"
 
 FROZEN = dt.datetime(2026, 7, 7, 12, 0, 0, tzinfo=dt.timezone.utc)
+W = nsdecls("w")
 
 
 def _doc(relpath: str):
@@ -170,13 +173,15 @@ class DescribeUpdateCell:
         document, table = _doc_with_simple_table()
         result = update_cell(table, 0, 1, "updated value")
         assert result.deleted_text == "cell 01"
+        assert result.preserved_formatting_regions
         reopened = save_and_reopen(document, tmp_path / "out.docx")
         assert reopened.tables[0].cell(0, 1).text == "updated value"
 
     def it_fills_an_empty_cell(self, tmp_path: Path):
         document, table = _doc_with_simple_table()
         table.cell(1, 1).paragraphs[0].clear()
-        update_cell(table, 1, 1, "was empty")
+        result = update_cell(table, 1, 1, "was empty")
+        assert not result.preserved_formatting_regions
         reopened = save_and_reopen(document, tmp_path / "out.docx")
         assert reopened.tables[0].cell(1, 1).text == "was empty"
 
@@ -185,6 +190,7 @@ class DescribeUpdateCell:
         result = update_cell(table, 0, 0, "cell 99", tracked=True, author="Carol QA", date=FROZEN)
         assert result.tracked
         assert result.revision_ids
+        assert not result.preserved_formatting_regions
         reopened = save_and_reopen(document, tmp_path / "out.docx")
         assert reopened.tables[0].cell(0, 0).text.startswith("cell")
         revisions = reopened.revisions
@@ -228,6 +234,100 @@ class DescribeUpdateCell:
         _, table = _doc_with_simple_table()
         with pytest.raises(ValueError, match="author"):
             update_cell(table, 0, 0, "x", tracked=True)
+
+    def it_replaces_a_uniformly_formatted_fragmented_cell(self, tmp_path: Path):
+        document, table = _doc_with_simple_table()
+        paragraph = table.cell(0, 0).paragraphs[0]
+        paragraph.clear()
+        paragraph.add_run("cell ").bold = True
+        paragraph.add_run("value").bold = True
+
+        result = update_cell(table, 0, 0, "updated")
+
+        assert result.preserved_formatting_regions
+        reopened = save_and_reopen(document, tmp_path / "uniform-cell.docx")
+        runs = reopened.tables[0].cell(0, 0).paragraphs[0].runs
+        assert "".join(run.text for run in runs if run.bold) == "updated"
+
+    def it_refuses_a_mixed_format_cell_atomically(self):
+        document, table = _doc_with_simple_table()
+        paragraph = table.cell(0, 0).paragraphs[0]
+        paragraph.clear()
+        paragraph.add_run("Label: ").bold = True
+        paragraph.add_run("value")
+
+        assert_refusal_atomic(
+            document,
+            lambda _document: update_cell(table, 0, 0, "updated"),
+            UnsupportedStructureError,
+        )
+
+    def it_refuses_a_marker_divided_cell_atomically(self):
+        document, table = _doc_with_simple_table()
+        paragraph = table.cell(0, 0).paragraphs[0]
+        paragraph.clear()
+        first = paragraph.add_run("cell ")
+        first._r.addnext(parse_xml(f'<w:proofErr {W} w:type="spellStart"/>'))
+        paragraph.add_run("value")
+
+        assert_refusal_atomic(
+            document,
+            lambda _document: update_cell(table, 0, 0, "updated"),
+            UnsupportedStructureError,
+        )
+
+    def it_refuses_unresolved_cell_formatting_atomically(self):
+        document, table = _doc_with_simple_table()
+        run = table.cell(0, 0).paragraphs[0].runs[0]
+        run._r.get_or_add_rPr().append(
+            parse_xml(f'<w:shd {W} w:fill="FFFF00"/>')
+        )
+
+        assert_refusal_atomic(
+            document,
+            lambda _document: update_cell(table, 0, 0, "updated"),
+            UnsupportedStructureError,
+        )
+
+    def it_refuses_a_character_style_divided_cell_atomically(self):
+        document, table = _doc_with_simple_table()
+        first_style = document.styles.add_style(
+            "Cell First", WD_STYLE_TYPE.CHARACTER
+        )
+        first_style.font.bold = True
+        second_style = document.styles.add_style(
+            "Cell Second", WD_STYLE_TYPE.CHARACTER
+        )
+        second_style.font.italic = True
+        paragraph = table.cell(0, 0).paragraphs[0]
+        paragraph.clear()
+        paragraph.add_run("cell ", style=first_style)
+        paragraph.add_run("value", style=second_style)
+
+        assert_refusal_atomic(
+            document,
+            lambda _document: update_cell(table, 0, 0, "updated"),
+            UnsupportedStructureError,
+        )
+
+    def it_refuses_a_hyperlink_scope_divided_cell_atomically(self):
+        document, table = _doc_with_simple_table()
+        paragraph = table.cell(0, 0).paragraphs[0]
+        paragraph.clear()
+        paragraph._p.append(
+            parse_xml(
+                f'<w:hyperlink {W} w:anchor="target">'
+                "<w:r><w:t>cell </w:t></w:r>"
+                "</w:hyperlink>"
+            )
+        )
+        paragraph.add_run("value")
+
+        assert_refusal_atomic(
+            document,
+            lambda _document: update_cell(table, 0, 0, "updated"),
+            BoundaryViolationError,
+        )
 
 
 class DescribeRowOperations:

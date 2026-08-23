@@ -115,6 +115,21 @@ class DescribeTabAndBreakMatching:
         find_one(document, "beta").replace("gamma")
         assert paragraph.text == "alpha\tgamma"
 
+    def it_refreshes_the_original_span_after_break_adjacent_narrowing(self):
+        document = _doc()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Section 3.")
+        paragraph.add_run().add_tab()
+        paragraph.add_run("Termination")
+        span = find_one(document, "Section 3. Termination", match="normalized")
+
+        result = span.replace("Section 4. Termination")
+
+        assert result.preserved_formatting_regions
+        assert span.text == "Section 4.\tTermination"
+        assert span.match_policy is None
+        span._validate_fresh()
+
 
 class DescribeOriginalViewNestedDeletions:
     def it_excludes_deletions_nested_inside_pending_insertions(self):
@@ -162,6 +177,28 @@ class DescribeConsumedAndDetachedSpans:
         with pytest.raises(TargetNotFoundError, match="structure-preserving"):
             span.replace("again")
         assert find_one(document, "thoroughly mundane").text == "thoroughly mundane"
+
+    def it_refreshes_a_partial_ordinary_span_for_reuse(self):
+        document = docx.Document()
+        document.add_paragraph("prefix target suffix")
+        span = find_one(document, "target")
+
+        span.replace("changed")
+        span.replace("renewed")
+
+        assert document.paragraphs[0].text == "prefix renewed suffix"
+        span._validate_fresh()
+
+    def it_refreshes_raw_position_across_a_paragraph_boundary(self):
+        document = docx.Document()
+        document.add_paragraph("before")
+        document.add_paragraph("target")
+        span = find_one(document, "target")
+
+        span.replace("changed")
+
+        assert span._raw_start == len("before\n")  # noqa: SLF001
+        assert span._raw_start == find_one(document, "changed")._raw_start  # noqa: SLF001
 
 
 class DescribePreservedRevisionAncestry:

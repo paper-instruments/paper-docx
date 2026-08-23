@@ -248,13 +248,31 @@ class DescribeReplaceAll:
         document.add_paragraph("{{y}}")
         payload = replace_all(document, "{{y}}", "z").to_dict()
         assert payload["schema"] == "paper_replace_all"
-        assert payload["version"] == 1
+        assert payload["version"] == 2
         assert payload["replaced_count"] == 1
-        nested = payload["results"][0]
-        assert nested["schema"] == "paper_replace"
-        assert nested["version"] == 1
-        assert nested["preserved_structure"] is False
-        assert nested["preserved_revision_ids"] == []
+        assert payload["results"][0]["schema"] == "paper_replace"
+        assert payload["results"][0]["version"] == 2
+        assert payload["results"][0]["preserved_structure"] is False
+        assert payload["results"][0]["preserved_revision_ids"] == []
+        assert payload["results"][0]["preserved_formatting_regions"] is True
+
+    def it_records_mixed_region_refusals_and_continues_safe_matches(self):
+        document = _doc()
+        document.add_paragraph("token")
+        mixed = document.add_paragraph()
+        mixed.add_run("to")
+        mixed.add_run("ken").bold = True
+
+        result = replace_all(document, "token", "value")
+
+        assert result.replaced_count == 1
+        assert result.results[0].preserved_formatting_regions
+        assert len(result.refused) == 1
+        assert result.refused[0]["error"] == "UnsupportedStructureError"
+        assert [paragraph.text for paragraph in document.paragraphs[-2:]] == [
+            "value",
+            "token",
+        ]
 
     def it_preserves_revision_identity_only_where_needed(self):
         document = _doc()
@@ -273,6 +291,7 @@ class DescribeReplaceAll:
             (),
             (801,),
         ]
+        assert all(item.preserved_formatting_regions for item in result.results)
         assert document.element.body.xpath('//w:ins[@w:id="801"]')
 
     def it_reports_exact_structure_evidence_for_each_successful_match(self):
@@ -374,6 +393,93 @@ class DescribeReplaceAll:
         assert result.replaced_count == 1
         assert len(result.refused) == 1
         assert "token value" in [block.text for block in iter_blocks(document)]
+
+    def it_locally_restores_a_late_ordinary_match_refusal(self, monkeypatch):
+        document = _doc()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("to")
+        paragraph.add_run("ken")
+        paragraph.add_run(" token")
+        original = search_module._apply_text_assignments
+        calls = 0
+
+        def refuse_second(assignments):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                assignments[0].element.text = "corrupt"
+                raise UnsupportedStructureError("forced late refusal")
+            original(assignments)
+
+        monkeypatch.setattr(search_module, "_apply_text_assignments", refuse_second)
+        result = replace_all(document, "token", "value")
+
+        assert result.replaced_count == 1
+        assert len(result.refused) == 1
+        assert paragraph.text == "token value"
+
+    def it_locally_restores_a_late_narrowed_match_refusal(self, monkeypatch):
+        document = _doc()
+        paragraphs = []
+        for _ in range(2):
+            paragraph = document.add_paragraph()
+            paragraph.add_run("Section 3.")
+            paragraph.add_run().add_tab()
+            paragraph.add_run("Termination")
+            paragraphs.append(paragraph)
+        original = search_module.Span._refresh_after_ordinary_mutation
+        refused = False
+
+        def refresh_then_refuse(candidate, *, before_prefix, after_suffix):
+            nonlocal refused
+            original(
+                candidate,
+                before_prefix=before_prefix,
+                after_suffix=after_suffix,
+            )
+            if not refused and any(atom.is_synthetic for atom in candidate._atoms):
+                refused = True
+                raise UnsupportedStructureError("forced outer refresh refusal")
+
+        monkeypatch.setattr(
+            search_module.Span,
+            "_refresh_after_ordinary_mutation",
+            refresh_then_refuse,
+        )
+        result = replace_all(
+            document,
+            "Section 3. Termination",
+            "Section 4. Termination",
+            match="normalized",
+        )
+
+        assert result.replaced_count == 1
+        assert len(result.refused) == 1
+        assert [paragraph.text for paragraph in paragraphs] == [
+            "Section 4.\tTermination",
+            "Section 3.\tTermination",
+        ]
+
+    def it_rolls_back_the_batch_after_an_unexpected_ordinary_failure(
+        self, monkeypatch
+    ):
+        document = _doc()
+        paragraph = document.add_paragraph("token token")
+        original = search_module._apply_text_assignments
+        calls = 0
+
+        def fail_second(assignments):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                assignments[0].element.text = "corrupt"
+                raise RuntimeError("forced unexpected ordinary failure")
+            original(assignments)
+
+        monkeypatch.setattr(search_module, "_apply_text_assignments", fail_second)
+        with pytest.raises(RuntimeError, match="forced unexpected ordinary"):
+            replace_all(document, "token", "value")
+        assert paragraph.text == "token token"
 
     def it_rolls_back_the_batch_after_an_unexpected_exact_failure(self, monkeypatch):
         document = _doc()

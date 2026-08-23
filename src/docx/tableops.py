@@ -275,10 +275,10 @@ def update_cell(
     """Replace one cell's visible text and return a `ReplaceResult` (0-based `row`,
     layout-grid `column`).
 
-    Runs through `Span.replace`, so the first run's formatting carries the text. Guards are
-    cell-wise: a merged header elsewhere in the table does not block a plain target cell.
-    Refuses a protected document, an out-of-range address, and a merged, multi-paragraph or
-    nested target.
+    Runs through `Span.replace`, so a non-empty cell must be one materially uniform formatting
+    and structural region. Guards are cell-wise: a merged header elsewhere in the table does not
+    block a plain target cell. Refuses a protected document, an out-of-range address, and a
+    mixed-format, marker-divided, merged, multi-paragraph, or nested target.
     """
     if tracked and not author:
         raise ValueError("author is required when tracked=True")

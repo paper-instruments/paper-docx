@@ -101,7 +101,12 @@ does not search strings or resolve blocks.
 Edit one document
 -----------------
 
-|Span| replaces matched text while untouched runs retain their formatting.
+|Span| replaces matched text only when the changed interval is one materially
+uniform formatting and structural region. Exact unchanged prefix and suffix
+text stays in its original runs, formatting, semantic scopes, and marker
+order. A mixed or unresolved region, semantic-scope boundary, or positional
+marker inside the changed interval raises |UnsupportedStructureError| before
+mutation; find and replace a smaller span on one side.
 
 ::
 
@@ -155,8 +160,9 @@ evidence, retain the deliberately chosen live span, or refine an ordinary
 
 Choose the option that matches the edit's preservation contract:
 
-- Use the default for an ordinary untracked correction. The replacement takes
-  the start run's formatting.
+- Use the default for an ordinary untracked correction inside one proved
+  uniform region. Arbitrary same-format run fragmentation is supported; the
+  first run is never treated as representative of mixed text.
 - Use ``tracked=True`` with ``author=...`` to author a new ``w:ins``/``w:del``
   redline.
 - Use ``preserve_revision=True`` only to correct current-view text wholly
@@ -173,6 +179,14 @@ Choose the option that matches the edit's preservation contract:
 These are text-structure contracts, not a promise that the serialized bytes of
 the changed XML part remain identical. The full refusal rules and result
 evidence are in :ref:`docx.search <paper_search_api>`.
+
+Successful ordinary results report ``preserved_formatting_regions=True``.
+That evidence is independent of ``preserved_revision_ids``: correcting text
+inside one authorized existing insertion reports both. Tracked edits and
+empty-cell creation report false. A no-op leaves its span reusable; a mutating
+ordinary span refreshes to the exact live result when possible and is consumed
+with re-find guidance after an unrepresentable result such as complete
+deletion.
 
 :ref:`docx.blocks <paper_blocks_api>` does the clause-level equivalent (insert,
 delete or replace whole paragraphs). :ref:`docx.tableops <paper_tableops_api>` and

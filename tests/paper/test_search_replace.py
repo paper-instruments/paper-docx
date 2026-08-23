@@ -16,6 +16,7 @@ from lxml import etree
 
 import docx
 import docx._clock
+from docx.enum.style import WD_STYLE_TYPE
 from docx.errors import (
     AmbiguousTargetError,
     BoundaryViolationError,
@@ -364,9 +365,12 @@ class DescribePlainReplace:
 
     def it_survives_a_bold_to_italic_formatting_transition(self, tmp_path: Path):
         document = _doc(FRAGMENTED)
-        find_one(document, "100/hr on a “full-").replace("90/hr on any “full-")
-        reopened = save_and_reopen(document, tmp_path / "out.docx")
-        assert "90/hr on any “full-service”" in reopened.paragraphs[0].text
+        span = find_one(document, "100/hr on a “full-")
+        assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("90/hr on any “full-"),
+            UnsupportedStructureError,
+        )
 
     def it_restores_text_and_formatting_when_inverting_a_uniform_span(
         self, tmp_path: Path
@@ -389,27 +393,163 @@ class DescribePlainReplace:
         bold_text = "".join(r.text for r in paragraph.runs if r.bold)
         assert bold_text == "$75–100/hr"
 
-    def it_restores_text_and_outside_formatting_for_mixed_spans(
+    def it_refuses_mixed_spans_instead_of_adopting_the_start_run(self):
+        document = _doc(FRAGMENTED)
+        span = find_one(document, RATE_TEXT)
+        assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("something else entirely"),
+            UnsupportedStructureError,
+        )
+
+    def it_preserves_exact_affixes_in_their_own_formatting_regions(
         self, tmp_path: Path
     ):
-        """A span covering a formatting transition collapses ITS OWN interior
-        formatting into the start run when replaced — that information is
-        destroyed by any replacement. The
-        inverse still restores the visible text exactly and never disturbs
-        formatting outside the span."""
-        document = _doc(FRAGMENTED)
-        find_one(document, RATE_TEXT).replace("something else entirely")
-        find_one(document, "something else entirely").replace(RATE_TEXT)
-        reopened = save_and_reopen(document, tmp_path / "out.docx")
-        paragraph = reopened.paragraphs[0]
-        assert paragraph.text == (
-            "Consulting rate: $75–100/hr on a “full-service” basis"
-            " — travel time billed at $37.50/hr."
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("prefix ").bold = True
+        paragraph.add_run("middle").italic = True
+        paragraph.add_run(" suffix").underline = True
+
+        result = find_one(document, "prefix middle suffix").replace(
+            "prefix changed suffix"
         )
-        # outside the span, formatting is untouched
-        plain_runs = [r.text for r in paragraph.runs if not r.bold and not r.italic]
-        assert "Consulting rate: " in plain_runs[0]
-        assert any("travel time billed" in text for text in plain_runs)
+
+        assert result.preserved_formatting_regions
+        reopened = save_and_reopen(document, tmp_path / "affixes.docx")
+        runs = reopened.paragraphs[0].runs
+        assert [(run.text, run.bold, run.italic, run.underline) for run in runs] == [
+            ("prefix ", True, None, None),
+            ("changed", None, True, None),
+            (" suffix", None, None, True),
+        ]
+
+    def it_replaces_equivalent_fragmented_runs_and_refreshes_the_span(
+        self, tmp_path: Path
+    ):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("frag").bold = True
+        paragraph.add_run("mented").bold = True
+        span = find_one(document, "fragmented")
+
+        first = span.replace("unified")
+        second = span.replace("renewed")
+
+        assert first.preserved_formatting_regions
+        assert second.preserved_formatting_regions
+        assert span.match_policy is None
+        reopened = save_and_reopen(document, tmp_path / "fragmented.docx")
+        assert reopened.paragraphs[0].text == "renewed"
+        assert "".join(run.text for run in reopened.paragraphs[0].runs if run.bold) == "renewed"
+
+    def it_keeps_a_plain_noop_reusable_and_consumes_complete_deletion(self):
+        document = docx.Document()
+        document.add_paragraph("target")
+        span = find_one(document, "target")
+
+        result = span.replace("target")
+        assert result.preserved_formatting_regions
+        span.replace("target")
+        span.replace("")
+
+        with pytest.raises(TargetNotFoundError, match="re-find"):
+            span.replace("again")
+
+    def it_updates_xml_space_for_an_ordinary_replacement(self, tmp_path: Path):
+        document = docx.Document()
+        document.add_paragraph("plain")
+
+        result = find_one(document, "plain").replace(" edged ")
+
+        assert result.preserved_formatting_regions
+        reopened = save_and_reopen(document, tmp_path / "space.docx")
+        element = reopened.paragraphs[0]._p.find(".//" + qn("w:t"))
+        assert element is not None
+        assert element.text == " edged "
+        assert element.get(qn("xml:space")) == "preserve"
+
+    def it_refuses_different_complete_run_properties_even_when_values_agree(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("alpha")
+        second = paragraph.add_run("beta")
+        first.bold = True
+        second.bold = True
+        second._r.get_or_add_rPr().find(qn("w:b")).set(qn("w:val"), "1")
+        span = find_one(document, "alphabeta")
+
+        assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("changed"),
+            UnsupportedStructureError,
+        )
+
+    def it_refuses_present_unresolved_run_formatting(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph("target")
+        rpr = paragraph.runs[0]._r.get_or_add_rPr()
+        rpr.append(parse_xml(f'<w:shd {W} w:fill="FFFF00"/>'))
+        span = find_one(document, "target")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("changed"),
+            UnsupportedStructureError,
+        )
+        assert "cannot compare" in str(refusal)
+
+    def it_refuses_distinct_effective_character_styles(self):
+        document = docx.Document()
+        first_style = document.styles.add_style(
+            "Replacement First", WD_STYLE_TYPE.CHARACTER
+        )
+        first_style.font.bold = True
+        second_style = document.styles.add_style(
+            "Replacement Second", WD_STYLE_TYPE.CHARACTER
+        )
+        second_style.font.italic = True
+        paragraph = document.add_paragraph()
+        paragraph.add_run("alpha", style=first_style)
+        paragraph.add_run("beta", style=second_style)
+        span = find_one(document, "alphabeta")
+
+        assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("changed"),
+            UnsupportedStructureError,
+        )
+
+    def it_refuses_a_positional_marker_inside_the_changed_interval(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("alpha")
+        paragraph.add_run("beta")
+        first._r.addnext(parse_xml(f'<w:proofErr {W} w:type="spellStart"/>'))
+        span = find_one(document, "alphabeta")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("changed"),
+            UnsupportedStructureError,
+        )
+        assert "positional marker" in str(refusal)
+
+    def it_preserves_a_marker_wholly_inside_an_unchanged_affix(self, tmp_path: Path):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("prefix")
+        marker = parse_xml(f'<w:proofErr {W} w:type="spellStart"/>')
+        first._r.addnext(marker)
+        paragraph.add_run(" target")
+
+        find_one(document, "prefix target").replace("prefix changed")
+
+        reopened = save_and_reopen(document, tmp_path / "marker-affix.docx")
+        children = list(reopened.paragraphs[0]._p)
+        assert [child.tag for child in children] == [
+            qn("w:r"), qn("w:proofErr"), qn("w:r")
+        ]
 
     def it_keeps_the_changed_part_budget_to_the_document_part(self, tmp_path: Path):
         source = fixture_path(FRAGMENTED)
@@ -420,6 +560,35 @@ class DescribePlainReplace:
         out = tmp_path / "out.docx"
         docx.package.patch_save(working, document, out)
         assert_changed_parts(working, out, {"word/document.xml"})
+
+    def it_keeps_a_header_edit_to_its_own_story_part(self, tmp_path: Path):
+        source = fixture_path(GAUNTLET)
+        working = tmp_path / "header-work.docx"
+        shutil.copyfile(source, working)
+        document = docx.Document(str(working))
+        result = find_one(document, "Gauntlet header, section one").replace(
+            "Reviewed header, section one"
+        )
+        out = tmp_path / "header-out.docx"
+        docx.package.patch_save(working, document, out)
+        assert result.story == "word/header1.xml"
+        assert result.preserved_formatting_regions
+        assert_changed_parts(working, out, {"word/header1.xml"})
+
+    @pytest.mark.lo_smoke
+    def it_writes_a_safe_fragmented_replacement_libreoffice_can_open(
+        self, tmp_path: Path
+    ):
+        from .harness.lo import assert_libreoffice_opens
+
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("frag").bold = True
+        paragraph.add_run("mented").bold = True
+        find_one(document, "fragmented").replace("unified")
+        out = tmp_path / "safe-fragmented.docx"
+        document.save(out)
+        assert_libreoffice_opens(out)
 
 
 class DescribePreservationPolicies:
@@ -441,6 +610,7 @@ class DescribePreservationPolicies:
             "revised", preserve_revision=True
         )
         assert result.preserved_revision_ids == (41,)
+        assert result.preserved_formatting_regions
         assert not result.preserved_structure
         assert dict(insertion.attrib) == attributes
         assert [b.text for b in iter_blocks(document, view="original")] == original
@@ -625,10 +795,14 @@ class DescribePreservationPolicies:
         result = span.replace("outsideinside", preserve_revision=True)
 
         assert result.preserved_revision_ids == (42,)
+        assert result.preserved_formatting_regions
         assert document.element.xml == before
         span.replace("outsideinside", preserve_revision=True)
 
-    def it_does_not_apply_the_revision_noop_policy_to_base_text(self):
+    @pytest.mark.parametrize("preserve_revision", [False, True])
+    def it_keeps_a_base_text_noop_reusable_across_a_bookmark(
+        self, preserve_revision: bool
+    ):
         document = docx.Document()
         paragraph = document.add_paragraph()
         first = paragraph.add_run("outside")
@@ -638,13 +812,16 @@ class DescribePreservationPolicies:
         inside = paragraph.add_run("inside")
         inside._r.addnext(parse_xml(f'<w:bookmarkEnd {W} w:id="11"/>'))
         before = document.element.xml
+        span = find_one(document, "outsideinside")
 
-        with pytest.raises(UnsupportedStructureError, match="hollow"):
-            find_one(document, "outsideinside").replace(
-                "outsideinside", preserve_revision=True
-            )
+        result = span.replace(
+            "outsideinside", preserve_revision=preserve_revision
+        )
 
+        assert result.preserved_revision_ids == ()
+        assert result.preserved_formatting_regions
         assert document.element.xml == before
+        span.replace("outsideinside", preserve_revision=preserve_revision)
 
     def it_leaves_an_exact_noop_reusable(self):
         document = docx.Document()
@@ -652,6 +829,9 @@ class DescribePreservationPolicies:
         span = find_one(document, "same")
         before = document.element.xml
         assert span.replace("same", preserve_structure=True).preserved_structure
+        assert not span.replace(
+            "same", preserve_structure=True
+        ).preserved_formatting_regions
         assert document.element.xml == before
         span.replace("same", preserve_structure=True)
 
@@ -755,6 +935,7 @@ class DescribeTrackedReplace:
         )
         assert result.deleted_text == "75–10"
         assert result.inserted_text == "85–11"
+        assert not result.preserved_formatting_regions
         reopened = save_and_reopen(document, tmp_path / "out.docx")
         blocks = list(iter_blocks(reopened))
         assert "$85–110/hr" in blocks[0].text  # current view: change applied
