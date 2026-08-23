@@ -241,3 +241,22 @@ class DescribeReplaceAll:
         )
         replace_all(document, "token", "value")
         assert transaction_count == 1
+
+    def it_preserves_revision_identity_only_where_needed(self):
+        document = _doc()
+        document.add_paragraph("base term")
+        document.add_paragraph()._p.append(
+            parse_xml(
+                f'<w:ins {W} w:id="801" w:author="Alice">'
+                "<w:r><w:t>inserted term</w:t></w:r></w:ins>"
+            )
+        )
+        result = replace_all(
+            document, "term", "phrase", preserve_revision=True
+        )
+        assert result.replaced_count == 2
+        assert sorted(item.preserved_revision_ids for item in result.results) == [
+            (),
+            (801,),
+        ]
+        assert document.element.body.xpath('//w:ins[@w:id="801"]')

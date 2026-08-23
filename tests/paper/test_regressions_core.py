@@ -137,6 +137,66 @@ class DescribeConsumedAndDetachedSpans:
             span.replace("lost edit")
 
 
+class DescribePreservedRevisionAncestry:
+    def it_refuses_a_current_match_that_bridges_hidden_nested_history(self):
+        document = _doc()
+        paragraph = document.add_paragraph()._p
+        paragraph.append(
+            parse_xml(
+                f'<w:ins {W} w:id="700" w:author="Alice">'
+                "<w:r><w:t>alpha</w:t></w:r>"
+                '<w:del w:id="701" w:author="Bob">'
+                "<w:r><w:delText>hidden</w:delText></w:r></w:del>"
+                "<w:r><w:t>beta</w:t></w:r></w:ins>"
+            )
+        )
+        span = find_one(document, "alphabeta")
+        before = document.element.xml
+        with pytest.raises(UnsupportedStructureError, match="nested"):
+            span.replace("updated", preserve_revision=True)
+        assert document.element.xml == before
+
+    def it_refuses_a_span_crossing_two_insertions(self):
+        document = _doc()
+        paragraph = document.add_paragraph()._p
+        for revision_id, text in ((710, "alpha"), (711, "beta")):
+            paragraph.append(
+                parse_xml(
+                    f'<w:ins {W} w:id="{revision_id}" w:author="Alice">'
+                    f"<w:r><w:t>{text}</w:t></w:r></w:ins>"
+                )
+            )
+        with pytest.raises(UnsupportedStructureError, match="multiple"):
+            find_one(document, "alphabeta").replace(
+                "updated", preserve_revision=True
+            )
+
+    def it_refuses_move_destinations_and_noncurrent_views(self):
+        moved = _doc()
+        moved.add_paragraph()._p.append(
+            parse_xml(
+                f'<w:moveTo {W} w:id="720" w:author="Alice">'
+                "<w:r><w:t>moved text</w:t></w:r></w:moveTo>"
+            )
+        )
+        with pytest.raises(UnsupportedStructureError, match="moves"):
+            find_one(moved, "moved text").replace(
+                "updated", preserve_revision=True
+            )
+
+        inserted = _doc()
+        inserted.add_paragraph()._p.append(
+            parse_xml(
+                f'<w:ins {W} w:id="721" w:author="Alice">'
+                "<w:r><w:t>inserted text</w:t></w:r></w:ins>"
+            )
+        )
+        with pytest.raises(UnsupportedStructureError, match="view='current'"):
+            find_one(inserted, "inserted text", view="all").replace(
+                "updated", preserve_revision=True
+            )
+
+
 class DescribeLayeredTrackedEdits:
     def it_refuses_spans_straddling_a_pending_insertion(self):
         """A w:del claiming inserted text was base content fabricates
