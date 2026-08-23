@@ -942,11 +942,11 @@ class Span:
                     preserve_revision=preserve_revision,
                     use_transaction=use_transaction,
                 )
-        preservation_noop = preserve_revision and new_text == self.text
-        self._validate_replaceable(validate_bookmarks=not preservation_noop)
         preserved_revision_ids = _preserved_insertion_ids(
             self, authorize=preserve_revision
         )
+        preservation_noop = bool(preserved_revision_ids) and new_text == self.text
+        self._validate_replaceable(validate_bookmarks=not preservation_noop)
         if not tracked:
             for atom in self._atoms:
                 if atom.in_insert and not preserve_revision:
@@ -974,7 +974,7 @@ class Span:
                         " to real content — replace the whole prompt"
                         f" ({prompt!r}) or use docx.controls.set_control_value"
                     )
-        if preserve_revision and new_text == self.text:
+        if preservation_noop:
             return ReplaceResult(
                 story=self.story,
                 deleted_text=self.text,

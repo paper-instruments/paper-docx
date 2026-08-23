@@ -330,6 +330,24 @@ class DescribeRevisionPreservation:
         assert document.element.xml == before
         span.replace("outsideinside", preserve_revision=True)
 
+    def it_does_not_apply_the_revision_noop_policy_to_base_text(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("outside")
+        first._r.addnext(
+            parse_xml(f'<w:bookmarkStart {W} w:id="11" w:name="target"/>')
+        )
+        inside = paragraph.add_run("inside")
+        inside._r.addnext(parse_xml(f'<w:bookmarkEnd {W} w:id="11"/>'))
+        before = document.element.xml
+
+        with pytest.raises(UnsupportedStructureError, match="hollow"):
+            find_one(document, "outsideinside").replace(
+                "outsideinside", preserve_revision=True
+            )
+
+        assert document.element.xml == before
+
     @pytest.mark.parametrize("revision_id", ["bad", ""])
     def it_refuses_unreportable_insertion_ids(self, revision_id: str):
         document, insertion = self._insertion_document(revision_id=revision_id)
