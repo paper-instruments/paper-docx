@@ -20,6 +20,29 @@ The rest of this page is inherited from python-docx and covers the shared
 foundation for creating and updating Microsoft Word (.docx) files.
 
 
+Selection and preservation
+--------------------------
+
+Search is exact by default across ordinary Word run fragmentation; normalized
+matching is an explicit caller choice. A live |Span| identifies selected text
+and a live |Block| identifies one attached document element. A versioned
+``BlockLocator`` carries portable exact evidence but may become stale or
+ambiguous after edits. Generic |Anchor| values remain location evidence rather
+than mutation authority. Authoritative ``near`` selection requires one unique
+nearest candidate and cannot be combined with ``nth``. See
+:ref:`docx.search <paper_search_api>`, :ref:`docx.story <paper_story_api>`, and
+:ref:`docx.blocks <paper_blocks_api>`.
+
+Ordinary untracked replacement preserves exact unchanged affixes and edits only
+one proved formatting and structural region; otherwise it refuses before
+mutation. Exact-topology replacement changes only already selected text-node
+values and never allocates new text by previous character counts. Formatting
+inspection follows the selected span, while a block or locator provides only
+paragraph-level evidence. See :ref:`docx.search <paper_search_api>`,
+:ref:`docx.formatting <paper_formatting_api>`, and
+:ref:`docx.revision <paper_revisions_api>` for the detailed contracts.
+
+
 What it can do
 --------------
 

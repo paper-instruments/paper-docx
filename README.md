@@ -64,13 +64,35 @@ result.document.paragraphs[0].text
 
 - **`docx.story`** traverses the body, headers, footers, footnotes, endnotes, comments, tracked insertions, content controls, and text boxes. Callers can view the document as it stands, before pending revisions, or all at once.
 - **`docx.search`** finds exact text by default across Word's run fragmentation, with explicit normalized matching when wanted. A returned `Span` can replace the matched text while preserving unaffected runs, emit the replacement as a tracked change, or anchor a comment.
-- **`docx.blocks`** inserts, deletes, or replaces whole paragraphs relative to a text anchor, as plain edits or as a tracked change.
+- **`docx.blocks`** inserts, deletes, or replaces whole paragraphs relative to an exact string, live target, or fail-closed portable block locator, as plain edits or as a tracked change.
 - **`docx.tableops` / `docx.numbering`** provide cell, row, and list edits that refuse on unsafe structures such as merged cells, nested tables, or undefined numbering.
 - **`docx.controls`** fills content controls with the correct value type and clears placeholder state so Word treats them as filled.
 - **`docx.bookmarks` / `docx.fields`** create bookmarks over a span and author page numbers, dates, cross-references, captions, and tables of contents as fields with placeholder results.
 - **`docx.notes` / `docx.links`** anchor real footnotes, endnotes, and hyperlinks to a matched span, so they compose with `docx.search` rather than needing their own targeting.
 - **`Drawing.replace_picture`** swaps the image behind a drawing in place, leaving its size, position, and identity alone.
 - **`docx.formatting`** resolves effective formatting through document defaults, styles, and direct formatting, with provenance for each value.
+
+### Selection and preservation
+
+Search is exact by default across Word's ordinary run fragmentation; normalized
+matching is an explicit policy. A live `Span` identifies selected characters and
+a live `Block` identifies one attached document element. A versioned
+`BlockLocator` can carry exact evidence between processes, but may refuse after
+the document changes; generic `Anchor` values are location evidence, not mutation
+authority. Contextual `near` selection is authoritative only when it has one
+unique nearest match and cannot be combined with `nth`. See the
+[search](docs/api/paper-search.rst), [story](docs/api/paper-story.rst), and
+[block](docs/api/paper-blocks.rst) references for the complete contracts.
+
+Ordinary untracked replacement preserves exact unchanged affixes and edits only
+one proved formatting and structural region. It refuses rather than infer how a
+mixed region should be restyled. `preserve_structure=True` adds an exact-topology
+contract: only already selected text-node values may change, without allocating
+new text according to old character counts. Formatting inspection follows the
+supplied span; a block or locator provides paragraph-level formatting only. See
+the [replacement](docs/api/paper-search.rst),
+[formatting](docs/api/paper-formatting.rst), and
+[revision](docs/api/paper-revisions.rst) references for details.
 
 ### Reviewing
 

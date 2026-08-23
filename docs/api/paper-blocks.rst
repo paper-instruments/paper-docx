@@ -4,7 +4,8 @@
 Block operations
 ================
 
-*paper-docx addition.* Make clause-level edits relative to a content anchor.
+*paper-docx addition.* Make clause-level edits relative to an exact or live
+paragraph target.
 Insert, delete, or replace whole paragraphs, plainly or as a tracked redline
 that stamps paragraph marks so Word accepts or rejects them exactly.
 ``insert_blocks_after`` takes typed |RichParagraph|/|ListBlock|/|TableBlock|
