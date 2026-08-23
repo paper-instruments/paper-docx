@@ -279,6 +279,45 @@ class DescribeReplaceAll:
         )
         assert transaction_count == 1
 
+    def it_reuses_one_bookmark_census_for_an_exact_batch(self, monkeypatch):
+        document = _doc()
+        document.add_paragraph("token token token")
+        census_count = 0
+        original = search_module._bookmark_census
+
+        def counted_census(*args, **kwargs):
+            nonlocal census_count
+            census_count += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(search_module, "_bookmark_census", counted_census)
+        result = replace_all(
+            document, "token", "value", preserve_structure=True
+        )
+
+        assert result.replaced_count == 3
+        assert census_count == 1
+
+    def it_keeps_bookmark_hollowing_checks_per_match_in_an_exact_batch(self):
+        document = _doc()
+        paragraph = document.add_paragraph()
+        start = parse_xml(
+            f'<w:bookmarkStart {W} w:id="91" w:name="protected"/>'
+        )
+        paragraph._p.append(start)
+        paragraph.add_run("token")
+        paragraph._p.append(parse_xml(f'<w:bookmarkEnd {W} w:id="91"/>'))
+        document.add_paragraph("token")
+
+        result = replace_all(
+            document, "token", "", preserve_structure=True
+        )
+
+        assert result.replaced_count == 1
+        assert len(result.refused) == 1
+        assert result.refused[0]["error"] == "UnsupportedStructureError"
+        assert "token" in [block.text for block in iter_blocks(document)]
+
     def it_locally_restores_a_late_per_match_refusal(self, monkeypatch):
         document = _doc()
         document.add_paragraph("token token")

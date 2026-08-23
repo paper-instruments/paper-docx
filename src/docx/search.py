@@ -107,12 +107,29 @@ class _Atom:
 
 
 @dataclass(frozen=True)
+class _BookmarkRange:
+    """One named bookmark and the text elements inside its marker pair."""
+
+    name: str
+    text_elements: "Tuple[_Element, ...]"
+
+
+@dataclass(frozen=True)
+class _BookmarkCensus:
+    """Story bookmark ranges indexed by their enclosed text elements."""
+
+    ranges: "Tuple[_BookmarkRange, ...]"
+    by_element: "dict[int, Tuple[int, ...]]"
+
+
+@dataclass(frozen=True)
 class _FreshnessCensus:
     """One story census shared by a synchronous replacement batch."""
 
     atoms: "Tuple[_Atom, ...]"
     by_element: "dict[int, _Atom]"
     positions: "dict[int, int]"
+    bookmarks: "Optional[_BookmarkCensus]" = None
 
 
 _CONTEXT_SCOPE_TAGS = frozenset(
@@ -991,7 +1008,15 @@ class Span:
         if preserve_structure:
             assignments = _exact_text_assignments(self, new_text)
             _refuse_hollowed_bookmarks(
-                _hollowed_bookmarks_after(assignments, self._atoms)
+                _hollowed_bookmarks_after(
+                    assignments,
+                    self._atoms,
+                    census=(
+                        self._freshness_census.bookmarks
+                        if self._freshness_census is not None
+                        else None
+                    ),
+                )
             )
             result = ReplaceResult(
                 story=self.story,
@@ -1572,40 +1597,65 @@ def _apply_text_assignments(assignments: "Sequence[_TextAssignment]") -> None:
 
 
 def _hollowed_bookmarks_after(
-    assignments: "Sequence[_TextAssignment]", atoms: "Sequence[_Atom]"
+    assignments: "Sequence[_TextAssignment]",
+    atoms: "Sequence[_Atom]",
+    *,
+    census: "Optional[_BookmarkCensus]" = None,
 ) -> "List[str]":
     """Non-point bookmarks emptied by the planned exact assignments."""
     paragraph = atoms[0].paragraph
     if paragraph is None:
         return []
+    if census is None:
+        census = _bookmark_census(paragraph.getroottree().getroot())
     planned = {id(item.element): item.after for item in assignments}
-    # A character replacement is same-paragraph, but the bookmark containing
-    # it need not be. Scan the complete story tree so markers in adjacent
-    # paragraphs still protect their sole enclosed text from being emptied.
-    stream = list(paragraph.getroottree().getroot().iter())
-    starts: "dict[Optional[str], Tuple[int, str]]" = {}
-    hollowed: "List[str]" = []
-    for position, node in enumerate(stream):
+    candidates = {
+        range_index
+        for assignment in assignments
+        if assignment.before and not assignment.after
+        for range_index in census.by_element.get(id(assignment.element), ())
+    }
+    return [
+        bookmark.name
+        for range_index, bookmark in enumerate(census.ranges)
+        if range_index in candidates
+        and all(
+            not planned.get(id(element), element.text or "")
+            for element in bookmark.text_elements
+        )
+    ]
+
+
+def _bookmark_census(root: "_Element") -> _BookmarkCensus:
+    """Index non-point bookmark text with one story traversal."""
+    active: "dict[Optional[str], Tuple[str, List[_Element]]]" = {}
+    ranges: "List[_BookmarkRange]" = []
+    for node in root.iter():
         if node.tag == _BOOKMARK_START:
-            starts[node.get(_W_ID)] = (position, node.get(_W_NAME) or "")
+            active[node.get(_W_ID)] = (node.get(_W_NAME) or "", [])
+        elif node.tag in (_T, _DEL_TEXT) and (node.text or ""):
+            for _name, text_elements in active.values():
+                text_elements.append(node)
         elif node.tag == _BOOKMARK_END:
-            entry = starts.get(node.get(_W_ID))
+            entry = active.pop(node.get(_W_ID), None)
             if entry is None:
                 continue
-            start_pos, name = entry
-            if name == "_GoBack":
-                continue
-            text_elements = [
-                inner
-                for inner in stream[start_pos + 1 : position]
-                if inner.tag in (_T, _DEL_TEXT) and (inner.text or "")
-            ]
-            if text_elements and all(
-                not planned.get(id(inner), inner.text or "")
-                for inner in text_elements
-            ):
-                hollowed.append(name)
-    return hollowed
+            name, text_elements = entry
+            if name != "_GoBack" and text_elements:
+                ranges.append(
+                    _BookmarkRange(name=name, text_elements=tuple(text_elements))
+                )
+    by_element_lists: "dict[int, List[int]]" = {}
+    for range_index, bookmark in enumerate(ranges):
+        for element in bookmark.text_elements:
+            by_element_lists.setdefault(id(element), []).append(range_index)
+    return _BookmarkCensus(
+        ranges=tuple(ranges),
+        by_element={
+            element_id: tuple(range_indexes)
+            for element_id, range_indexes in by_element_lists.items()
+        },
+    )
 
 
 def _refuse_hollowed_bookmarks(hollowed: "Sequence[str]") -> None:
@@ -1871,6 +1921,7 @@ def replace_all(
             positions={
                 id(atom.element): index for index, atom in enumerate(atoms)
             },
+            bookmarks=_bookmark_census(root) if preserve_structure else None,
         )
         for span in story_spans:
             span._freshness_census = census
