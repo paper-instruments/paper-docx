@@ -166,13 +166,16 @@ def insert_blocks_from(
     """Copy a block range from `source` after `anchor`, and return a `CompositionReport`.
 
     Reconciles styles, numbering, media and bookmarks so the copy keeps its appearance.
-    `start_anchor`/`end_anchor` address SOURCE top-level body blocks. Both endpoints are included
-    by default; setting either inclusion flag false excludes that endpoint's block. With no
-    `end_anchor`, `count` blocks are copied beginning at the start block or the following block
-    when `include_start=False`. With an `end_anchor`, `count` is validated but does not limit the
-    range. `include_end=False` without an end anchor raises `ValueError`. Refuses an empty
-    adjusted range, a protected destination, an anchor that is missing or ambiguous, and source
-    content this package cannot carry over: revisions, comments, OLE objects, EMF/WMF images.
+    `start_anchor` and `end_anchor` identify SOURCE paragraphs whose containing top-level body
+    blocks form the range endpoints. A direct body paragraph or a paragraph in a top-level
+    content control can serve as an endpoint; paragraphs in tables, table cells, and text boxes
+    cannot. Both endpoints are included by default; setting either inclusion flag false excludes
+    that endpoint's block. With no `end_anchor`, `count` blocks are copied beginning at the start
+    block or the following block when `include_start=False`. With an `end_anchor`, `count` is
+    validated but does not limit the range. `include_end=False` without an end anchor raises
+    `ValueError`. Refuses an empty adjusted range, a protected destination, an anchor that is
+    missing or ambiguous, and source content this package cannot carry over: revisions,
+    comments, OLE objects, EMF/WMF images.
     """
     _validate_styles_mode(styles)
     if end_anchor is None and not include_end:

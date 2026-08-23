@@ -13,8 +13,11 @@ part the operation touched.
 Range endpoints
 ---------------
 
-``start_anchor`` and ``end_anchor`` address top-level source body blocks. Both
-are included by default. With an end anchor, the four combinations are:
+``start_anchor`` and ``end_anchor`` identify source paragraphs whose containing
+top-level body blocks form the range endpoints. A direct body paragraph or a
+paragraph in a top-level content control can serve as an endpoint. Paragraphs
+in tables, table cells, and text boxes cannot. Both endpoints are included by
+default. With an end anchor, the four combinations are:
 
 .. list-table::
    :header-rows: 1
