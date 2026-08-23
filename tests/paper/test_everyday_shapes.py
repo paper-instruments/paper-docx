@@ -7,15 +7,16 @@ break-tolerant replace, hyperlink-interior edits, and batch replace.
 from __future__ import annotations
 
 import datetime as dt
-from pathlib import Path
+from contextlib import contextmanager
 
 import pytest
 
 import docx
+import docx.search as search_module
 from docx.errors import BoundaryViolationError, UnsupportedStructureError
-from docx.oxml.ns import nsdecls, qn
+from docx.oxml.ns import nsdecls
 from docx.oxml.parser import parse_xml
-from docx.search import find_one, find_text, replace_all
+from docx.search import find_one, replace_all
 from docx.story import iter_blocks
 
 from .harness.paths import fixture_path
@@ -213,5 +214,30 @@ class DescribeReplaceAll:
         document = _doc()
         document.add_paragraph("{{y}}")
         payload = replace_all(document, "{{y}}", "z").to_dict()
-        assert payload["schema"] == "paper_replace_all" and payload["version"] == 1
+        assert payload["schema"] == "paper_replace_all"
+        assert payload["version"] == 1
         assert payload["replaced_count"] == 1
+        nested = payload["results"][0]
+        assert nested["schema"] == "paper_replace"
+        assert nested["version"] == 1
+        assert nested["preserved_structure"] is False
+        assert nested["preserved_revision_ids"] == []
+
+    def it_uses_only_the_outer_batch_transaction(self, monkeypatch):
+        document = _doc()
+        document.add_paragraph("token token")
+        transaction_count = 0
+        original = search_module.rollback_on_error
+
+        @contextmanager
+        def counted_transaction(*args, **kwargs):
+            nonlocal transaction_count
+            transaction_count += 1
+            with original(*args, **kwargs):
+                yield
+
+        monkeypatch.setattr(
+            search_module, "rollback_on_error", counted_transaction
+        )
+        replace_all(document, "token", "value")
+        assert transaction_count == 1
