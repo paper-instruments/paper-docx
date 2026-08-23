@@ -896,8 +896,8 @@ class Span:
     ) -> ReplaceResult:
         """Implementation shared with the already-transactional batch path.
 
-        `use_transaction` is consumed by replacement plans that need multiple
-        assignments; ordinary and tracked paths retain their current behavior.
+        `use_transaction` is reserved for text-assignment plans layered on this
+        substrate; this commit's ordinary and tracked paths do not consume it.
         """
         if tracked and not author:
             raise ValueError("author is required when tracked=True")
