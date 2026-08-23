@@ -136,6 +136,14 @@ class DescribeConsumedAndDetachedSpans:
         with pytest.raises(TargetNotFoundError, match="removed"):
             span.replace("lost edit")
 
+    def it_consumes_a_span_after_exact_structure_replacement(self):
+        document = _doc()
+        span = find_one(document, "perfectly ordinary")
+        span.replace("thoroughly mundane", preserve_structure=True)
+        with pytest.raises(TargetNotFoundError, match="structure-preserving"):
+            span.replace("again")
+        assert find_one(document, "thoroughly mundane").text == "thoroughly mundane"
+
 
 class DescribePreservedRevisionAncestry:
     def it_refuses_a_current_match_that_bridges_hidden_nested_history(self):
@@ -194,6 +202,19 @@ class DescribePreservedRevisionAncestry:
         with pytest.raises(UnsupportedStructureError, match="view='current'"):
             find_one(inserted, "inserted text", view="all").replace(
                 "updated", preserve_revision=True
+            )
+
+    def it_keeps_structure_preservation_orthogonal_to_revision_authorization(self):
+        document = _doc()
+        document.add_paragraph()._p.append(
+            parse_xml(
+                f'<w:ins {W} w:id="730" w:author="Alice">'
+                "<w:r><w:t>inserted text</w:t></w:r></w:ins>"
+            )
+        )
+        with pytest.raises(UnsupportedStructureError, match="pending tracked insertion"):
+            find_one(document, "inserted text").replace(
+                "updated", preserve_structure=True
             )
 
 

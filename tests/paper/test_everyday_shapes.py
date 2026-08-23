@@ -223,25 +223,6 @@ class DescribeReplaceAll:
         assert nested["preserved_structure"] is False
         assert nested["preserved_revision_ids"] == []
 
-    def it_uses_only_the_outer_batch_transaction(self, monkeypatch):
-        document = _doc()
-        document.add_paragraph("token token")
-        transaction_count = 0
-        original = search_module.rollback_on_error
-
-        @contextmanager
-        def counted_transaction(*args, **kwargs):
-            nonlocal transaction_count
-            transaction_count += 1
-            with original(*args, **kwargs):
-                yield
-
-        monkeypatch.setattr(
-            search_module, "rollback_on_error", counted_transaction
-        )
-        replace_all(document, "token", "value")
-        assert transaction_count == 1
-
     def it_preserves_revision_identity_only_where_needed(self):
         document = _doc()
         document.add_paragraph("base term")
@@ -260,3 +241,122 @@ class DescribeReplaceAll:
             (801,),
         ]
         assert document.element.body.xpath('//w:ins[@w:id="801"]')
+
+    def it_reports_exact_structure_evidence_for_each_successful_match(self):
+        document = _doc()
+        document.add_paragraph("token token")
+        result = replace_all(
+            document, "token", "value", preserve_structure=True
+        )
+        assert result.replaced_count == 2
+        assert all(item.preserved_structure for item in result.results)
+        assert "value value" in [block.text for block in iter_blocks(document)]
+
+    @pytest.mark.parametrize("preserve_structure", [False, True])
+    def it_uses_only_the_outer_batch_transaction(
+        self, monkeypatch, preserve_structure: bool
+    ):
+        document = _doc()
+        document.add_paragraph("token token")
+        transaction_count = 0
+        original = search_module.rollback_on_error
+
+        @contextmanager
+        def counted_transaction(*args, **kwargs):
+            nonlocal transaction_count
+            transaction_count += 1
+            with original(*args, **kwargs):
+                yield
+
+        monkeypatch.setattr(
+            search_module, "rollback_on_error", counted_transaction
+        )
+        replace_all(
+            document,
+            "token",
+            "value",
+            preserve_structure=preserve_structure,
+        )
+        assert transaction_count == 1
+
+    def it_reuses_one_bookmark_census_for_an_exact_batch(self, monkeypatch):
+        document = _doc()
+        document.add_paragraph("token token token")
+        census_count = 0
+        original = search_module._bookmark_census
+
+        def counted_census(*args, **kwargs):
+            nonlocal census_count
+            census_count += 1
+            return original(*args, **kwargs)
+
+        monkeypatch.setattr(search_module, "_bookmark_census", counted_census)
+        result = replace_all(
+            document, "token", "value", preserve_structure=True
+        )
+
+        assert result.replaced_count == 3
+        assert census_count == 1
+
+    def it_keeps_bookmark_hollowing_checks_per_match_in_an_exact_batch(self):
+        document = _doc()
+        paragraph = document.add_paragraph()
+        start = parse_xml(
+            f'<w:bookmarkStart {W} w:id="91" w:name="protected"/>'
+        )
+        paragraph._p.append(start)
+        paragraph.add_run("token")
+        paragraph._p.append(parse_xml(f'<w:bookmarkEnd {W} w:id="91"/>'))
+        document.add_paragraph("token")
+
+        result = replace_all(
+            document, "token", "", preserve_structure=True
+        )
+
+        assert result.replaced_count == 1
+        assert len(result.refused) == 1
+        assert result.refused[0]["error"] == "UnsupportedStructureError"
+        assert "token" in [block.text for block in iter_blocks(document)]
+
+    def it_locally_restores_a_late_per_match_refusal(self, monkeypatch):
+        document = _doc()
+        document.add_paragraph("token token")
+        original = search_module._apply_text_assignments
+        calls = 0
+
+        def refuse_second(assignments):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                assignments[0].element.text = "corrupt"
+                raise UnsupportedStructureError("forced late refusal")
+            original(assignments)
+
+        monkeypatch.setattr(
+            search_module, "_apply_text_assignments", refuse_second
+        )
+        result = replace_all(
+            document, "token", "value", preserve_structure=True
+        )
+        assert result.replaced_count == 1
+        assert len(result.refused) == 1
+        assert "token value" in [block.text for block in iter_blocks(document)]
+
+    def it_rolls_back_the_batch_after_an_unexpected_exact_failure(self, monkeypatch):
+        document = _doc()
+        paragraph = document.add_paragraph("token token")
+        original = search_module._apply_text_assignments
+        calls = 0
+
+        def fail_second(assignments):
+            nonlocal calls
+            calls += 1
+            if calls == 2:
+                assignments[0].element.text = "corrupt"
+                raise RuntimeError("forced unexpected failure")
+            original(assignments)
+
+        monkeypatch.setattr(search_module, "_apply_text_assignments", fail_second)
+        with pytest.raises(RuntimeError, match="forced unexpected"):
+            replace_all(document, "token", "value", preserve_structure=True)
+        assert paragraph.text == "token token"
