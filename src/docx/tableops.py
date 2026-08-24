@@ -13,7 +13,7 @@ from __future__ import annotations
 
 import copy
 import datetime as dt
-from typing import TYPE_CHECKING, Optional, Sequence, Tuple
+from typing import TYPE_CHECKING, Iterator, Optional, Sequence, Tuple, cast
 
 from docx import _clock
 from docx._guard import check_install
@@ -37,12 +37,19 @@ from docx.story import Anchor, _iter_block_elements, _story_elements, content_ha
 
 if TYPE_CHECKING:
     from docx.document import Document
-    from docx.oxml.table import CT_Tc
+    from docx.oxml.table import CT_Row, CT_Tc
+    from docx.oxml.text.font import CT_RPr
+    from docx.oxml.xmlchemy import BaseOxmlElement
     from docx.table import Table, _Cell
 
 check_install()
 
 _T = qn("w:t")
+
+_P = qn("w:p")
+_P_PR = qn("w:pPr")
+_R = qn("w:r")
+_R_PR = qn("w:rPr")
 
 
 _TC_PR = qn("w:tcPr")
@@ -125,16 +132,22 @@ def _row_continues_merge_from_above(tr) -> bool:
     return False
 
 
-def _refuse_tracked_template_row(tr, *, row: int) -> None:
-    from docx.revision import _MARKUP_SCAN_TAGS
+def _refuse_tracked_template_row(tr: "CT_Row", *, row: int) -> None:
+    from docx.revision import _MARKUP_SCAN_TAGS  # pyright: ignore[reportPrivateUsage]
 
-    revision = next(
-        (node for node in tr.iter() if node.tag in _MARKUP_SCAN_TAGS),
-        None,
-    )
+    revision = None
+    for node in cast("Iterator[BaseOxmlElement]", tr.iter()):
+        if node.tag not in _MARKUP_SCAN_TAGS:
+            continue
+        current = node.getparent()
+        while current is not None and current is not tr and current.tag != _TC:
+            current = current.getparent()
+        if current is None or current is tr:
+            revision = node
+            break
     if revision is None:
         return
-    marker = revision.tag.rpartition("}")[2]
+    marker = str(revision.tag).rpartition("}")[2]
     raise UnsupportedStructureError(
         f"template row {row} contains tracked revision metadata ({marker});"
         " resolve its pending revisions before copying formatting from it"
@@ -370,8 +383,14 @@ def insert_row_after(
     """Insert a row after `row` (0-based), copying formatting from `copy_format_from` and
     filling `values`.
 
-    Refuses a protected document, an out-of-range index, and a target row that is merged or
-    holds a nested table.
+    The copied template must have one direct paragraph per physical cell, containing
+    only plain text runs with identical complete direct run properties. Cell and
+    paragraph properties are preserved. Complex or conflicting templates refuse
+    before population with guidance to use a simpler uniform template; they are never
+    repaired or flattened.
+
+    Refuses a protected document, an out-of-range index, and a target row that is merged
+    or holds a nested table.
     """
     _refuse_if_protected(_document_of(table), "insert a table row")
     rows = table.rows
@@ -382,6 +401,14 @@ def insert_row_after(
         raise TargetNotFoundError(
             f"copy_format_from row {template_index} does not exist"
         )
+    template_tr = rows[template_index]._tr
+    for cell_index, template_tc in enumerate(_row_cells(template_tr)):
+        if _cell_has_nested_table(template_tc):
+            _refuse_copied_cell_template(
+                template_index,
+                cell_index,
+                "contains a nested table",
+            )
     _refuse_row_op(table, affected_rows={template_index}, splits_before=row + 1)
     from docx.search import _validate_writable_text
 
@@ -395,7 +422,6 @@ def insert_row_after(
     # a horizontally merged template row repeats its merged tc through
     # rows[..].cells, so positional value assignment would silently drop or
     # misplace values — refuse instead
-    template_tr = rows[template_index]._tr
     _refuse_tracked_template_row(template_tr, row=template_index)
     if any(
         tc.find(_TC_PR) is not None and tc.find(_TC_PR).find(_GRID_SPAN) is not None
@@ -412,36 +438,179 @@ def insert_row_after(
     new_tr = copy.deepcopy(rows[template_index]._tr)
     from docx.table import _Cell
 
-    detached_cells = tuple(_Cell(tc, table) for tc in _row_cells(new_tr))
-    for index, cell in enumerate(detached_cells):
+    detached_cells = tuple(
+        _Cell(cast("CT_Tc", tc), table) for tc in _row_cells(new_tr)
+    )
+    template_rprs = tuple(
+        _copied_cell_template_rpr(
+            cell,
+            row=template_index,
+            column=index,
+        )
+        for index, cell in enumerate(detached_cells)
+    )
+    for index, (cell, template_rpr) in enumerate(zip(detached_cells, template_rprs)):
         _set_cell_text_keeping_format(
-            cell, values[index] if index < len(values) else ""
+            cell,
+            values[index] if index < len(values) else "",
+            template_rpr,
         )
     rows[row]._tr.addnext(new_tr)
 
 
-def _set_cell_text_keeping_format(cell: "_Cell", text: str) -> None:
-    """Replace a copied cell's text, keeping its paragraph and run formatting
-    (the upstream `.text` setter would drop the template's run properties)."""
-    if next(iter(cell._tc.iter(_SDT)), None) is not None:
-        raise UnsupportedStructureError(
-            "template cell contains a content control that cannot be populated"
-            " safely; nothing was changed"
+def _refuse_copied_cell_template(row: int, column: int, detail: str) -> None:
+    raise UnsupportedStructureError(
+        f"template row {row} physical cell {column} {detail}; populating it"
+        " would discard or flatten structure or formatting. Use a simpler"
+        " uniform template cell with exactly one paragraph of plain text runs"
+        " sharing identical complete direct run properties"
+    )
+
+
+def _copied_cell_template_rpr(
+    cell: "_Cell", *, row: int, column: int
+) -> "Optional[CT_RPr]":
+    """Return the one proved direct rPr for a plain copied-cell template."""
+    from lxml import etree
+
+    from docx.revision import _MARKUP_SCAN_TAGS  # pyright: ignore[reportPrivateUsage]
+
+    revision = next(
+        (
+            node
+            for node in cast(
+                "Iterator[BaseOxmlElement]",
+                cell._tc.iter(),  # pyright: ignore[reportPrivateUsage]
+            )
+            if node.tag in _MARKUP_SCAN_TAGS
+        ),
+        None,
+    )
+    if revision is not None:
+        marker = str(revision.tag).rpartition("}")[2]
+        _refuse_copied_cell_template(
+            row,
+            column,
+            f"contains tracked revision metadata ({marker})",
         )
-    if not cell.paragraphs:
-        raise UnsupportedStructureError(
-            "template cell has no direct paragraph that can be populated safely;"
-            " nothing was changed"
+
+    children = list(
+        cast(
+            "Iterator[BaseOxmlElement]",
+            iter(cell._tc),  # pyright: ignore[reportPrivateUsage]
         )
+    )
+    paragraphs = [child for child in children if child.tag == _P]
+    unexpected = [child for child in children if child.tag not in (_TC_PR, _P)]
+    if unexpected:
+        marker = str(unexpected[0].tag).rpartition("}")[2]
+        detail = (
+            "contains a content control"
+            if unexpected[0].tag == _SDT
+            else f"contains unsupported cell content ({marker})"
+        )
+        _refuse_copied_cell_template(
+            row,
+            column,
+            detail,
+        )
+    if len(paragraphs) != 1:
+        _refuse_copied_cell_template(
+            row,
+            column,
+            f"has {len(paragraphs)} direct paragraphs instead of exactly one",
+        )
+    if sum(child.tag == _TC_PR for child in children) > 1:
+        _refuse_copied_cell_template(
+            row,
+            column,
+            "contains duplicate cell properties",
+        )
+    tc_pr = next((child for child in children if child.tag == _TC_PR), None)
+    if tc_pr is not None and children[0] is not tc_pr:
+        _refuse_copied_cell_template(
+            row,
+            column,
+            "has cell properties after cell content",
+        )
+
+    paragraph = paragraphs[0]
+    paragraph_children = list(paragraph)
+    if sum(child.tag == _P_PR for child in paragraph_children) > 1:
+        _refuse_copied_cell_template(
+            row,
+            column,
+            "contains duplicate paragraph properties",
+        )
+    p_pr = next((child for child in paragraph_children if child.tag == _P_PR), None)
+    if p_pr is not None and paragraph_children[0] is not p_pr:
+        _refuse_copied_cell_template(
+            row,
+            column,
+            "has paragraph properties after paragraph content",
+        )
+    if any(child.tag not in (_P_PR, _R) for child in paragraph_children):
+        marker = next(
+            str(child.tag).rpartition("}")[2]
+            for child in paragraph_children
+            if child.tag not in (_P_PR, _R)
+        )
+        _refuse_copied_cell_template(
+            row,
+            column,
+            f"contains unsupported paragraph content ({marker})",
+        )
+
+    evidence: "list[tuple[bytes, Optional[CT_RPr]]]" = []
+    has_explicit_empty_rpr = False
+    for run in (child for child in paragraph_children if child.tag == _R):
+        run_children = list(run)
+        rprs = [child for child in run_children if child.tag == _R_PR]
+        if len(rprs) > 1 or (rprs and run_children[0] is not rprs[0]):
+            _refuse_copied_cell_template(
+                row,
+                column,
+                "contains malformed or duplicate run properties",
+            )
+        unsupported = [child for child in run_children if child.tag not in (_R_PR, _T)]
+        if unsupported:
+            marker = str(unsupported[0].tag).rpartition("}")[2]
+            _refuse_copied_cell_template(
+                row,
+                column,
+                f"contains non-text run content ({marker})",
+            )
+        text_bearing = any(child.tag == _T and bool(child.text) for child in run_children)
+        if not text_bearing:
+            has_explicit_empty_rpr = has_explicit_empty_rpr or bool(rprs)
+            continue
+        rpr = cast("Optional[CT_RPr]", rprs[0] if rprs else None)
+        canonical = b"" if rpr is None else etree.tostring(rpr, method="c14n")
+        evidence.append((canonical, rpr))
+
+    if not evidence:
+        if has_explicit_empty_rpr:
+            _refuse_copied_cell_template(
+                row,
+                column,
+                "has only styled empty runs, which do not prove formatting intent",
+            )
+        return None
+    first_canonical, first_rpr = evidence[0]
+    if any(canonical != first_canonical for canonical, _rpr in evidence[1:]):
+        _refuse_copied_cell_template(
+            row,
+            column,
+            "has text runs with conflicting complete direct run properties",
+        )
+    return copy.deepcopy(first_rpr) if first_rpr is not None else None
+
+
+def _set_cell_text_keeping_format(
+    cell: "_Cell", text: str, template_rpr: "Optional[CT_RPr]"
+) -> None:
+    """Populate one preflighted copied cell, preserving pPr and proved rPr."""
     paragraph = cell.paragraphs[0]
-    template_rpr = None
-    for run in paragraph.runs:
-        rpr = run._r.find(qn("w:rPr"))
-        if rpr is not None:
-            template_rpr = copy.deepcopy(rpr)
-            break
-    for extra in cell.paragraphs[1:]:
-        extra._p.getparent().remove(extra._p)
     paragraph.clear()
     run = paragraph.add_run(text)
     if template_rpr is not None:
