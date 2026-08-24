@@ -490,6 +490,48 @@ class DescribePlainReplace:
         assert paragraph.text == "AXB"
         assert "".join(run.text for run in paragraph.runs if run.bold) == "AXB"
 
+    def it_refuses_an_insertion_across_a_proofing_marker_atomically(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("A")
+        first.bold = True
+        first._r.addnext(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(f'<w:proofErr {W} w:type="spellStart"/>')
+        )
+        paragraph.add_run("B").bold = True
+        span = find_one(document, "AB")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("AXB"),
+            UnsupportedStructureError,
+        )
+
+        assert "positional marker" in str(refusal)
+
+    def it_refuses_an_insertion_across_a_bookmark_boundary_atomically(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("A")
+        first.bold = True
+        first._r.addnext(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(f'<w:bookmarkStart {W} w:id="42" w:name="target"/>')
+        )
+        last = paragraph.add_run("B")
+        last.bold = True
+        last._r.addnext(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(f'<w:bookmarkEnd {W} w:id="42"/>')
+        )
+        span = find_one(document, "AB")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("AXB"),
+            UnsupportedStructureError,
+        )
+
+        assert "bookmark 'target'" in str(refusal)
+
     def it_allows_equivalent_distinct_inline_wrappers(self):
         document = docx.Document()
         paragraph = document.add_paragraph()

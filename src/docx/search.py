@@ -548,14 +548,17 @@ def _ordinary_outcome(span: "Span", new_text: str) -> _OrdinaryOutcome:
                 "the insertion point has no writable text region; re-find text"
                 " on one side of the insertion point"
             )
-        first_evidence = _destination_evidence(span._atoms[candidates[0][0]])
+        candidate_atoms = [
+            span._atoms[atom_index]  # pyright: ignore[reportPrivateUsage]
+            for atom_index, _offset in candidates
+        ]
+        first_evidence = _destination_evidence(candidate_atoms[0])
         if any(
-            not _same_destination(
-                first_evidence, _destination_evidence(span._atoms[atom_index])
-            )
-            for atom_index, _offset in candidates[1:]
+            not _same_destination(first_evidence, _destination_evidence(atom))
+            for atom in candidate_atoms[1:]
         ):
             _refuse_ambiguous_affix_alignment()
+        _refuse_intervening_positional_nodes(candidate_atoms)
         destination_index, destination_offset = candidates[0]
         segments = ((destination_index, destination_offset, destination_offset),)
     else:
