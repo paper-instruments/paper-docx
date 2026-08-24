@@ -210,7 +210,7 @@ class DescribeSequenceMatcherBudget:
         ):
             compare(original, revised, author="Reviewer", date=FROZEN)
 
-    def it_refuses_changed_text_before_quadratic_similarity_work(
+    def it_avoids_character_similarity_work_for_one_changed_block(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ):
         def build(text):
@@ -232,10 +232,9 @@ class DescribeSequenceMatcherBudget:
         monkeypatch.setattr(compare_impl, "SequenceMatcher", guarded_matcher)
         monkeypatch.setattr(compare_impl, "_MAX_TEXT_SEQUENCE_CELLS", 4)
 
-        with pytest.raises(
-            UnsupportedStructureError, match="changed-region text.*budget"
-        ):
-            compare(original, revised, author="Reviewer", date=FROZEN)
+        result = compare(original, revised, author="Reviewer", date=FROZEN)
+
+        assert result.document.revisions
 
     def it_refuses_token_matching_before_quadratic_work(
         self, monkeypatch: pytest.MonkeyPatch
