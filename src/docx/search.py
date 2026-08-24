@@ -939,33 +939,57 @@ class Span:
         changed_new = new_text[prefix_len : len(new_text) - suffix_len]
         if not changed_old and not changed_new:
             return None
-        # map the changed char range onto the atom slice (paragraph
-        # separators are None pieces: a change touching one cannot narrow —
-        # validation will refuse it as a cross-paragraph change)
+        # Map the changed char range onto the atom slice. A zero-width change
+        # keeps every writable atom touching that boundary so destination
+        # proof sees both sides without retaining unrelated affix atoms.
+        # Paragraph separators are None pieces: a change touching one cannot
+        # narrow, so validation will refuse it as a cross-paragraph change.
         target_start = prefix_len
         target_end = len(self.text) - suffix_len
-        position = 0
-        start_idx = end_idx = None
-        start_off = end_off = 0
-        for atom_index, text in self._in_span_pieces():
-            length = len(text)
-            base = 0
-            if atom_index == 0:
-                base = self._start_offset
-            if start_idx is None and position + length > target_start:
-                if atom_index is None:
-                    return None  # change begins on a paragraph separator
-                start_idx = atom_index
-                start_off = base + (target_start - position)
-            if position + length >= target_end:
-                if atom_index is None and end_idx is None:
-                    return None  # change ends on a paragraph separator
-                end_idx = atom_index if atom_index is not None else end_idx
-                end_off = base + (target_end - position) if atom_index is not None else end_off
-                break
-            position += length
-        if start_idx is None or end_idx is None:
-            return None  # zero-length change at an edge; let validation decide
+        if target_start == target_end:
+            candidates: "List[Tuple[int, int]]" = []
+            position = 0
+            for atom_index, text in self._in_span_pieces():
+                piece_end = position + len(text)
+                if atom_index is not None and position <= target_start <= piece_end:
+                    atom = self._atoms[atom_index]
+                    if not atom.is_synthetic:
+                        base = self._start_offset if atom_index == 0 else 0
+                        candidates.append(
+                            (atom_index, base + target_start - position)
+                        )
+                position = piece_end
+            if not candidates:
+                return None
+            start_idx, start_off = candidates[0]
+            end_idx, end_off = candidates[-1]
+        else:
+            start_idx = end_idx = None
+            start_off = end_off = 0
+            position = 0
+            for atom_index, text in self._in_span_pieces():
+                length = len(text)
+                base = 0
+                if atom_index == 0:
+                    base = self._start_offset
+                if start_idx is None and position + length > target_start:
+                    if atom_index is None:
+                        return None  # change begins on a paragraph separator
+                    start_idx = atom_index
+                    start_off = base + (target_start - position)
+                if position + length >= target_end:
+                    if atom_index is None and end_idx is None:
+                        return None  # change ends on a paragraph separator
+                    end_idx = atom_index if atom_index is not None else end_idx
+                    end_off = (
+                        base + (target_end - position)
+                        if atom_index is not None
+                        else end_off
+                    )
+                    break
+                position += length
+            if start_idx is None or end_idx is None:
+                return None
         sub_atoms = self._atoms[start_idx : end_idx + 1]
         sub_span = Span(
             text=changed_old,
@@ -1120,9 +1144,14 @@ class Span:
                 " interval has changed"
             )
 
-    def _validate_replaceable(self, *, validate_bookmarks: bool = True) -> None:
+    def _validate_replaceable(
+        self,
+        *,
+        validate_bookmarks: bool = True,
+        validate_text_boundaries: bool = True,
+    ) -> None:
         for atom in self._atoms:
-            if atom.is_synthetic:
+            if validate_text_boundaries and atom.is_synthetic:
                 detail = (
                     "unmodeled visible run content"
                     if atom.barrier
@@ -1148,7 +1177,7 @@ class Span:
                     " date, cross-reference, …); Word regenerates field results"
                     " on update, so the edit would silently vanish"
                 )
-        if self.crosses_paragraphs:
+        if validate_text_boundaries and self.crosses_paragraphs:
             raise BoundaryViolationError(
                 "span crosses a paragraph boundary; character-level replace is"
                 " same-paragraph only (use docx.blocks for clause-level edits)"
@@ -1287,13 +1316,13 @@ class Span:
             or any(atom.is_synthetic for atom in self._atoms)
             or self.crosses_paragraphs
         ):
-            if tracked and not (
-                any(atom.is_synthetic for atom in self._atoms)
-                or self.crosses_paragraphs
-            ):
-                # Retained affixes may stay outside the changed interval, but
-                # they cannot make a cross-scope target authoritative.
-                self._validate_replaceable(validate_bookmarks=False)
+            # Retained affixes may stay outside the changed interval, but they
+            # cannot make a field, control, hyperlink, or revision crossing
+            # authoritative. The narrowed span validates text boundaries.
+            self._validate_replaceable(
+                validate_bookmarks=False,
+                validate_text_boundaries=False,
+            )
             # spans matched ACROSS a tab/break/paragraph boundary may still
             # edit safely when the actual change lies within one segment:
             # narrow to the changed region; if the change itself crosses a

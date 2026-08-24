@@ -1259,6 +1259,94 @@ class DescribeTrackedReplace:
         uniform.revisions.accept_all()
         assert uniform_paragraph.text == "AXB"
 
+    def it_keeps_multirun_affixes_untouched_around_a_tracked_insertion(
+        self, tmp_path: Path
+    ):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("A").bold = True
+        paragraph.add_run("A")
+        paragraph.add_run("B")
+
+        result = find_one(document, "AAB").replace(
+            "AAXB", tracked=True, author="Carol QA", date=FROZEN
+        )
+
+        assert result.deleted_text == ""
+        assert result.inserted_text == "X"
+        path = tmp_path / "tracked-insertion-affixes.docx"
+        reopened = save_and_reopen(document, path)
+        assert [block.text for block in iter_blocks(reopened)] == ["AAXB"]
+        assert [block.text for block in iter_blocks(reopened, view="original")] == [
+            "AAB"
+        ]
+        assert [(run.text, run.bold) for run in reopened.paragraphs[0].runs] == [
+            ("A", True),
+            ("A", None),
+            ("B", None),
+        ]
+
+        accepted = docx.Document(str(path))
+        accepted.revisions.accept_all()
+        assert [(run.text, run.bold) for run in accepted.paragraphs[0].runs] == [
+            ("A", True),
+            ("A", None),
+            ("X", None),
+            ("B", None),
+        ]
+        rejected = docx.Document(str(path))
+        rejected.revisions.reject_all()
+        assert [(run.text, run.bold) for run in rejected.paragraphs[0].runs] == [
+            ("A", True),
+            ("A", None),
+            ("B", None),
+        ]
+
+    @pytest.mark.parametrize(
+        ("retained_xml", "refusal_type", "message"),
+        [
+            (
+                '<w:fldSimple w:instr=" DATE "><w:r><w:t>B</w:t></w:r></w:fldSimple>',
+                UnsupportedStructureError,
+                "field result",
+            ),
+            (
+                '<w:hyperlink w:anchor="target"><w:r><w:t>B</w:t></w:r></w:hyperlink>',
+                BoundaryViolationError,
+                "hyperlink boundary",
+            ),
+            (
+                "<w:sdt><w:sdtPr><w:tag w:val=\"target\"/></w:sdtPr>"
+                "<w:sdtContent><w:r><w:t>B</w:t></w:r></w:sdtContent></w:sdt>",
+                BoundaryViolationError,
+                "content-control boundary",
+            ),
+        ],
+    )
+    def it_refuses_narrowing_across_retained_mutation_scopes(
+        self,
+        retained_xml: str,
+        refusal_type: type[BaseException],
+        message: str,
+    ):
+        document = docx.Document()
+        paragraph = parse_xml(
+            f'<w:p {W}><w:r><w:t>A</w:t><w:tab/></w:r>{retained_xml}</w:p>'
+        )
+        document.element.body.insert(0, paragraph)  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+        span = find_one(document, "A B", match="normalized")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace(
+                "X B", tracked=True, author="Carol QA", date=FROZEN
+            ),
+            refusal_type,
+        )
+
+        assert message in str(refusal)
+        assert not paragraph.xpath(".//w:ins | .//w:del")
+
     def it_proves_complete_tracked_destination_evidence(self):
         compatible = docx.Document()
         compatible_paragraph = parse_xml(
