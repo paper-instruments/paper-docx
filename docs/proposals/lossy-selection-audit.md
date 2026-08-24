@@ -157,15 +157,22 @@ first node and produced structure-check scores of `.962963`, `.925926`, and
 `.962963` in the skill-05 attempts. A manual topology-aware edit scored
 `1.000`. The trace and grader both identified the lost structure.
 
-**Disposition.** One ordinary planner now leaves exact common prefix and
-suffix text in place and changes only the residual interval when that interval
-is one proved uniform formatting and structural region. It preserves safe
-markers and required `xml:space`/placeholder behavior and refuses mixed,
-marker-crossing, or unresolved intent. Direct, batch, and cell-update paths
-share the planner. Every successful non-no-op direct replacement consumes its
-supplied span so stale live state cannot be reconstructed approximately;
-callers re-find before another operation. No-op and atomically refused or
-rolled-back direct operations leave the supplied span reusable.
+**Disposition.** PR #48 first introduced one ordinary planner that could leave
+exact common prefix and suffix text in place and change only a residual interval,
+fixing the observed formatting loss. A follow-up audit found that choosing one
+greedy affix split could still manufacture certainty for repeated affixes or
+insertion boundaries. The planner now considers every maximal exact alignment
+and proceeds only when they agree on both one changed interval and one writable
+formatting/inline-ancestry destination. Otherwise it refuses with guidance to
+re-find the intended substring. It preserves safe markers and required
+`xml:space`/placeholder behavior and refuses mixed, marker-crossing, or unresolved
+intent. Direct, batch, and cell-update paths share the planner. Every successful
+non-no-op direct replacement consumes its supplied span so stale live state
+cannot be reconstructed approximately; callers re-find before another operation.
+No-op and atomically refused or rolled-back direct operations leave the supplied
+span reusable. The original greedy planner was part of the selection-integrity
+repair, not the Paper bootstrap behavior that caused LS-05, and the follow-up is
+a code-level correctness correction rather than a new eval-attributed loss.
 
 ### LS-06 — old character counts were treated as formatting intent
 

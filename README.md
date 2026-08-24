@@ -85,14 +85,18 @@ cross-paragraph targets. See the
 [search](docs/api/paper-search.rst), [story](docs/api/paper-story.rst), and
 [block](docs/api/paper-blocks.rst) references for the complete contracts.
 
-Ordinary untracked replacement preserves exact unchanged affixes and edits only
-one proved formatting and structural region. It refuses rather than infer how a
-mixed region should be restyled or a marker should move. Every successful
-text-changing direct `Span.replace()` consumes that span; re-find before another
-operation. Direct no-ops and atomically refused or rolled-back operations leave
-the supplied span reusable. There is no separate topology-preservation mode or
-character-capacity allocator. Formatting inspection composes an explicit search
-with `format_of(span)`, or passes a run or paragraph directly. See
+Ordinary untracked replacement considers every maximal exact prefix/suffix
+alignment. It preserves unchanged affixes and edits one proved formatting and
+structural region only when those alignments agree on the changed interval and
+writable destination; ambiguous repeated affixes or insertion boundaries refuse
+with guidance to re-find the intended substring. It also refuses rather than
+infer how a mixed region should be restyled or a marker should move. Every
+successful text-changing direct `Span.replace()` consumes that span; re-find
+before another operation. Direct no-ops and atomically refused or rolled-back
+operations leave the supplied span reusable. There is no separate
+topology-preservation mode or character-capacity allocator. Formatting inspection
+composes an explicit search with `format_of(span)`, or passes a run or paragraph
+directly. See
 the [replacement](docs/api/paper-search.rst),
 [formatting](docs/api/paper-formatting.rst), and
 [revision](docs/api/paper-revisions.rst) references for details.

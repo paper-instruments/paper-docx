@@ -34,11 +34,14 @@ targets. See
 :ref:`docx.search <paper_search_api>`, :ref:`docx.story <paper_story_api>`, and
 :ref:`docx.blocks <paper_blocks_api>`.
 
-Ordinary untracked replacement preserves exact unchanged affixes and edits only
-one proved formatting and structural region; otherwise it refuses before
-mutation. Every successful text-changing direct ``Span.replace()`` consumes
-that span; callers re-find before another operation. Direct no-ops and
-atomically refused or rolled-back operations leave the supplied span reusable.
+Ordinary untracked replacement considers every maximal exact prefix/suffix
+alignment. It preserves unchanged affixes and edits one proved formatting and
+structural region only when those alignments agree on the changed interval and
+writable destination. Ambiguous repeated affixes or insertion boundaries refuse
+with guidance to re-find the intended substring. Every successful text-changing
+direct ``Span.replace()`` consumes that span; callers re-find before another
+operation. Direct no-ops and atomically refused or rolled-back operations leave
+the supplied span reusable.
 There is no separate topology-preservation mode or character-capacity
 allocator. Formatting inspection composes explicit search with
 ``format_of(span)``, or accepts a run or paragraph directly. See
