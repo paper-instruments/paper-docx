@@ -135,10 +135,10 @@ def _resolve_anchor_paragraph(
 ) -> "Tuple[str, _Element]":
     """(story, paragraph element) for `anchor`, staleness-verified.
 
-    Single-target block operations resolve their MUTATION anchor here.
-    Range operations locate every endpoint first, then call the same
-    protection gate. Read-only anchor resolution (e.g. a composition
-    SOURCE range) uses `_locate_anchor_paragraph` directly.
+    Single-target block operations resolve their mutation anchor here. Range
+    operations locate every endpoint first, then call the same protection
+    gate. Read-only resolution (e.g. a composition source range) uses
+    `_locate_anchor_paragraph` directly.
     """
     require_anchor_owner(document, anchor)
     located = _locate_anchor_paragraph(document, anchor)
@@ -174,17 +174,9 @@ def _locate_anchor_paragraph(
     """
     require_anchor_owner(document, anchor)
     if isinstance(anchor, str):
-        span = find_one(document, anchor)
-        paragraph = span._atoms[0].paragraph  # noqa: SLF001 - same-package access
-        if paragraph is None:
-            raise TargetNotFoundError(f"anchor text {anchor!r} is not inside a paragraph")
-        return span.story, paragraph
+        anchor = find_one(document, anchor)
     if isinstance(anchor, Span):
-        anchor._validate_fresh()  # noqa: SLF001 - same-package access
-        paragraph = anchor._atoms[0].paragraph  # noqa: SLF001
-        if paragraph is None:
-            raise TargetNotFoundError("span anchor is not inside a paragraph")
-        return anchor.story, paragraph
+        return _locate_span_paragraph(anchor)
     if isinstance(anchor, Anchor):
         raise UnsupportedStructureError(
             "legacy Anchor values are inert location evidence and cannot"
@@ -194,6 +186,26 @@ def _locate_anchor_paragraph(
     if isinstance(anchor, Block):
         return _locate_live_block(document, anchor)
     raise TypeError(f"unsupported block target {type(anchor).__name__!r}")
+
+
+def _locate_span_paragraph(span: Span) -> "Tuple[str, _Element]":
+    """Resolve `span` only when its complete live selection is one paragraph."""
+    span._validate_fresh()  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    atoms = span._atoms  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    paragraph = atoms[0].paragraph
+    if paragraph is None:
+        raise TargetNotFoundError("span anchor is not inside a paragraph")
+    if span.crosses_paragraphs or any(
+        atom.paragraph is not paragraph
+        for atom in atoms
+    ):
+        raise BoundaryViolationError(
+            "this operation requires a target wholly within one paragraph and"
+            " cannot infer first-versus-last intent from a cross-paragraph"
+            " selection; select text wholly within one paragraph or supply an"
+            " explicit live Block endpoint"
+        )
+    return span.story, paragraph
 
 
 def _paragraph_block(story: str, kind: str, element: "_Element") -> "Tuple[str, _Element]":
@@ -318,8 +330,8 @@ def _refuse_cell_anchor(paragraph: "_Element") -> None:
         )
 
 
-def _field_open_flags(story: str, root: "_Element", paragraph: "_Element"):
-    """(open_before, open_after) complex-field state around `paragraph`'s block.
+def _field_open_flags(story: str, root: "_Element", element: "_Element"):
+    """(open_before, open_after) complex-field state around `element`'s block.
 
     A multi-paragraph field (every Word TOC) keeps begin..end open across
     blocks; block operations inside that region would write content Word
@@ -327,14 +339,25 @@ def _field_open_flags(story: str, root: "_Element", paragraph: "_Element"):
     """
     from docx.story import _count_fldchar_delta
 
+    body = root.find(qn("w:body"))
+    if (
+        body is not None
+        and element.tag == qn("w:sdt")
+        and element.getparent() is body
+    ):
+        depth = 0
+        for child in body:
+            if child is element:
+                return depth > 0, (depth + _count_fldchar_delta(element)) > 0
+            depth = max(0, depth + _count_fldchar_delta(child))
+
     depth = 0
-    for _kind, _index, element, _sdt, _txbx in _iter_block_elements(story, root):
-        contains = element is paragraph or any(
-            node is paragraph for node in element.iter(_P)
-        )
-        delta = _count_fldchar_delta(element)
+    for _kind, _index, block, _sdt, _txbx in _iter_block_elements(story, root):
+        contains = block is element or any(node is element for node in block.iter(_P))
         if contains:
+            delta = _count_fldchar_delta(block)
             return depth > 0, (depth + delta) > 0
+        delta = _count_fldchar_delta(block)
         depth = max(0, depth + delta)
     return False, False
 
@@ -349,6 +372,21 @@ def _refuse_paragraph_in_open_field(
             "target lies inside a field result that spans paragraphs (a TOC or"
             " similar); Word regenerates field results on update, so content"
             " written there would silently vanish"
+        )
+
+
+def _refuse_block_in_open_field(  # pyright: ignore[reportUnusedFunction]
+    story: str, root: "_Element", element: "_Element", *, for_insertion: bool
+) -> None:
+    """Refuse a mutation boundary around a supported physical story block."""
+    open_before, open_after = _field_open_flags(story, root, element)
+    blocked = open_after if for_insertion else (open_before or open_after)
+    if blocked:
+        raise UnsupportedStructureError(
+            "the insertion boundary after the destination block remains inside"
+            " an open field result; Word may regenerate that result and remove"
+            " composed content. Use a current-view destination after the matching"
+            " field end, or deliberately close or unlink the field before retrying"
         )
 
 
@@ -474,10 +512,11 @@ def _select_paragraph_range(
     if end_anchor is not None:
         require_anchor_owner(document, end_anchor, argument="end_anchor")
     story, start_p = _locate_anchor_paragraph(document, start_anchor)
-    _require_current_mutation_view(start_anchor)
     end_location = None
     if end_anchor is not None:
         end_location = _locate_anchor_paragraph(document, end_anchor)
+    _require_current_mutation_view(start_anchor)
+    if end_anchor is not None:
         _require_current_mutation_view(end_anchor)
     _refuse_paragraph_mutation(document)
     root = dict(_story_elements(document))[story]
@@ -555,7 +594,8 @@ def insert_section_after(
 
     With `tracked=True` each inserted paragraph is a real Word insertion attributed to
     `author` (required) and `date`. Refuses a protected document, an undefined heading
-    style, and an anchor that is missing, ambiguous, foreign or stale.
+    style, and an anchor that is missing, ambiguous, foreign, stale, or spans
+    more than one paragraph.
     """
     if tracked and not author:
         raise ValueError("author is required when tracked=True")
@@ -606,8 +646,8 @@ def tracked_delete_paragraphs(
 
     Runs move into `w:del` with formatting intact and the paragraph mark is stamped, so
     accepting removes the paragraphs and rejecting restores them exactly. Refuses a
-    protected document, a range crossing stories or parents, a bookmarked or non-plain run,
-    and an open field.
+    protected document, an endpoint spanning multiple paragraphs, a range
+    crossing stories or parents, a bookmarked or non-plain run, and an open field.
     """
     if not author:
         raise ValueError("author is required")
@@ -648,8 +688,8 @@ def tracked_replace_paragraphs(
     """Tracked-delete a paragraph range and tracked-insert replacements after it.
 
     Returns a `BlockEditResult`. Replacements land after the last deleted paragraph. Carries
-    the same refusals as `tracked_delete_paragraphs`: protection, a range crossing stories,
-    bookmarked or non-plain runs, an open field.
+    the same refusals as `tracked_delete_paragraphs`: protection, a multi-paragraph
+    endpoint, a range crossing stories, bookmarked or non-plain runs, an open field.
     """
     if not author:
         raise ValueError("author is required")
@@ -844,7 +884,7 @@ def insert_blocks_after(
     `blocks` mixes `RichParagraph` (styled runs), `ListBlock` (real bullet or decimal lists,
     numbering definition created on demand) and `TableBlock` (rectangular tables). Reach for
     this when you want structure rather than raw XML. Refuses a protected document, and an
-    anchor that is missing, ambiguous, foreign or stale.
+    anchor that is missing, ambiguous, foreign, stale, or spans more than one paragraph.
     """
     if tracked and not author:
         raise ValueError("author is required when tracked=True")

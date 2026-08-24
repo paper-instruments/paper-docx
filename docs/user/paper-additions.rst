@@ -110,6 +110,13 @@ The normalized span is an intentional mutation target, not an inspection-only
 result. APIs outside ``docx.search`` do not repeat the ``match`` keyword; use
 this explicit preselection workflow when they need normalized targeting.
 
+Search can also return spans that cross paragraph boundaries, representing the
+boundary as a literal ``"\\n"``. Those spans are valid for inspection. APIs
+that need one paragraph—block edits, composition endpoints, TOC insertion,
+and ``surrounding_format()``—raise |BoundaryViolationError| instead of choosing
+the first or last paragraph. Refine the text to one paragraph or pass an
+explicit live block endpoint.
+
 When repeated text needs context, use ``near`` to rank the complete candidate
 set for inspection:
 
@@ -219,7 +226,12 @@ pairing.
 :ref:`docx.composition <paper_composition_api>` copies formatted content
 between documents without corruption. It reconciles styles, numbering, media,
 hyperlinks and bookmarks, then returns a |CompositionReport| listing every
-part it touched.
+part it touched. Historical live blocks and spans remain valid read-only source
+range evidence, but a live destination must be reacquired from
+``view="current"``. Composition refuses rather than guessing when insertion
+after the destination paragraph, table, or block content control would remain
+inside an open field result; target a current block after the matching field
+end, or deliberately close or unlink that field first.
 
 
 Refusal handling

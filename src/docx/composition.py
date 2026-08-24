@@ -27,7 +27,6 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Dict, List, Optional, Tuple
 
 from docx._guard import check_install
-from docx._ownership import require_anchor_owner
 from docx._transaction import rollback_on_error
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.fields import _set_update_fields_on_open
@@ -173,28 +172,49 @@ def insert_blocks_from(
     that endpoint's block. With no `end_anchor`, `count` blocks are copied beginning at the start
     block or the following block when `include_start=False`. With an `end_anchor`, `count` is
     validated but does not limit the range. `include_end=False` without an end anchor raises
-    `ValueError`. Refuses an empty adjusted range, a protected destination, an anchor that is
-    missing or ambiguous, and source content this package cannot carry over: revisions,
-    comments, OLE objects, EMF/WMF images.
+    `ValueError`. Refuses an empty adjusted range, a protected destination, an endpoint that is
+    missing, ambiguous, or spans multiple paragraphs, and source content this package cannot
+    carry over: revisions, comments, OLE objects, EMF/WMF images. Live source
+    endpoints may come from any supported inspection view. A live destination
+    must come from ``view="current"``; reacquire a historical destination before
+    composing.
     """
     _validate_styles_mode(styles)
     if end_anchor is None and not include_end:
         raise ValueError("include_end=False requires end_anchor")
-    require_anchor_owner(source, start_anchor, argument="start_anchor")
-    if end_anchor is not None:
-        require_anchor_owner(source, end_anchor, argument="end_anchor")
-    require_anchor_owner(document, anchor)
+    if count < 1:
+        raise ValueError("count must be >= 1")
+    from docx.blocks import (
+        _locate_anchor_paragraph,  # pyright: ignore[reportPrivateUsage]
+        _require_current_mutation_view,  # pyright: ignore[reportPrivateUsage]
+    )
+
+    start_target = _locate_anchor_paragraph(source, start_anchor)
+    end_target = (
+        _locate_anchor_paragraph(source, end_anchor)
+        if end_anchor is not None
+        else None
+    )
+    anchor_story, anchor_p = _locate_anchor_paragraph(document, anchor)
+    _require_current_mutation_view(anchor)  # pyright: ignore[reportUnknownArgumentType]
     _refuse_if_protected(document, "compose content into the document")
     range_elements = _source_range(
         source,
-        start_anchor,
-        end_anchor,
+        start_target,
+        end_target,
         count,
         include_start=include_start,
         include_end=include_end,
     )
     with rollback_on_error(document):
-        return _compose(document, source, range_elements, anchor, styles)
+        return _compose(
+            document,
+            source,
+            range_elements,
+            anchor_p,
+            styles,
+            anchor_story=anchor_story,
+        )
 
 
 def append_document(
@@ -211,7 +231,8 @@ def append_document(
     `section="new_page"` prefixes a page break, `"continuous"` appends flush.
     `headers="source"` overwrites the destination's last-section header and footer and flips
     the document-wide even/odd setting. Refuses a protected document and an empty body on
-    either side.
+    either side. Also refuses when insertion after the destination's final paragraph,
+    table, or block content control would remain inside an open field result.
     """
     _validate_styles_mode(styles)
     if section not in ("new_page", "continuous"):
@@ -233,7 +254,7 @@ def append_document(
             range_elements,
             destination_blocks[-1],
             styles,
-            anchor_is_element=True,
+            anchor_story="word/document.xml",
         )
         if section == "new_page":
             break_paragraph = OxmlElement("w:p")
@@ -341,18 +362,14 @@ def _defined_header_footer(hf):
 
 def _source_range(
     source: "Document",
-    start_anchor,
-    end_anchor,
+    start_target: "Tuple[str, _Element]",
+    end_target: "Optional[Tuple[str, _Element]]",
     count: int,
     *,
     include_start: bool,
     include_end: bool,
 ) -> "List[_Element]":
-    from docx.blocks import _locate_anchor_paragraph
-
-    if count < 1:
-        raise ValueError("count must be >= 1")
-    story, start_p = _locate_anchor_paragraph(source, start_anchor)
+    story, start_p = start_target
     if story != "word/document.xml":
         raise UnsupportedStructureError(
             f"composition copies from the main document body only (start anchor is in {story})"
@@ -367,8 +384,8 @@ def _source_range(
             " table cells cannot anchor a composition range)"
         )
     start_index = blocks.index(start_block)
-    if end_anchor is not None:
-        end_story, end_p = _locate_anchor_paragraph(source, end_anchor)
+    if end_target is not None:
+        end_story, end_p = end_target
         end_block = _body_block_for_paragraph(body, end_p)
         if end_story != story or end_block not in blocks:
             raise UnsupportedStructureError(
@@ -422,16 +439,15 @@ def _compose(
     document: "Document",
     source: "Document",
     range_elements: "List[_Element]",
-    anchor,
+    anchor: "_Element",
     styles_mode: str,
     *,
-    anchor_is_element: bool = False,
+    anchor_story: str,
 ) -> CompositionReport:
     from docx.blocks import (
-        _insert_after,
-        _refuse_cell_anchor,
-        _refuse_paragraph_in_open_field,
-        _resolve_anchor_paragraph,
+        _insert_after,  # pyright: ignore[reportPrivateUsage]
+        _refuse_block_in_open_field,  # pyright: ignore[reportPrivateUsage]
+        _refuse_cell_anchor,  # pyright: ignore[reportPrivateUsage]
     )
 
     report = CompositionReport()
@@ -440,17 +456,15 @@ def _compose(
     # importing styles/numbering/media first would leave orphaned
     # definitions behind when the destination anchor turns out invalid
     _refuse_unsupported_content(range_elements)
-    if anchor_is_element:
-        story, anchor_p = "word/document.xml", anchor
-    else:
-        story, anchor_p = _resolve_anchor_paragraph(document, anchor)
-        if story != "word/document.xml":
-            raise UnsupportedStructureError(
-                f"composition inserts into the main document body only (anchor is in {story})"
-            )
+    story, anchor_p = anchor_story, anchor
+    if story != "word/document.xml":
+        raise UnsupportedStructureError(
+            f"composition inserts into the main document body only (anchor is in {story})"
+        )
+    if anchor_p.tag == _P:
         _refuse_cell_anchor(anchor_p)
-        root = next(r for s, r in _story_elements_of(document) if s == story)
-        _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
+    root = next(r for s, r in _story_elements_of(document) if s == story)
+    _refuse_block_in_open_field(story, root, anchor_p, for_insertion=True)
     _refuse_malformed_numeric_ids(document, range_elements)
     _preflight_bookmark_references(source, range_elements)
     _preflight_relationships(source.part, range_elements)

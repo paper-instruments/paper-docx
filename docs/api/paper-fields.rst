@@ -15,6 +15,11 @@ live |Block| or |Span| destination must be captured from ``view="current"``;
 historical projections remain inspection-only and must be reacquired before
 TOC insertion.
 
+The target passed to ``insert_toc_after()`` must resolve wholly inside one
+paragraph. A multi-paragraph string or live span raises
+|BoundaryViolationError|; choose exact text within the intended paragraph or
+pass an explicit live block.
+
 .. currentmodule:: docx.fields
 
 

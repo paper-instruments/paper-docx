@@ -4,17 +4,22 @@ from __future__ import annotations
 
 import io
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 
 import docx
 from docx.composition import append_document, insert_blocks_from
+from docx.document import Document
 from docx.errors import (
     DocumentProtectedError,
     UnsupportedStructureError,
 )
+from docx.oxml.ns import qn
+from docx.oxml.parser import OxmlElement
 
 from .harness import checks
+from .harness.contract import assert_changed_parts
 from .harness.paths import fixture_path
 
 MINIMAL = "generated/minimal-clean/minimal.docx"
@@ -25,6 +30,55 @@ TINY_PNG = bytes.fromhex(
     "53de0000000c4944415408d763f8cfc000000301010018dd8db00000000049"
     "454e44ae426082"
 )
+
+_SECT_PR = qn("w:sectPr")
+
+
+def _clear_body(document: Document) -> None:
+    body = cast(Any, document.element).body
+    for child in list(body):
+        if child.tag != _SECT_PR:
+            body.remove(child)
+
+
+def _append_field_char(paragraph: Any, kind: str) -> None:
+    run = OxmlElement("w:r")
+    marker = OxmlElement("w:fldChar")
+    marker.set(qn("w:fldCharType"), kind)
+    run.append(marker)
+    paragraph.append(run)
+
+
+def _closed_field_append_destination(kind: str) -> Document:
+    document = docx.Document()
+    _clear_body(document)
+    opener = document.add_paragraph()
+    _append_field_char(opener._p, "begin")  # pyright: ignore[reportPrivateUsage]
+    opener.add_run("Field result begins")
+    if kind == "table":
+        table = document.add_table(rows=1, cols=1)
+        table.cell(0, 0).text = "Destination table"
+        _append_field_char(
+            table.cell(0, 0).paragraphs[0]._p,  # pyright: ignore[reportPrivateUsage]
+            "end",
+        )
+        return document
+
+    control = OxmlElement("w:sdt")
+    control.append(OxmlElement("w:sdtPr"))
+    content = OxmlElement("w:sdtContent")
+    paragraph = OxmlElement("w:p")
+    run = OxmlElement("w:r")
+    text = OxmlElement("w:t")
+    text.text = "Destination control"
+    run.append(text)
+    paragraph.append(run)
+    _append_field_char(paragraph, "end")
+    content.append(paragraph)
+    control.append(content)
+    body = cast(Any, document.element).body
+    body.insert(len(body) - 1, control)
+    return document
 
 
 def _saved(document, path: Path) -> Path:
@@ -451,6 +505,40 @@ class DescribeAppendDocument:
         destination = docx.Document(str(fixture_path(MINIMAL)))
         append_document(destination, _source_with_styles(), section="continuous")
         assert 'w:type="page"' not in destination.element.xml
+
+    @pytest.mark.parametrize("kind", ["table", "control"])
+    def it_appends_after_a_field_closed_inside_the_final_physical_block(
+        self, kind: str, tmp_path: Path
+    ):
+        source = docx.Document()
+        _clear_body(source)
+        source.add_paragraph("Appended after closed field")
+        destination = _closed_field_append_destination(kind)
+        original = _saved(destination, tmp_path / f"closed-field-{kind}-before.docx")
+
+        report = append_document(destination, source, section="continuous")
+
+        assert report.inserted_blocks == 1
+        assert report.to_dict()["schema"] == "paper_composition"  # pyright: ignore[reportUnknownMemberType]
+        assert report.to_dict()["version"] == 1  # pyright: ignore[reportUnknownMemberType]
+        out = _saved(destination, tmp_path / f"closed-field-{kind}.docx")
+        assert_changed_parts(original, out, {"word/document.xml"})
+        reopened = docx.Document(str(out))
+        body = cast(Any, reopened.element).body
+        body_blocks: list[Any] = [
+            child
+            for child in body
+            if child.tag != _SECT_PR
+        ]
+        assert [child.tag.rsplit("}", 1)[-1] for child in body_blocks] == [
+            "p",
+            "tbl" if kind == "table" else "sdt",
+            "p",
+        ]
+        assert "".join(
+            node.text or "" for node in body_blocks[-1].iter(qn("w:t"))
+        ) == "Appended after closed field"
+        assert 'w:type="page"' not in reopened.element.xml
 
     def it_keeps_destination_headers(self, tmp_path: Path):
         destination = docx.Document(

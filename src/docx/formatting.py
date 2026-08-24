@@ -161,7 +161,7 @@ def surrounding_format(document: "Document", anchor) -> EffectiveFormat:
 
     Use it so inserted text adopts its neighbours' look. Resolves the anchor paragraph's
     first text run; an empty paragraph resolves the paragraph's own properties. Refuses an
-    anchor that is missing or ambiguous.
+    anchor that is missing, ambiguous, or spans more than one paragraph.
     """
     from docx.blocks import _locate_anchor_paragraph
 
