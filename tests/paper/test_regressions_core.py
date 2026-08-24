@@ -188,14 +188,6 @@ class DescribeConsumedAndDetachedSpans:
         with pytest.raises(TargetNotFoundError, match="removed"):
             span.replace("lost edit")
 
-    def it_consumes_a_span_after_exact_structure_replacement(self):
-        document = _doc()
-        span = find_one(document, "perfectly ordinary")
-        span.replace("thoroughly mundane", preserve_structure=True)
-        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
-            span.replace("again")
-        assert find_one(document, "thoroughly mundane").text == "thoroughly mundane"
-
     def it_consumes_a_partial_ordinary_span_and_supports_refinding(self):
         document = docx.Document()
         document.add_paragraph("prefix target suffix")
@@ -284,20 +276,6 @@ class DescribePreservedRevisionAncestry:
             find_one(inserted, "inserted text", view="all").replace(
                 "updated", preserve_revision=True
             )
-
-    def it_keeps_structure_preservation_orthogonal_to_revision_authorization(self):
-        document = _doc()
-        document.add_paragraph()._p.append(
-            parse_xml(
-                f'<w:ins {W} w:id="730" w:author="Alice">'
-                "<w:r><w:t>inserted text</w:t></w:r></w:ins>"
-            )
-        )
-        with pytest.raises(UnsupportedStructureError, match="pending tracked insertion"):
-            find_one(document, "inserted text").replace(
-                "updated", preserve_structure=True
-            )
-
 
 class DescribeLayeredTrackedEdits:
     def it_refuses_spans_straddling_a_pending_insertion(self):

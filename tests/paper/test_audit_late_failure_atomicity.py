@@ -311,7 +311,7 @@ class DescribeRevisionRollback:
         assert deleted_text.getparent() is not None
 
 
-class DescribeExactReplacementRollback:
+class DescribeReplacementRollback:
     def it_rolls_back_a_narrowed_edit_after_a_late_failure(
         self, monkeypatch
     ):
@@ -373,37 +373,6 @@ class DescribeExactReplacementRollback:
         assert span.match_policy == original_policy
         assert span.text == "alphabeta"
         span._validate_fresh()
-
-    def it_restores_text_nodes_and_the_live_span_after_a_late_failure(
-        self, monkeypatch
-    ):
-        document = docx.Document()
-        paragraph = document.add_paragraph()
-        paragraph.add_run("alpha")
-        paragraph.add_run("beta")
-        span = find_one(document, "alphabeta")
-        elements = tuple(paragraph._p.iter(qn("w:t")))
-        original = search_module._apply_text_assignments
-
-        def apply_then_refuse(assignments):
-            assignments[0].element.text = assignments[0].after
-            raise UnsupportedStructureError("forced late refusal")
-
-        monkeypatch.setattr(
-            search_module, "_apply_text_assignments", apply_then_refuse
-        )
-        assert_refusal_atomic(
-            document,
-            lambda _document: span.replace("changed", preserve_structure=True),
-            UnsupportedStructureError,
-        )
-        assert [element.text for element in elements] == ["alpha", "beta"]
-        assert span.text == "alphabeta"
-        span._validate_fresh()
-
-        monkeypatch.setattr(search_module, "_apply_text_assignments", original)
-        span.replace("changed", preserve_structure=True)
-
 
 class DescribeCommentAuthoringRollback:
     def it_refuses_comment_ranges_from_another_document(self):

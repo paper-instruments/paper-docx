@@ -642,6 +642,19 @@ class DescribePlainReplace:
         with pytest.raises(TargetNotFoundError, match="re-find"):
             span.replace("again")
 
+    def it_rejects_the_removed_structure_keyword_without_consuming_the_span(self):
+        document = docx.Document()
+        document.add_paragraph("target")
+        span = find_one(document, "target")
+        before = document.element.xml
+        removed_keyword = "preserve_" + "structure"
+
+        with pytest.raises(TypeError, match=removed_keyword):
+            cast(Any, span.replace)("changed", **{removed_keyword: True})
+
+        assert document.element.xml == before
+        span.replace("changed")
+
     def it_updates_xml_space_for_an_ordinary_replacement(self, tmp_path: Path):
         document = docx.Document()
         document.add_paragraph("plain")
@@ -765,7 +778,8 @@ class DescribePlainReplace:
         first._r.addnext(marker)
         paragraph.add_run(" target")
 
-        find_one(document, "prefix target").replace("prefix changed")
+        result = find_one(document, "prefix target").replace("prefix changed")
+        assert result.preserved_formatting_regions
 
         reopened = save_and_reopen(document, tmp_path / "marker-affix.docx")
         children = list(reopened.paragraphs[0]._p)
@@ -834,7 +848,6 @@ class DescribePreservationPolicies:
         )
         assert result.preserved_revision_ids == (41,)
         assert result.preserved_formatting_regions
-        assert not result.preserved_structure
         assert dict(insertion.attrib) == attributes
         assert [b.text for b in iter_blocks(document, view="original")] == original
         with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
@@ -915,14 +928,13 @@ class DescribePreservationPolicies:
         with pytest.raises(UnsupportedStructureError, match="view='current'"):
             span.replace("revised", preserve_revision=True)
 
-    def it_preserves_the_exact_text_element_graph_and_distribution(self, tmp_path: Path):
+    def it_assigns_the_changed_region_without_character_capacities(
+        self, tmp_path: Path
+    ):
         document = docx.Document()
         paragraph = document.add_paragraph()
-        for text in ("alpha", " pay", "ment", " terms"):
+        for text in ("ab", "c", "def"):
             paragraph.add_run(text)
-        paragraph.runs[1].bold = True
-        proofing_marker = parse_xml(f'<w:proofErr {W} w:type="spellStart"/>')
-        paragraph.runs[1]._r.addnext(proofing_marker)
         elements = tuple(paragraph._p.iter(qn("w:t")))
         runs = tuple(paragraph._p.iter(qn("w:r")))
         graph = tuple((e, e.tag, tuple(e.attrib.items()), tuple(e)) for e in elements)
@@ -931,47 +943,102 @@ class DescribePreservationPolicies:
             if run.find(qn("w:rPr")) is not None else None
             for run in runs
         )
-        result = find_one(document, "alpha payment terms").replace(
-            "alpha settlement terms", preserve_structure=True
-        )
-        assert result.preserved_structure
-        assert [e.text for e in elements] == ["alpha", " set", "tlem", "ent terms"]
+        replacement = "a whole new phrase"
+        result = find_one(document, "abcdef").replace(replacement)
+        assert result.preserved_formatting_regions
+        assert [e.text for e in elements] == [replacement, "", ""]
         assert tuple((e, e.tag, tuple(e.attrib.items()), tuple(e)) for e in elements) == graph
         assert tuple(paragraph._p.iter(qn("w:r"))) == runs
-        assert proofing_marker.getparent() is paragraph._p
         assert tuple(
             etree.tostring(run.find(qn("w:rPr")))
             if run.find(qn("w:rPr")) is not None else None
             for run in runs
         ) == run_properties
-        reopened = save_and_reopen(document, tmp_path / "exact.docx")
-        assert reopened.paragraphs[-1].text == "alpha settlement terms"
+        reopened = save_and_reopen(document, tmp_path / "regional.docx")
+        assert reopened.paragraphs[-1].text == replacement
 
-    def it_keeps_empty_nodes_and_consumes_a_mutated_exact_span(self):
+    def it_keeps_empty_nodes_and_consumes_a_mutated_span(self):
         document = docx.Document()
         paragraph = document.add_paragraph()
         for text in ("ab", "cd", "ef"):
             paragraph.add_run(text)
         elements = tuple(paragraph._p.iter(qn("w:t")))
         span = find_one(document, "abcdef")
-        span.replace("x", preserve_structure=True)
+        span.replace("x")
         assert [e.text for e in elements] == ["x", "", ""]
         with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
             span.replace("again")
         assert find_one(document, "x").text == "x"
 
-    def it_refuses_exact_edge_whitespace_without_changing_xml_space(self):
+    def it_retains_all_text_nodes_after_complete_deletion(self, tmp_path: Path):
         document = docx.Document()
-        paragraph = document.add_paragraph("plain")
-        element = paragraph._p.find(".//" + qn("w:t"))
-        assert element is not None
-        assert element.get(qn("xml:space")) is None
-        before = etree.tostring(paragraph._p)
-        with pytest.raises(UnsupportedStructureError, match="edge whitespace"):
-            find_one(document, "plain").replace(" plain", preserve_structure=True)
-        assert etree.tostring(paragraph._p) == before
+        paragraph = document.add_paragraph()
+        paragraph.add_run("alpha")
+        paragraph.add_run("beta")
+        elements = tuple(paragraph._p.iter(qn("w:t")))
+        span = find_one(document, "alphabeta")
 
-    def it_refuses_an_exact_plan_that_would_hollow_a_bookmark(self):
+        result = span.replace("")
+
+        assert result.preserved_formatting_regions
+        assert [element.text for element in elements] == ["", ""]
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
+            span.replace("again")
+        reopened = save_and_reopen(document, tmp_path / "regional-deletion.docx")
+        assert reopened.paragraphs[0].text == ""
+
+    def it_preserves_partial_first_and_last_text_nodes(self, tmp_path: Path):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("prefix-alpha")
+        paragraph.add_run("beta-suffix")
+        elements = tuple(paragraph._p.iter(qn("w:t")))
+        attributes = tuple(tuple(element.attrib.items()) for element in elements)
+
+        result = find_one(document, "alphabeta").replace("replacement")
+
+        assert result.preserved_formatting_regions
+        assert [element.text for element in elements] == [
+            "prefix-replacement",
+            "-suffix",
+        ]
+        assert tuple(tuple(element.attrib.items()) for element in elements) == attributes
+        reopened = save_and_reopen(document, tmp_path / "regional-partial.docx")
+        assert reopened.paragraphs[0].text == "prefix-replacement-suffix"
+
+    def it_retains_an_existing_xml_space_attribute(self, tmp_path: Path):
+        document = docx.Document()
+        paragraph = document.add_paragraph()._p
+        paragraph.append(
+            parse_xml(f'<w:r {W}><w:t xml:space="preserve"> edged </w:t></w:r>')
+        )
+        element = next(paragraph.iter(qn("w:t")))
+
+        find_one(document, " edged ").replace("plain")
+
+        assert element.text == "plain"
+        assert element.get(qn("xml:space")) == "preserve"
+        reopened = save_and_reopen(document, tmp_path / "existing-space.docx")
+        reopened_element = next(reopened.paragraphs[0]._p.iter(qn("w:t")))
+        assert reopened_element.get(qn("xml:space")) == "preserve"
+
+    def it_retains_an_existing_xml_space_default(self, tmp_path: Path):
+        document = docx.Document()
+        paragraph = document.add_paragraph()._p
+        paragraph.append(
+            parse_xml(f'<w:r {W}><w:t xml:space="default">plain</w:t></w:r>')
+        )
+        element = next(paragraph.iter(qn("w:t")))
+
+        result = find_one(document, "plain").replace("changed")
+
+        assert result.preserved_formatting_regions
+        assert element.get(qn("xml:space")) == "default"
+        reopened = save_and_reopen(document, tmp_path / "existing-default.docx")
+        reopened_element = next(reopened.paragraphs[0]._p.iter(qn("w:t")))
+        assert reopened_element.get(qn("xml:space")) == "default"
+
+    def it_refuses_a_plan_that_would_hollow_a_bookmark(self):
         document = docx.Document()
         paragraph = document.add_paragraph()
         first = paragraph.add_run("outside")
@@ -982,9 +1049,7 @@ class DescribePreservationPolicies:
         inside._r.addnext(end)
         before = etree.tostring(paragraph._p)
         with pytest.raises(UnsupportedStructureError, match="hollow"):
-            find_one(document, "outsideinside").replace(
-                "x", preserve_structure=True
-            )
+            find_one(document, "outsideinside").replace("x")
         assert etree.tostring(paragraph._p) == before
 
     def it_refuses_hollowing_a_bookmark_whose_markers_span_paragraphs(self):
@@ -999,7 +1064,7 @@ class DescribePreservationPolicies:
         before = document.element.xml
 
         with pytest.raises(UnsupportedStructureError, match="hollow"):
-            find_one(document, "inside").replace("", preserve_structure=True)
+            find_one(document, "inside").replace("")
 
         assert document.element.xml == before
 
@@ -1048,40 +1113,6 @@ class DescribePreservationPolicies:
         assert document.element.xml == before
         span.replace("outsideinside", preserve_revision=preserve_revision)
 
-    def it_leaves_an_exact_noop_reusable(self):
-        document = docx.Document()
-        document.add_paragraph("same")
-        span = find_one(document, "same")
-        before = document.element.xml
-        assert span.replace("same", preserve_structure=True).preserved_structure
-        assert not span.replace(
-            "same", preserve_structure=True
-        ).preserved_formatting_regions
-        assert document.element.xml == before
-        span.replace("same", preserve_structure=True)
-
-    def it_combines_revision_and_structure_preservation(self):
-        document, insertion = self._insertion_document()
-        text_element = next(insertion.iter(qn("w:t")))
-        result = find_one(document, "pending").replace(
-            "current", preserve_revision=True, preserve_structure=True
-        )
-        assert result.preserved_structure
-        assert result.preserved_revision_ids == (41,)
-        assert text_element.getparent() is not None
-
-    def it_keeps_an_exact_patch_save_to_the_changed_story(self, tmp_path: Path):
-        source = fixture_path(FRAGMENTED)
-        working = tmp_path / "work.docx"
-        shutil.copyfile(source, working)
-        document = docx.Document(str(working))
-        find_one(document, "$75–100/hr").replace(
-            "$85–110/hr", preserve_structure=True
-        )
-        out = tmp_path / "out.docx"
-        docx.package.patch_save(working, document, out)
-        assert_changed_parts(working, out, {"word/document.xml"})
-
     @pytest.mark.parametrize("revision_id", ["bad", ""])
     def it_refuses_unreportable_insertion_ids(self, revision_id: str):
         document, insertion = self._insertion_document(revision_id=revision_id)
@@ -1090,13 +1121,12 @@ class DescribePreservationPolicies:
         with pytest.raises(UnsupportedStructureError, match="w:id"):
             find_one(document, "pending").replace("current", preserve_revision=True)
 
-    @pytest.mark.parametrize("policy", ["preserve_structure", "preserve_revision"])
-    def it_refuses_tracked_preservation_combinations(self, policy: str):
+    def it_refuses_tracked_revision_preservation(self):
         document = docx.Document()
         document.add_paragraph("target")
-        with pytest.raises(ValueError, match=policy):
+        with pytest.raises(ValueError, match="preserve_revision"):
             find_one(document, "target").replace(
-                "changed", tracked=True, author="Editor", **{policy: True}
+                "changed", tracked=True, author="Editor", preserve_revision=True
             )
 
 
