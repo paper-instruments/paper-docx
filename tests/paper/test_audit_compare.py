@@ -116,7 +116,7 @@ class DescribeStrictComparePreflight:
 
 
 class DescribeComparePairingBudget:
-    def it_refuses_an_oversized_word_pairing_before_allocating(self, tmp_path: Path):
+    def it_uses_coarse_revisions_instead_of_quadratic_word_pairing(self, tmp_path: Path):
         def build(prefix):
             def _build(document):
                 for index in range(101):
@@ -125,8 +125,12 @@ class DescribeComparePairingBudget:
             return _build
 
         a, b = _save_pair(tmp_path, build("Old"), build("New"))
-        with pytest.raises(UnsupportedStructureError, match="pairing budget"):
-            compare(a, b, author="Reviewer", date=FROZEN)
+        result = compare(a, b, author="Reviewer", date=FROZEN)
+
+        revision_types = {
+            revision.revision_type for revision in result.document.revisions
+        }
+        assert {"deletion", "insertion"} <= revision_types
 
     def it_uses_linear_whole_block_edits_in_block_mode(self, tmp_path: Path):
         def build(prefix):

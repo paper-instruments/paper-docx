@@ -62,7 +62,7 @@ Edit one document
 
 ::
 
-    from docx.search import find_one
+    from docx.search import find_one, find_text
 
     span = find_one(doc, "rate: $75–100/hr")
     span.replace("rate: $85-110/hr")             # formatting intact
@@ -84,6 +84,24 @@ resulting live span to the mutation API:
 The normalized span is an intentional mutation target, not an inspection-only
 result. APIs outside ``docx.search`` do not repeat the ``match`` keyword; use
 this explicit preselection workflow when they need normalized targeting.
+
+When repeated text needs context, use ``near`` to rank the complete candidate
+set for inspection:
+
+::
+
+    candidates = find_text(doc, "Payment terms", near="Renewal")
+    # inspection stays complete and proximity-ranked, including ties
+
+    for candidate in candidates:
+        print(candidate.story, candidate.anchor, candidate.text)
+
+Context in a different story or excluded by the selected view cannot rank a
+target. Missing or tied context leaves all candidates visible in stable order;
+the first result is not automatically authoritative. After inspecting the
+evidence, retain the deliberately chosen live span, or refine an ordinary
+``find_one`` call with a more specific exact target, ``story``, or explicit
+``nth``. On ``find_text``, ``nth`` cannot be combined with ``near``.
 
 Choose the option that matches the edit's preservation contract:
 
@@ -162,6 +180,9 @@ transforming one document into another. Accepting it yields the revised
 document; rejecting it yields the original. Before returning, ``compare``
 proves both outcomes on private copies. Style, relationship, or package-part
 changes it cannot express as tracked revisions produce a typed refusal.
+Fine-grained word or cell edits require one unambiguous old/new block pair;
+larger changed regions use coarse block revisions rather than similarity-based
+pairing.
 
 ::
 
@@ -189,7 +210,7 @@ hierarchy, so a caller can tell a *safe refusal* apart from a bug:
     try:
         find_one(doc, "the")                     # matches everywhere
     except AmbiguousTargetError:
-        ...                                      # disambiguate: nth=, near=, story=
+        ...                                      # use context, story scope, or inspect candidates
     except PaperRefusal:
         ...                                      # any safe refusal, distinct from bugs
 

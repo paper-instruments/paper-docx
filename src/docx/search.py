@@ -1809,13 +1809,23 @@ def _spans_for_story(
     return spans
 
 
-def _near_distance(span_match_start: int, near_positions: "List[int]") -> float:
+def _near_distance(
+    span_match_start: int, near_positions: "Sequence[int]"
+) -> "Optional[int]":
     if not near_positions:
-        return float("inf")
+        return None
     return min(abs(span_match_start - position) for position in near_positions)
 
 
-def find_text(
+@dataclass(frozen=True)
+class _RankedMatch:
+    """One search candidate plus private contextual-ranking evidence."""
+
+    span: Span
+    distance: "Optional[int]"
+
+
+def _ranked_matches(
     document: "Document",
     needle: str,
     *,
@@ -1824,26 +1834,19 @@ def find_text(
     story: Optional[str] = None,
     view: str = "current",
     match: str = "exact",
-) -> "List[Span]":
-    """Every span of `needle` in `document` under the selected match policy.
-
-    `story` limits the search to one story part (e.g. "word/document.xml");
-    `near` ranks matches by distance to the nearest occurrence of `near`'s
-    text under the same policy in the same story; `nth` (1-based) then selects
-    a single match. Exact matching is the default. Normalized matching folds
-    case, typography, and whitespace. Both assemble across fragmented runs;
-    exact matching represents each paragraph boundary as one literal ``\\n``.
-    """
+) -> "List[_RankedMatch]":
+    """Search once, retaining private same-story proximity evidence."""
+    if near is not None and nth is not None:
+        raise ValueError("near and nth are mutually exclusive")
     _validate_match_policy(match)
     if view not in VIEWS:
         raise ValueError(f"view must be one of {VIEWS}, got {view!r}")
     needle_match, _ = _match_space(needle, match)
     if not needle_match or (match == "normalized" and not needle_match.strip()):
         return []
-    near_match = _match_space(near, match)[0] if near else None
+    near_match = _match_space(near, match)[0] if near is not None else None
 
-    all_spans: "List[Tuple[float, int, Span]]" = []
-    order = 0
+    ranked: "List[_RankedMatch]" = []
     for story_name, root in _story_elements(document):
         if story is not None and story_name != story:
             continue
@@ -1874,17 +1877,57 @@ def find_text(
                 start = match_text.find(near_match, start + 1)
         for span in spans:
             distance = (
-                _near_distance(span._match_start, near_positions) if near_match else 0.0
+                _near_distance(span._match_start, near_positions)
+                if near is not None
+                else None
             )
-            all_spans.append((distance, order, span))
-            order += 1
-    all_spans.sort(key=lambda item: (item[0], item[1]))
-    matches = [span for _, _, span in all_spans]
+            ranked.append(_RankedMatch(span=span, distance=distance))
+    ranked.sort(
+        key=lambda item: (
+            item.distance is None,
+            item.distance if item.distance is not None else 0,
+        )
+    )
     if nth is not None:
-        if nth < 1 or nth > len(matches):
+        if nth < 1 or nth > len(ranked):
             return []
-        return [matches[nth - 1]]
-    return matches
+        return [ranked[nth - 1]]
+    return ranked
+
+
+def find_text(
+    document: "Document",
+    needle: str,
+    *,
+    nth: Optional[int] = None,
+    near: Optional[str] = None,
+    story: Optional[str] = None,
+    view: str = "current",
+    match: str = "exact",
+) -> "List[Span]":
+    """Every span of `needle` in `document` under the selected match policy.
+
+    `story` limits the search to one story part (e.g. "word/document.xml");
+    `near` ranks every match by distance to the nearest occurrence of `near`'s
+    text under the same policy in the same story. Ranking remains complete
+    when context is missing or tied. `nth` (1-based) instead selects a match
+    by document position and cannot be combined with `near`. Exact matching is
+    the default. Normalized matching folds case, typography, and whitespace.
+    Both assemble across fragmented runs; exact matching represents each
+    paragraph boundary as one literal ``\\n``.
+    """
+    return [
+        item.span
+        for item in _ranked_matches(
+            document,
+            needle,
+            nth=nth,
+            near=near,
+            story=story,
+            view=view,
+            match=match,
+        )
+    ]
 
 
 @dataclass(frozen=True)
@@ -2016,7 +2059,6 @@ def find_one(
     needle: str,
     *,
     nth: Optional[int] = None,
-    near: Optional[str] = None,
     story: Optional[str] = None,
     view: str = "current",
     match: str = "exact",
@@ -2025,11 +2067,10 @@ def find_one(
 
     Exact matching is the default; pass ``match="normalized"`` to opt into
     folded targeting. Zero matches raise `TargetNotFoundError`. Two or more
-    raise `AmbiguousTargetError`: `nth` and `story` narrow the set, while
-    `near` only ranks `find_text` results and never reduces them.
+    raise `AmbiguousTargetError`. `nth` and `story` explicitly narrow the set.
     """
     matches = find_text(
-        document, needle, nth=nth, near=near, story=story, view=view, match=match
+        document, needle, nth=nth, story=story, view=view, match=match
     )
     if not matches:
         raise TargetNotFoundError(f"no match for {needle!r} in any story part")
@@ -2040,6 +2081,7 @@ def find_one(
         raise AmbiguousTargetError(
             f"{len(matches)} matches for {needle!r} (at {locations}"
             f"{', …' if len(matches) > 5 else ''}); disambiguate with nth=,"
-            " near=, or story="
+            " story=, a more specific exact target, or inspect"
+            " find_text(..., near=...)"
         )
     return matches[0]

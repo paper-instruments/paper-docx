@@ -85,8 +85,7 @@ APPROVED_SIGNATURES = [
     (
         "docx.search",
         "find_one",
-        "(document, needle, *, nth=None, near=None, story=None, view='current',"
-        " match='exact')",
+        "(document, needle, *, nth=None, story=None, view='current', match='exact')",
     ),
     # -- replace -------------------------------------------------------------
     (

@@ -172,14 +172,10 @@ class DescribeFindText:
 
     def it_ranks_by_proximity_to_the_near_text(self):
         document = _doc(GAUNTLET)
-        span = find_text(document, "Gauntlet numbered item", near="item two", nth=1)[0]
-        follow_on = span.text  # nearest match to "item two"
-        assert follow_on == "Gauntlet numbered item"
-        # prove it selected the second occurrence: replace it and look
-        span.replace("Gauntlet renumbered item")
-        texts = [b.text for b in iter_blocks(document)]
-        assert "Gauntlet numbered item one" in texts
-        assert "Gauntlet renumbered item two" in texts
+        matches = find_text(
+            document, "Gauntlet numbered item", near="item two"
+        )
+        assert [span.anchor.index for span in matches] == [27, 26]
 
     def it_applies_the_same_policy_to_target_and_near(self):
         document = docx.Document()
@@ -187,12 +183,36 @@ class DescribeFindText:
         document.add_paragraph("target")
         document.add_paragraph("near")
         document.add_paragraph("target")
-        exact = find_text(document, "target", near="near", nth=1)[0]
+        exact = find_text(document, "target", near="near")[0]
         normalized = find_text(
-            document, "TARGET", near="NEAR", nth=1, match="normalized"
+            document, "TARGET", near="NEAR", match="normalized"
         )[0]
         assert exact.anchor.index == 3
         assert normalized.anchor.index == 1
+
+    def it_keeps_tied_near_candidates_in_stable_document_order(self):
+        document = docx.Document()
+        document.add_paragraph("target")
+        document.add_paragraph("nearby")
+        document.add_paragraph("target")
+        document.add_paragraph("padding that makes the next candidate farther")
+        document.add_paragraph("target")
+
+        matches = find_text(document, "target", near="nearby")
+
+        assert [span.anchor.index for span in matches] == [0, 2, 4]
+
+    def it_keeps_the_complete_candidate_set_when_context_is_missing(self):
+        document = docx.Document()
+        document.add_paragraph("target")
+        document.add_paragraph("target")
+
+        ordinary = find_text(document, "target")
+        ranked = find_text(document, "target", near="absent context")
+
+        assert [span.anchor.index for span in ranked] == [
+            span.anchor.index for span in ordinary
+        ]
 
     def it_keeps_raw_order_separate_from_normalized_match_offsets(self):
         document = docx.Document()
@@ -216,11 +236,89 @@ class DescribeFindText:
         controlled = find_one(document, "controlled text")
         assert controlled.in_content_control
 
+    def it_uses_the_nearest_of_multiple_context_occurrences(self):
+        document = docx.Document()
+        document.add_paragraph("nearby")
+        document.add_paragraph("target")
+        document.add_paragraph("filler filler")
+        document.add_paragraph("target")
+        document.add_paragraph("padding")
+        document.add_paragraph("nearby")
+
+        matches = find_text(document, "target", near="nearby")
+
+        assert [span.anchor.index for span in matches] == [1, 3]
+
+    def it_ranks_eligible_stories_before_ineligible_ones_without_hiding_targets(
+        self,
+    ):
+        document = docx.Document()
+        document.add_paragraph("target")
+        document.sections[0].header.paragraphs[0].text = "nearby target"
+
+        matches = find_text(document, "target", near="nearby")
+
+        assert [span.story for span in matches] == [
+            "word/header1.xml",
+            "word/document.xml",
+        ]
+
+    @pytest.mark.parametrize(
+        ("wrapper", "excluded_view", "eligible_views"),
+        [
+            (
+                f'<w:ins {W} w:id="4" w:author="Editor">'
+                "<w:r><w:t>nearby</w:t></w:r></w:ins>",
+                "original",
+                ("current", "all"),
+            ),
+            (
+                f'<w:del {W} w:id="5" w:author="Editor">'
+                "<w:r><w:delText>nearby</w:delText></w:r></w:del>",
+                "current",
+                ("original", "all"),
+            ),
+        ],
+    )
+    def it_applies_view_scope_to_context(
+        self, wrapper: str, excluded_view: str, eligible_views: tuple[str, str]
+    ):
+        document = docx.Document()
+        document.add_paragraph("target")
+        paragraph = document.add_paragraph("target ")
+        paragraph._p.append(parse_xml(wrapper))
+
+        excluded = find_text(document, "target", near="nearby", view=excluded_view)
+        assert [span.anchor.index for span in excluded] == [0, 1]
+        for view in eligible_views:
+            ranked = find_text(document, "target", near="nearby", view=view)
+            assert [span.anchor.index for span in ranked] == [1, 0]
+
+    @pytest.mark.parametrize("match", ["exact", "normalized"])
+    def it_rejects_near_with_nth_before_result_state(self, match: str):
+        document = docx.Document()
+        document.add_paragraph("target")
+        document.add_paragraph("target")
+
+        for needle in ("target", "missing target"):
+            with pytest.raises(ValueError, match="mutually exclusive"):
+                find_text(
+                    document,
+                    needle,
+                    near="missing context",
+                    nth=99,
+                    match=match,
+                )
+
 
 class DescribeFindOne:
     def it_refuses_zero_matches(self):
         with pytest.raises(TargetNotFoundError, match="no match"):
             find_one(_doc(MINIMAL), "text that does not exist anywhere")
+
+    def it_returns_one_match(self):
+        span = find_one(_doc(MINIMAL), "Second body paragraph")
+        assert span.text == "Second body paragraph"
 
     def it_refuses_ambiguity_without_disambiguators(self):
         with pytest.raises(AmbiguousTargetError, match="disambiguate"):
@@ -229,6 +327,23 @@ class DescribeFindOne:
     def it_resolves_ambiguity_with_nth(self):
         span = find_one(_doc(TRACKED), "Paragraph", nth=1)
         assert span.text == "Paragraph"
+
+    def it_resolves_ambiguity_with_story(self):
+        document = docx.Document()
+        document.add_paragraph("target")
+        document.sections[0].header.paragraphs[0].text = "target"
+
+        span = find_one(document, "target", story="word/header1.xml")
+
+        assert span.story == "word/header1.xml"
+
+    def it_rejects_the_removed_near_keyword(self):
+        with pytest.raises(TypeError, match="unexpected keyword argument 'near'"):
+            find_one(
+                _doc(MINIMAL),
+                "target",
+                near="context",  # type: ignore[call-arg]
+            )
 
 
 class DescribePlainReplace:

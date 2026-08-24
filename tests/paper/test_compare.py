@@ -213,8 +213,25 @@ class DescribeCompareBehavior:
         assert result.document.paragraphs[0].text == "Logo  new language"
         assert len(result.document.inline_shapes) == 1
 
-    def it_redlines_a_word_level_edit_minimally(self):
-        result = _compare_fixture_pair()
+    def it_redlines_one_unambiguous_paragraph_pair_minimally(self, tmp_path: Path):
+        original_path = tmp_path / "word-original.docx"
+        revised_path = tmp_path / "word-revised.docx"
+        for path, middle in (
+            (original_path, "Either party may terminate with thirty days notice."),
+            (revised_path, "Either party may terminate with sixty days notice."),
+        ):
+            document = docx.Document()
+            document.add_paragraph("unchanged before")
+            document.add_paragraph(middle)
+            document.add_paragraph("unchanged after")
+            document.save(path)
+
+        result = compare(
+            original_path,
+            revised_path,
+            author="Compare Engine",
+            date=FROZEN,
+        )
         revisions = result.document.revisions
         deleted = [r.text for r in revisions if r.revision_type == "deletion"]
         inserted = [r.text for r in revisions if r.revision_type == "insertion"]
@@ -225,19 +242,144 @@ class DescribeCompareBehavior:
         full = "Either party may terminate with thirty days notice."
         assert full not in deleted  # never a whole-paragraph rewrite
 
-    def it_redlines_the_table_cell_change_cell_wise(self):
-        result = _compare_fixture_pair()
+    def it_emits_a_pure_insertion_without_deleting_an_anchor_character(self, tmp_path: Path):
+        original_path = tmp_path / "insert-original.docx"
+        revised_path = tmp_path / "insert-revised.docx"
+        for path, middle in (
+            (original_path, "consulting services"),
+            (revised_path, "consulting and advisory services"),
+        ):
+            document = docx.Document()
+            document.add_paragraph("unchanged before")
+            document.add_paragraph(middle)
+            document.add_paragraph("unchanged after")
+            document.save(path)
+
+        result = compare(
+            original_path,
+            revised_path,
+            author="Compare Engine",
+            date=FROZEN,
+        )
+
+        assert [
+            revision.text
+            for revision in result.document.revisions
+            if revision.revision_type == "insertion"
+        ] == ["and advisory "]
+        assert not any(
+            revision.revision_type == "deletion" for revision in result.document.revisions
+        )
+        redline_path = tmp_path / "insert-redline.docx"
+        result.document.save(redline_path)
+        accepted = docx.Document(redline_path)
+        accepted.revisions.accept_all()
+        assert _visible(accepted) == _visible(docx.Document(revised_path))
+        rejected = docx.Document(redline_path)
+        rejected.revisions.reject_all()
+        assert _visible(rejected) == _visible(docx.Document(original_path))
+
+    def it_redlines_one_unambiguous_table_pair_cell_wise(self, tmp_path: Path):
+        original_path = tmp_path / "table-original.docx"
+        revised_path = tmp_path / "table-revised.docx"
+        for path, amount in ((original_path, "$200"), (revised_path, "$250")):
+            document = docx.Document()
+            document.add_paragraph("unchanged before")
+            table = document.add_table(rows=1, cols=2)
+            table.cell(0, 0).text = "Advisory"
+            table.cell(0, 1).text = amount
+            document.add_paragraph("unchanged after")
+            document.save(path)
+
+        result = compare(
+            original_path,
+            revised_path,
+            author="Compare Engine",
+            date=FROZEN,
+        )
         revisions = result.document.revisions
         # $200 -> $250 narrows to the single changed character in the cell;
         # crucially the ROW was edited cell-wise, not deleted + reinserted
-        assert any(
-            r.revision_type == "deletion" and r.text == "0" for r in revisions
-        )
-        assert any(
-            r.revision_type == "insertion" and r.text == "5" for r in revisions
-        )
+        assert any(r.revision_type == "deletion" and r.text == "0" for r in revisions)
+        assert any(r.revision_type == "insertion" and r.text == "5" for r in revisions)
         assert not any(r.revision_type.startswith("row_") for r in revisions)
         assert not any("Advisory" in r.text for r in revisions)
+
+    def it_uses_coarse_revisions_for_ambiguous_multi_row_changes(
+        self, tmp_path: Path
+    ):
+        original_path = tmp_path / "table-original.docx"
+        revised_path = tmp_path / "table-revised.docx"
+
+        original = docx.Document()
+        table = original.add_table(rows=2, cols=1)
+        table.cell(0, 0).text = "Repeated Alpha"
+        table.cell(1, 0).text = "Repeated Alpha"
+        original.save(original_path)
+
+        revised = docx.Document()
+        revised.add_table(rows=1, cols=1).cell(0, 0).text = "Repeated Beta"
+        revised.save(revised_path)
+
+        result = compare(
+            original_path,
+            revised_path,
+            author="Compare Engine",
+            date=FROZEN,
+        )
+        revisions = result.document.revisions
+
+        assert sum(r.revision_type == "row_deletion" for r in revisions) == 2
+        assert sum(r.revision_type == "row_insertion" for r in revisions) == 1
+        assert not any(r.revision_type == "deletion" and r.text == "Alph" for r in revisions)
+
+        redline_path = tmp_path / "table-redline.docx"
+        result.document.save(redline_path)
+        accepted = docx.Document(redline_path)
+        accepted.revisions.accept_all()
+        assert _visible(accepted) == _visible(docx.Document(revised_path))
+        rejected = docx.Document(redline_path)
+        rejected.revisions.reject_all()
+        assert _visible(rejected) == _visible(docx.Document(original_path))
+
+    def it_uses_coarse_revisions_for_a_multi_block_changed_region(self, tmp_path: Path):
+        original_path = tmp_path / "multi-original.docx"
+        revised_path = tmp_path / "multi-revised.docx"
+        for path, changed in (
+            (original_path, ("Repeated Alpha", "Repeated Alpha")),
+            (revised_path, ("Repeated Beta",)),
+        ):
+            document = docx.Document()
+            document.add_paragraph("unchanged before")
+            for text in changed:
+                document.add_paragraph(text)
+            document.add_paragraph("unchanged after")
+            document.save(path)
+
+        result = compare(
+            original_path,
+            revised_path,
+            author="Compare Engine",
+            date=FROZEN,
+        )
+        revisions = result.document.revisions
+
+        assert any(
+            revision.revision_type == "deletion" and "Repeated Alpha" in revision.text
+            for revision in revisions
+        )
+        assert any(
+            revision.revision_type == "insertion" and "Repeated Beta" in revision.text
+            for revision in revisions
+        )
+        redline_path = tmp_path / "multi-redline.docx"
+        result.document.save(redline_path)
+        accepted = docx.Document(redline_path)
+        accepted.revisions.accept_all()
+        assert _visible(accepted) == _visible(docx.Document(revised_path))
+        rejected = docx.Document(redline_path)
+        rejected.revisions.reject_all()
+        assert _visible(rejected) == _visible(docx.Document(original_path))
 
     def it_stamps_every_revision_with_the_caller_identity(self):
         result = _compare_fixture_pair()

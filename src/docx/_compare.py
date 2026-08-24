@@ -14,8 +14,8 @@ insertions/deletions only — no move or rPrChange synthesis; no cross-story
 detection; paragraph add/remove outside the main body refuses; changed
 merged-cell tables refuse; images/objects, fields, content controls, package
 part changes, and formatting differences refuse; a block budget of
-`_MAX_BLOCKS` per story plus sequence-matching and changed-region pairing
-budgets refuse before quadratic work.
+`_MAX_BLOCKS` per story plus sequence-matching budgets refuse before
+quadratic work.
 
 Public path: `docx.package.compare` (kernel re-export).
 """
@@ -80,10 +80,6 @@ _PROOF_ERR = qn("w:proofErr")
 #: perf budget — documented typed refusal above this many blocks per story
 _MAX_BLOCKS = 10_000
 
-#: Pairing is quadratic in both memory and expensive SequenceMatcher calls.
-#: Refuse before allocating the matrix; block granularity never uses it.
-_MAX_PAIR_CELLS = 10_000
-
 #: SequenceMatcher has quadratic worst-case behavior on repeated sequences.
 #: Apply this budget before both story-block and table-row matching.
 _MAX_SEQUENCE_CELLS = 1_000_000
@@ -91,10 +87,6 @@ _MAX_SEQUENCE_CELLS = 1_000_000
 #: Bound character-similarity and token diff matchers independently from
 #: block/row sequence matching so each expensive layer has its own envelope.
 _MAX_TEXT_SEQUENCE_CELLS = 1_000_000
-
-#: similarity threshold below which paired blocks redline as del+ins rather
-#: than a word-level edit
-_PAIR_RATIO = 0.5
 
 
 @dataclass(frozen=True)
@@ -776,102 +768,25 @@ def _aligned_opcodes(
     return opcodes
 
 
-def _pair_region(old_run, new_run) -> "List[Tuple[str, Optional[int], Optional[int]]]":
-    """Order-preserving best-similarity block pairing within a changed region
-    (LCS-style DP maximizing summed pair ratios above `_PAIR_RATIO`)."""
-    m, n = len(old_run), len(new_run)
-    if m * n > _MAX_PAIR_CELLS:
-        raise UnsupportedStructureError(
-            "changed region exceeds the word-level compare pairing budget"
-            f" ({m} x {n} > {_MAX_PAIR_CELLS} cells); use"
-            " granularity='block' or split the documents"
-        )
-    text_cells = sum(
-        len(text_o) * len(text_r)
-        for kind_o, _element_o, text_o in old_run
-        for kind_r, _element_r, text_r in new_run
-        if kind_o == kind_r
-    )
-    if text_cells > _MAX_TEXT_SEQUENCE_CELLS:
-        raise UnsupportedStructureError(
-            "changed-region text exceeds the sequence-matching budget"
-            f" ({text_cells} > {_MAX_TEXT_SEQUENCE_CELLS} character cells);"
-            " use granularity='block' or split the documents"
-        )
-    ratios: dict = {}
-
-    def ratio(i: int, j: int) -> float:
-        if (i, j) not in ratios:
-            kind_o, _eo, text_o = old_run[i]
-            kind_r, _er, text_r = new_run[j]
-            if kind_o != kind_r:
-                ratios[(i, j)] = 0.0
-            else:
-                score = SequenceMatcher(None, text_o, text_r, autojunk=False).ratio()
-                ratios[(i, j)] = score if score >= _PAIR_RATIO else 0.0
-        return ratios[(i, j)]
-
-    score = [[0.0] * (n + 1) for _ in range(m + 1)]
-    for i in range(1, m + 1):
-        for j in range(1, n + 1):
-            best = max(score[i - 1][j], score[i][j - 1])
-            pair = ratio(i - 1, j - 1)
-            if pair > 0.0:
-                best = max(best, score[i - 1][j - 1] + pair)
-            score[i][j] = best
-    ops: "List[Tuple[str, Optional[int], Optional[int]]]" = []
-    i, j = m, n
-    while i > 0 or j > 0:
-        pair = ratio(i - 1, j - 1) if (i > 0 and j > 0) else 0.0
-        if pair > 0.0 and score[i][j] == score[i - 1][j - 1] + pair:
-            ops.append(("pair", i - 1, j - 1))
-            i -= 1
-            j -= 1
-        elif i > 0 and (j == 0 or score[i][j] == score[i - 1][j]):
-            ops.append(("delete", i - 1, None))
-            i -= 1
-        else:
-            ops.append(("insert", None, j - 1))
-            j -= 1
-    ops.reverse()
-    return ops
-
-
 def _compare_region(ctx: _Ctx, old_run, new_run) -> None:
-    """Emit tracked changes for one changed region; a cursor threads the
-    output position so unpaired insertions land in document order."""
-    if ctx.granularity == "block":
+    """Word-compare one unambiguous block pair; otherwise use coarse revisions."""
+    if (
+        ctx.granularity == "block"
+        or len(old_run) != 1
+        or len(new_run) != 1
+        or old_run[0][0] != new_run[0][0]
+    ):
         _insert_blocks(ctx, old_run, 0, new_run)
         for kind, element, text in old_run:
             _delete_block(ctx, kind, element, text)
         return
-    cursor: "Optional[_Element]" = None
-    for op, index_o, index_r in _pair_region(old_run, new_run):
-        if op == "pair":
-            kind_o, element_o, text_o = old_run[index_o]
-            _kind_r, element_r, text_r = new_run[index_r]
-            if kind_o == "table":
-                _compare_table(ctx, element_o, element_r)
-                cursor = element_o
-            elif ctx.granularity == "word":
-                _refuse_non_text_paragraph_change(ctx, element_o, element_r)
-                _replace_paragraph_text(ctx, element_o, text_o, text_r)
-                cursor = element_o
-        elif op == "delete":
-            kind_o, element_o, text_o = old_run[index_o]
-            _delete_block(ctx, kind_o, element_o, text_o)
-            cursor = element_o
-        else:  # insert
-            kind_r, element_r, _text_r = new_run[index_r]
-            clone = _cloned_as_insertion(ctx, kind_r, element_r)
-            if cursor is None:
-                reference = old_run[0][1]
-                _require_container_anchor(ctx, reference)
-                reference.addprevious(clone)
-            else:
-                _require_container_anchor(ctx, cursor)
-                cursor.addnext(clone)
-            cursor = clone
+    kind_o, element_o, text_o = old_run[0]
+    _kind_r, element_r, text_r = new_run[0]
+    if kind_o == "table":
+        _compare_table(ctx, element_o, element_r)
+        return
+    _refuse_non_text_paragraph_change(ctx, element_o, element_r)
+    _replace_paragraph_text(ctx, element_o, text_o, text_r)
 
 
 def _report_formatting_difference(ctx: _Ctx, block_o, block_r) -> None:
@@ -1196,25 +1111,18 @@ def _compare_table(ctx: _Ctx, table_o: "_Element", table_r: "_Element") -> None:
             continue
         old_rows, new_rows = rows_o[i1:i2], rows_r[j1:j2]
         _refuse_merged_rows(ctx, list(old_rows) + list(new_rows))
-        paired = min(len(old_rows), len(new_rows))
-        cursor = None  # last row placed in OUTPUT order
-        for k in range(paired):
-            if _replace_row_cells(ctx, old_rows[k], new_rows[k]):
-                cursor = old_rows[k]
-            else:
-                _mark_row_deleted(ctx, old_rows[k])
-                inserted = _insert_rows(
-                    ctx, rows_o, i1 + k, [new_rows[k]], after=old_rows[k]
-                )
-                cursor = inserted[-1]
-        for row in old_rows[paired:]:
+        if len(old_rows) == 1 and len(new_rows) == 1:
+            if not _replace_row_cells(ctx, old_rows[0], new_rows[0]):
+                _mark_row_deleted(ctx, old_rows[0])
+                _insert_rows(ctx, rows_o, i2, new_rows, after=old_rows[0])
+            continue
+
+        # A larger replacement region does not prove which old row corresponds
+        # to which new row. Preserve the truthful coarse history instead of
+        # inventing positional row edits.
+        for row in old_rows:
             _mark_row_deleted(ctx, row)
-            cursor = row
-        if len(new_rows) > paired:
-            _insert_rows(
-                ctx, rows_o, i2, new_rows[paired:],
-                after=cursor if cursor is not None else old_rows[-1],
-            )
+        _insert_rows(ctx, rows_o, i2, new_rows, after=old_rows[-1])
 
 
 def _visible_paragraph_text(paragraph: "_Element") -> str:
@@ -1362,8 +1270,7 @@ def _replace_paragraph_text(
 
 def _token_regions(old: str, new: str) -> "List[Tuple[int, int, str]]":
     """Changed character regions (old-start, old-end, replacement) from a
-    token-level diff; zero-width regions are widened by one anchor char so
-    every region maps to at least one atom."""
+    token-level diff. Pure insertions retain their zero-width boundary."""
     tokens_o = re.findall(r"\S+|\s+", old)
     tokens_r = re.findall(r"\S+|\s+", new)
     token_cells = len(tokens_o) * len(tokens_r)
@@ -1383,16 +1290,6 @@ def _token_regions(old: str, new: str) -> "List[Tuple[int, int, str]]":
             continue
         start, end = offsets[i1], offsets[i2]
         replacement = "".join(tokens_r[j1:j2])
-        if start == end:  # pure insertion: widen over one anchor char
-            if start > 0:
-                start -= 1
-                replacement = old[start] + replacement
-            elif end < len(old):
-                replacement = replacement + old[end]
-                end += 1
-            else:  # empty original paragraph text
-                regions.append((0, 0, replacement))
-                continue
         regions.append((start, end, replacement))
     return regions
 
@@ -1412,7 +1309,7 @@ def _paragraph_span(ctx: _Ctx, paragraph: "_Element", start: int, end: int):
         for atom in _story_atoms(ctx.document, ctx.story, root)
         if atom.paragraph is paragraph and _include_atom(atom, "current")
     ]
-    if not atoms or start >= end:
+    if not atoms or start < 0 or end < start:
         return None
     positions = []  # (atom_index, offset) per visible character
     visible_pieces = []
@@ -1422,14 +1319,31 @@ def _paragraph_span(ctx: _Ctx, paragraph: "_Element", start: int, end: int):
         visible_pieces.append(atom.text)
         for offset in range(len(atom.text)):
             positions.append((index, offset))
+    visible_text = "".join(visible_pieces)
     if end > len(positions):
         return None
-    start_atom, start_offset = positions[start]
-    end_atom, end_offset = positions[end - 1]
+    if start == end:
+        candidates = []
+        position = 0
+        for index, atom in enumerate(atoms):
+            if atom.barrier:
+                continue
+            piece_end = position + len(atom.text)
+            if position <= start <= piece_end and not atom.is_synthetic:
+                candidates.append((index, start - position))
+            position = piece_end
+        if not candidates:
+            return None
+        start_atom, start_offset = candidates[0]
+        end_atom, end_offset = candidates[-1]
+    else:
+        start_atom, start_offset = positions[start]
+        end_atom, last_offset = positions[end - 1]
+        end_offset = last_offset + 1
     span_atoms = atoms[start_atom : end_atom + 1]
     if any(atom.barrier for atom in span_atoms):
         return None
-    text = "".join(visible_pieces)[start:end]
+    text = visible_text[start:end]
     return Span(
         text=text,
         story=ctx.story,
@@ -1447,7 +1361,7 @@ def _paragraph_span(ctx: _Ctx, paragraph: "_Element", start: int, end: int):
         _document=ctx.document,
         _atoms=list(span_atoms),
         _start_offset=start_offset,
-        _end_offset=end_offset + 1,
+        _end_offset=end_offset,
         _raw_start=0,
         _match_start=0,
     )

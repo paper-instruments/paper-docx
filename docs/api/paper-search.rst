@@ -36,6 +36,38 @@ offsets have no search policy and report ``None``. Empty needles never match;
 exact whitespace is literal searchable content, while normalized input that
 folds to only whitespace does not match.
 
+Disambiguate without hiding uncertainty
+----------------------------------------
+
+``find_text(..., near=...)`` is an inspection operation. It returns every
+target candidate, ordered by the character distance from each target's start
+to its nearest eligible context occurrence. Target and context use the same
+story, view, and match policy. Multiple context occurrences are valid; each
+candidate uses the closest one. Equal distances retain stable document order,
+and missing context leaves the complete candidate set in ordinary document
+order. Neither case means that the first result has unique authority.
+
+The single-result ``find_one()`` resolver has no contextual-ranking keyword. It
+resolves ordinary zero/one/many matching: no candidate raises
+|TargetNotFoundError| and multiple candidates raise |AmbiguousTargetError|. Use
+a more specific exact target, narrow ``story``, or deliberately use ``nth=``
+when position is the intended identity.
+
+On ``find_text()``, ``nth=`` is an explicit 1-based positional selector and is
+mutually exclusive with ``near``. Combining them raises :exc:`ValueError`
+before the document is searched. To use contextual ranking for inspection:
+
+.. code-block:: python
+
+   candidates = find_text(doc, "Payment terms", near="Renewal")
+   # all candidates remain visible, even if context is absent or tied
+
+   for candidate in candidates:
+       print(candidate.story, candidate.anchor, candidate.text)
+
+   # After inspecting the evidence, retain the deliberately chosen live span.
+   target = candidates[chosen_index]
+
 Choose a replacement policy
 ---------------------------
 

@@ -39,8 +39,9 @@ class MalformedPackageError(PaperRefusal):
 class AmbiguousTargetError(PaperRefusal):
     """The target specification matches more than one location.
 
-    Disambiguate with `nth=`, `near=`, or `story=` rather than letting the
-    library guess.
+    Supply a more specific exact target: for example a live span or block, a
+    narrower story, or an explicit `nth` when supported. To inspect contextual
+    ranking without hiding candidates, use `find_text(..., near=...)`.
     """
 
 
