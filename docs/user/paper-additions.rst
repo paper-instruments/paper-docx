@@ -179,12 +179,6 @@ Choose the option that matches the edit's preservation contract:
   and accept/reject behavior. The correction remains attributed to the
   recorded author and date. Base text encountered by ``replace_all`` still
   uses the ordinary untracked behavior.
-- Use ``preserve_structure=True`` when the existing text-node and run topology
-  must remain exact. This mode changes only text values and may refuse text
-  whose whitespace cannot be represented without changing ``xml:space``.
-- Combine the two preservation options when both contracts apply. Neither can
-  be combined with ``tracked=True``.
-
 Ordinary replacement changes the proved regional interval without allocating
 text according to old text-node lengths. If structural ownership is ambiguous,
 target a smaller span inside one wrapper owner.

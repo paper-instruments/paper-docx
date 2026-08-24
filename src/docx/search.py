@@ -375,7 +375,7 @@ class ReplaceResult:
     wrong for tracked edits. `preserved_formatting_regions` reports whether an ordinary
     replacement kept every changed formatting region rather than intentionally inheriting the
     changed interval's starting run properties; for a no-op, it records that no formatting
-    changed. It is independent of revision and topology evidence.
+    changed. It is independent of revision evidence.
     """
 
     story: str
@@ -383,20 +383,18 @@ class ReplaceResult:
     inserted_text: str
     tracked: bool
     revision_ids: Tuple[int, ...]
-    preserved_structure: bool = False
     preserved_revision_ids: Tuple[int, ...] = ()
     preserved_formatting_regions: bool = False
 
     def to_dict(self) -> dict:
         return {
             "schema": "paper_replace",
-            "version": 2,
+            "version": 3,
             "story": self.story,
             "deleted_text": self.deleted_text,
             "inserted_text": self.inserted_text,
             "tracked": self.tracked,
             "revision_ids": list(self.revision_ids),
-            "preserved_structure": self.preserved_structure,
             "preserved_revision_ids": list(self.preserved_revision_ids),
             "preserved_formatting_regions": self.preserved_formatting_regions,
         }
@@ -658,7 +656,7 @@ def _regional_text_assignments(
                 after_xml_space=(
                     "preserve"
                     if after[:1].isspace() or after[-1:].isspace()
-                    else None
+                    else atom.element.get(_XML_SPACE)
                 ),
             )
         )
@@ -1265,7 +1263,6 @@ class Span:
         tracked: bool = False,
         author: Optional[str] = None,
         date: Optional[dt.datetime] = None,
-        preserve_structure: bool = False,
         preserve_revision: bool = False,
     ) -> ReplaceResult:
         """Replace this span's text and return machine-readable change evidence.
@@ -1284,17 +1281,9 @@ class Span:
         existing `w:ins` to be corrected without changing that insertion's id, author, date,
         or accept/reject meaning; outside revision markup it behaves like an ordinary untracked
         edit. The corrected text remains attributed to the existing insertion's author and date.
-        `preserve_structure=True` changes only the selected `w:t` values: each node receives up
-        to its selected original capacity from left to right, and the final node receives the
-        remainder. Text elements, attributes, runs, intervening markers, and empty nodes are
-        retained. A mutating exact-structure edit consumes the span and refuses text that would
-        require changing `xml:space`. A fully preflighted no-op reports preservation evidence
-        but does not consume the span. The two preservation options can be combined, but neither
-        can be combined with `tracked=True`.
-
-        `preserved_formatting_regions`, `preserved_structure`, and
-        `preserved_revision_ids` report independent guarantees; `revision_ids` remains reserved
-        for newly authored tracked revisions. Every successful text-changing replacement consumes
+        `preserved_formatting_regions` and `preserved_revision_ids` report independent
+        guarantees; `revision_ids` remains reserved for newly authored tracked revisions. Every
+        successful text-changing replacement consumes
         the supplied span; use the returned result and re-find the text before another operation.
         A no-op, refusal, or rolled-back mutation leaves the span reusable. Refuses a protected
         document, a stale or foreign span, and unsafe field,
@@ -1306,7 +1295,6 @@ class Span:
             tracked=tracked,
             author=author,
             date=date,
-            preserve_structure=preserve_structure,
             preserve_revision=preserve_revision,
             use_transaction=self._freshness_census is None,
         )
@@ -1318,7 +1306,6 @@ class Span:
         tracked: bool,
         author: Optional[str],
         date: Optional[dt.datetime],
-        preserve_structure: bool,
         preserve_revision: bool,
         use_transaction: bool,
         tracked_context: "Optional[Tuple[Tuple[Optional[_Element], ...], bool]]" = None,
@@ -1326,7 +1313,6 @@ class Span:
         """Implementation shared with the already-transactional batch path."""
         _validate_replacement_options(
             tracked=tracked,
-            preserve_structure=preserve_structure,
             preserve_revision=preserve_revision,
         )
         if tracked:
@@ -1345,8 +1331,10 @@ class Span:
             if tracked_context is None:
                 tracked_context = _tracked_layering_context(self, author)
             if self.text == new_text:
-                raise TargetNotFoundError("replacement equals the existing text; nothing to change")
-        if not preserve_structure and (
+                raise TargetNotFoundError(
+                    "replacement equals the existing text; nothing to change"
+                )
+        if (
             tracked
             or any(atom.is_synthetic for atom in self._atoms)
             or self.crosses_paragraphs
@@ -1372,7 +1360,6 @@ class Span:
                         tracked=tracked,
                         author=author,
                         date=date,
-                        preserve_structure=False,
                         preserve_revision=preserve_revision,
                         use_transaction=False,
                         tracked_context=tracked_context,
@@ -1405,9 +1392,7 @@ class Span:
                     raise
         preserved_revision_ids = _preserved_insertion_ids(self, authorize=preserve_revision)
         preservation_noop = bool(preserved_revision_ids) and new_text == self.text
-        self._validate_replaceable(
-            validate_bookmarks=tracked and not preserve_structure
-        )
+        self._validate_replaceable(validate_bookmarks=tracked)
         if not tracked:
             for atom in self._atoms:
                 if atom.in_insert and not preserve_revision:
@@ -1419,11 +1404,6 @@ class Span:
                     )
         placeholder_sdts = _placeholder_controls_of(self._atoms)
         if placeholder_sdts:
-            if preserve_structure and new_text != self.text:
-                raise UnsupportedStructureError(
-                    "span lies in placeholder prompt text whose successful fill"
-                    " requires structural cleanup; exact structure cannot be preserved"
-                )
             if tracked:
                 raise UnsupportedStructureError(
                     "span lies in a form control still showing PLACEHOLDER"
@@ -1440,46 +1420,6 @@ class Span:
                         " to real content — replace the whole prompt"
                         f" ({prompt!r}) or use docx.controls.set_control_value"
                     )
-        if preserve_structure:
-            assignments = _exact_text_assignments(self, new_text)
-            _refuse_hollowed_bookmarks(
-                _hollowed_bookmarks_after(
-                    assignments,
-                    self._atoms,
-                    census=(
-                        self._freshness_census.bookmarks
-                        if self._freshness_census is not None
-                        else None
-                    ),
-                )
-            )
-            result = ReplaceResult(
-                story=self.story,
-                deleted_text=self.text,
-                inserted_text=new_text,
-                tracked=False,
-                revision_ids=(),
-                preserved_structure=True,
-                preserved_revision_ids=preserved_revision_ids,
-            )
-            if new_text == self.text:
-                return result
-            if use_transaction:
-                with rollback_on_error(self._document, self):
-                    _apply_text_assignments(assignments)
-                    self._consumed = True
-            else:
-                try:
-                    _apply_text_assignments(assignments)
-                except BaseException:
-                    # The batch owns the package transaction. Restore this
-                    # text-only attempt locally so a late PaperRefusal can be
-                    # recorded and an unexpected error can roll back the batch.
-                    for assignment in assignments:
-                        assignment.element.text = assignment.before
-                    raise
-                self._consumed = True
-            return result
         if preservation_noop:
             return ReplaceResult(
                 story=self.story,
@@ -2011,42 +1951,6 @@ def _hollowed_bookmarks(atoms: "Sequence[_Atom]", end_offset: int) -> "List[str]
     return hollowed
 
 
-def _exact_text_assignments(span: Span, new_text: str) -> "Tuple[_TextAssignment, ...]":
-    """Plan deterministic text-only assignments without changing the tree."""
-    assignments: "List[_TextAssignment]" = []
-    cursor = 0
-    atoms = span._atoms  # pyright: ignore[reportPrivateUsage]
-    last_index = len(atoms) - 1
-    for index, atom in enumerate(atoms):
-        start = span._start_offset if index == 0 else 0  # pyright: ignore[reportPrivateUsage]
-        end = (
-            span._end_offset  # pyright: ignore[reportPrivateUsage]
-            if index == last_index
-            else len(atom.text)
-        )
-        capacity = end - start
-        if index == last_index:
-            replacement_piece = new_text[cursor:]
-        else:
-            piece_length = min(capacity, len(new_text) - cursor)
-            replacement_piece = new_text[cursor : cursor + piece_length]
-            cursor += piece_length
-        after = atom.text[:start] + replacement_piece + atom.text[end:]
-        if (
-            after != atom.text
-            and (after[:1].isspace() or after[-1:].isspace())
-            and atom.element.get(_XML_SPACE) != "preserve"
-        ):
-            raise UnsupportedStructureError(
-                "exact structure would leave significant edge whitespace in a"
-                " w:t without its existing xml:space='preserve' attribute"
-            )
-        assignments.append(
-            _TextAssignment(element=atom.element, before=atom.text, after=after)
-        )
-    return tuple(assignments)
-
-
 def _apply_text_assignments(assignments: "Sequence[_TextAssignment]") -> None:
     """Apply a fully validated text-assignment collection."""
     for assignment in assignments:
@@ -2142,13 +2046,7 @@ def _refuse_hollowed_bookmarks(hollowed: "Sequence[str]") -> None:
         )
 
 
-def _validate_replacement_options(
-    *, tracked: bool, preserve_structure: bool, preserve_revision: bool
-) -> None:
-    if tracked and preserve_structure:
-        raise ValueError(
-            "tracked=True cannot be combined with preserve_structure=True"
-        )
+def _validate_replacement_options(*, tracked: bool, preserve_revision: bool) -> None:
     if tracked and preserve_revision:
         raise ValueError(
             "tracked=True cannot be combined with preserve_revision=True"
@@ -2376,7 +2274,7 @@ class ReplaceAllResult:
     def to_dict(self) -> dict:
         return {
             "schema": "paper_replace_all",
-            "version": 2,
+            "version": 3,
             "replaced_count": self.replaced_count,
             "results": [result.to_dict() for result in self.results],
             "refused": list(self.refused),
@@ -2394,7 +2292,6 @@ def replace_all(
     tracked: bool = False,
     author: Optional[str] = None,
     date: Optional[dt.datetime] = None,
-    preserve_structure: bool = False,
     preserve_revision: bool = False,
 ) -> ReplaceAllResult:
     """Replace every match of `needle` in one pass, and return a `ReplaceAllResult`.
@@ -2405,16 +2302,14 @@ def replace_all(
     shifts. A refusal on one match is recorded in `refused` and the rest
     proceed; a stale span aborts the batch instead, rolling back every
     replacement already applied. Matches already equal to `new_text` are
-    skipped. `preserve_structure` and `preserve_revision` have the same
-    contracts as |Span| ``.replace`` and are forwarded to every match without
-    adding a transaction per match.
+    skipped. `preserve_revision` has the same contract as |Span| ``.replace``
+    and is forwarded to every match without adding a transaction per match.
     """
     from docx.errors import PaperRefusal
 
     _validate_match_policy(match)
     _validate_replacement_options(
         tracked=tracked,
-        preserve_structure=preserve_structure,
         preserve_revision=preserve_revision,
     )
     if tracked and not author:
@@ -2445,7 +2340,7 @@ def replace_all(
             positions={
                 id(atom.element): index for index, atom in enumerate(atoms)
             },
-            bookmarks=_bookmark_census(root) if preserve_structure else None,
+            bookmarks=_bookmark_census(root),
         )
         for span in story_spans:
             span._freshness_census = census
@@ -2463,7 +2358,6 @@ def replace_all(
                                 tracked=tracked,
                                 author=author,
                                 date=date,
-                                preserve_structure=preserve_structure,
                                 preserve_revision=preserve_revision,
                             )
                         )

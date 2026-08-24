@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import datetime as dt
 from contextlib import contextmanager
+from typing import Any, cast
 
 import pytest
 
@@ -263,13 +264,25 @@ class DescribeReplaceAll:
         document.add_paragraph("{{y}}")
         payload = replace_all(document, "{{y}}", "z").to_dict()
         assert payload["schema"] == "paper_replace_all"
-        assert payload["version"] == 2
+        assert payload["version"] == 3
         assert payload["replaced_count"] == 1
         assert payload["results"][0]["schema"] == "paper_replace"
-        assert payload["results"][0]["version"] == 2
-        assert payload["results"][0]["preserved_structure"] is False
+        assert payload["results"][0]["version"] == 3
+        assert "preserved_" + "structure" not in payload["results"][0]
         assert payload["results"][0]["preserved_revision_ids"] == []
         assert payload["results"][0]["preserved_formatting_regions"] is True
+
+    def it_rejects_the_removed_structure_keyword_before_batch_mutation(self):
+        document = _doc()
+        paragraph = document.add_paragraph("token token")
+        removed_keyword = "preserve_" + "structure"
+
+        with pytest.raises(TypeError, match=removed_keyword):
+            cast(Any, replace_all)(
+                document, "token", "value", **{removed_keyword: True}
+            )
+
+        assert paragraph.text == "token token"
 
     def it_records_when_a_batch_inherits_start_run_formatting(self):
         document = _doc()
@@ -352,23 +365,8 @@ class DescribeReplaceAll:
         assert all(item.preserved_formatting_regions for item in result.results)
         assert document.element.body.xpath('//w:ins[@w:id="801"]')
 
-    def it_reports_exact_structure_evidence_for_each_successful_match(self):
-        document = _doc()
-        document.add_paragraph("token token")
-        result = replace_all(
-            document, "token", "value", preserve_structure=True
-        )
-        assert result.replaced_count == 2
-        assert all(item.preserved_structure for item in result.results)
-        assert "value value" in [block.text for block in iter_blocks(document)]
-
-    @pytest.mark.parametrize(
-        ("tracked", "preserve_structure"),
-        [(False, False), (True, False), (False, True)],
-    )
-    def it_uses_only_the_outer_batch_transaction(
-        self, monkeypatch, tracked: bool, preserve_structure: bool
-    ):
+    @pytest.mark.parametrize("tracked", [False, True])
+    def it_uses_only_the_outer_batch_transaction(self, monkeypatch, tracked: bool):
         document = _doc()
         document.add_paragraph("token token")
         transaction_count = 0
@@ -389,11 +387,10 @@ class DescribeReplaceAll:
             tracked=tracked,
             author="Carol QA" if tracked else None,
             date=FROZEN if tracked else None,
-            preserve_structure=preserve_structure,
         )
         assert transaction_count == 1
 
-    def it_reuses_one_bookmark_census_for_an_exact_batch(self, monkeypatch):
+    def it_reuses_one_bookmark_census_for_an_ordinary_batch(self, monkeypatch):
         document = _doc()
         document.add_paragraph("token token token")
         census_count = 0
@@ -405,14 +402,12 @@ class DescribeReplaceAll:
             return original(*args, **kwargs)
 
         monkeypatch.setattr(search_module, "_bookmark_census", counted_census)
-        result = replace_all(
-            document, "token", "value", preserve_structure=True
-        )
+        result = replace_all(document, "token", "value")
 
         assert result.replaced_count == 3
         assert census_count == 1
 
-    def it_keeps_bookmark_hollowing_checks_per_match_in_an_exact_batch(self):
+    def it_keeps_bookmark_hollowing_checks_per_match(self):
         document = _doc()
         paragraph = document.add_paragraph()
         start = parse_xml(
@@ -423,38 +418,12 @@ class DescribeReplaceAll:
         paragraph._p.append(parse_xml(f'<w:bookmarkEnd {W} w:id="91"/>'))
         document.add_paragraph("token")
 
-        result = replace_all(
-            document, "token", "", preserve_structure=True
-        )
+        result = replace_all(document, "token", "")
 
         assert result.replaced_count == 1
         assert len(result.refused) == 1
         assert result.refused[0]["error"] == "UnsupportedStructureError"
         assert "token" in [block.text for block in iter_blocks(document)]
-
-    def it_locally_restores_a_late_per_match_refusal(self, monkeypatch):
-        document = _doc()
-        document.add_paragraph("token token")
-        original = search_module._apply_text_assignments
-        calls = 0
-
-        def refuse_second(assignments):
-            nonlocal calls
-            calls += 1
-            if calls == 2:
-                assignments[0].element.text = "corrupt"
-                raise UnsupportedStructureError("forced late refusal")
-            original(assignments)
-
-        monkeypatch.setattr(
-            search_module, "_apply_text_assignments", refuse_second
-        )
-        result = replace_all(
-            document, "token", "value", preserve_structure=True
-        )
-        assert result.replaced_count == 1
-        assert len(result.refused) == 1
-        assert "token value" in [block.text for block in iter_blocks(document)]
 
     def it_locally_restores_a_late_ordinary_match_refusal(self, monkeypatch):
         document = _doc()
@@ -533,23 +502,4 @@ class DescribeReplaceAll:
         monkeypatch.setattr(search_module, "_apply_text_assignments", fail_second)
         with pytest.raises(RuntimeError, match="forced unexpected ordinary"):
             replace_all(document, "token", "value")
-        assert paragraph.text == "token token"
-
-    def it_rolls_back_the_batch_after_an_unexpected_exact_failure(self, monkeypatch):
-        document = _doc()
-        paragraph = document.add_paragraph("token token")
-        original = search_module._apply_text_assignments
-        calls = 0
-
-        def fail_second(assignments):
-            nonlocal calls
-            calls += 1
-            if calls == 2:
-                assignments[0].element.text = "corrupt"
-                raise RuntimeError("forced unexpected failure")
-            original(assignments)
-
-        monkeypatch.setattr(search_module, "_apply_text_assignments", fail_second)
-        with pytest.raises(RuntimeError, match="forced unexpected"):
-            replace_all(document, "token", "value", preserve_structure=True)
         assert paragraph.text == "token token"

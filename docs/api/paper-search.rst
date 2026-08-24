@@ -104,23 +104,14 @@ changed interval.
      - For a current-view span wholly owned by one ``w:ins``, keeps that
        insertion's id, author, date, and accept/reject projections. Outside
        revision markup, behaves like an ordinary untracked edit.
-   * - Preserve exact text topology
-     - ``span.replace(text, preserve_structure=True)``
-     - Changes only existing ``w:t`` values; preserves their attributes,
-       ancestor runs, and intervening transparent markers.
-   * - Correct an insertion and preserve topology
-     - ``span.replace(text, preserve_revision=True,
-       preserve_structure=True)``
-     - Applies both contracts to one existing insertion.
 
-``tracked=True`` cannot be combined with either preservation option. Revision
+``tracked=True`` cannot be combined with revision preservation. Revision
 preservation does not reauthor or restamp the existing insertion and does not
 support deletions, tracked moves, mixed base/insertion text, or multiple or
 nested revision wrappers. The corrected text remains attributed to the
 existing insertion's recorded author and date. Its outside-revision behavior
 lets ``replace_all`` apply one policy to both base text and insertion-owned
-matches. ``preserve_structure=True`` alone does not authorize an edit inside
-an insertion; request both guarantees for that case.
+matches.
 
 Ordinary and tracked replacement consider every non-overlapping exact prefix/suffix split
 that preserves the maximal number of characters. It narrows only when all
@@ -144,28 +135,16 @@ when their serialized XML is identical. Pure insertions at a boundary also
 refuse unless both sides prove the same complete formatting and concrete
 wrapper destination.
 
-Exact topology means structural preservation, not preservation of inferred
-formatting intent. Replacement text fills each selected text-node slice from
-left to right up to that slice's original capacity; the final selected node
-receives the remainder. Empty nodes remain present. Existing field,
-content-control, hyperlink, revision, protection, and paragraph-boundary guards
-still apply. The operation also refuses when the result would need an
-``xml:space`` attribute change, hollow a bookmark, or require placeholder
-cleanup. A successful mutation consumes the span because its captured offsets
-no longer describe the same text. A no-op still runs the full preflight and
-reports preservation evidence, but changes nothing and leaves the span
-reusable.
-
-For example, if ``Alpha`` consists of bold ``Al`` followed by italic ``pha``,
-replacing the whole word with ``Omega`` produces bold ``Omega`` because the
-changed interval starts in the bold run. Starting the same match in the italic
-run instead produces italic replacement text.
-
 Ordinary replacement never distributes new text according to prior text-node
 lengths. Existing field,
 content-control, hyperlink, revision, protection, bookmark, and paragraph-
 boundary guards still apply. Required ``xml:space`` updates and placeholder
 cleanup are part of a successful ordinary edit.
+
+For example, if ``Alpha`` consists of bold ``Al`` followed by italic ``pha``,
+replacing the whole word with ``Omega`` produces bold ``Omega`` because the
+changed interval starts in the bold run. Starting the same match in the italic
+run instead produces italic replacement text.
 
 |ReplaceResult| sets ``preserved_formatting_regions`` only when a successful
 ordinary untracked replacement did not collapse differently formatted changed
@@ -174,7 +153,8 @@ a no-op is not a formatting probe and leaves the span reusable. Tracked edits
 and empty-cell creation report false. The flag is
 orthogonal to ``preserved_revision_ids``: an authorized correction inside one
 existing insertion reports both the preserved insertion ID and formatting-
-region evidence. ``preserved_structure`` remains separate, and
+region evidence. The guarantee does not infer a semantic mapping from new words
+to styles; after a typed refusal, target a smaller uniform span.
 ``revision_ids`` continues to identify only newly authored revisions.
 ``replace_all`` accepts the same replacement options plus the same exact-by-
 default ``match`` policy, records each per-match
@@ -194,8 +174,9 @@ or a marker, target a smaller span wholly inside one structural region. Markers
 and differently formatted text wholly contained in exact unchanged affixes
 remain in their original elements and order.
 
-The direct and batch ``to_dict()`` payloads use schema version 2 and retain
-their earlier keys while adding ``preserved_formatting_regions``.
+The direct and batch ``to_dict()`` payloads use schema version 3 and retain
+``preserved_formatting_regions`` and revision evidence. They do not include a
+separate structure-preservation mode or result field.
 
 These contracts describe the edited XML structure. They do not promise raw
 byte identity inside a changed package part; use :func:`docx.package.patch_save`
