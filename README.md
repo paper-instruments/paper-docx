@@ -64,13 +64,60 @@ result.document.paragraphs[0].text
 
 - **`docx.story`** traverses the body, headers, footers, footnotes, endnotes, comments, tracked insertions, content controls, and text boxes. Callers can view the document as it stands, before pending revisions, or all at once.
 - **`docx.search`** finds exact text by default across Word's run fragmentation, with explicit normalized matching when wanted. A returned `Span` can replace the matched text while preserving unaffected runs, emit the replacement as a tracked change, or anchor a comment.
-- **`docx.blocks`** inserts, deletes, or replaces whole paragraphs relative to a text anchor, as plain edits or as a tracked change.
-- **`docx.tableops` / `docx.numbering`** provide cell, row, and list edits that refuse on unsafe structures such as merged cells, nested tables, or undefined numbering.
+- **`docx.blocks`** inserts, deletes, or replaces whole paragraphs relative to an exact string, live span, or owner-bound live paragraph block, as plain edits or as a tracked change.
+- **`docx.tableops` / `docx.numbering`** provide explicit exact-or-normalized top-level table lookup plus cell, row, and list edits. Table lookup never synthesizes a match across cells, and copied rows accept only simple uniform templates rather than flattening ambiguous or unsupported structures.
 - **`docx.controls`** fills content controls with the correct value type and clears placeholder state so Word treats them as filled.
 - **`docx.bookmarks` / `docx.fields`** create bookmarks over a span and author page numbers, dates, cross-references, captions, and tables of contents as fields with placeholder results.
 - **`docx.notes` / `docx.links`** anchor real footnotes, endnotes, and hyperlinks to a matched span, so they compose with `docx.search` rather than needing their own targeting.
 - **`Drawing.replace_picture`** swaps the image behind a drawing in place, leaving its size, position, and identity alone.
 - **`docx.formatting`** resolves effective formatting through document defaults, styles, and direct formatting, with provenance for each value.
+
+### Selection and preservation
+
+Search is exact by default across Word's ordinary run fragmentation; normalized
+matching is an explicit policy. `find_text(..., near=...)` orders the complete
+candidate set for inspection; `find_one()` retains ordinary zero/one/many
+resolution and accepts no contextual-ranking keyword. A live `Span` identifies
+selected characters and a live `Block` identifies one attached document element.
+Serialized `Anchor` values are location evidence, not mutation authority; after a
+reload, reacquire a live target. Operations that require one paragraph refuse
+cross-paragraph targets. See the
+[search](docs/api/paper-search.rst), [story](docs/api/paper-story.rst), and
+[block](docs/api/paper-blocks.rst) references for the complete contracts.
+
+Ordinary untracked replacement considers every maximal exact prefix/suffix
+alignment. It preserves unchanged affixes and edits one proved structural
+region only when those alignments agree on the changed interval and writable
+destination; ambiguous repeated affixes or insertion boundaries refuse with
+guidance to re-find the intended substring. Mixed formatting across the
+consumed text is not itself a refusal: nonempty replacement text takes the
+complete direct `w:rPr` of the run holding the first consumed character, and
+the differently formatted runs it consumes collapse into that format.
+Untouched affixes and boundary fragments keep their own runs. Crossing
+distinct inline wrapper owners, or moving a marker, still refuses. Every
+successful text-changing direct `Span.replace()` consumes that span; re-find
+before another operation. Direct no-ops and atomically refused or rolled-back
+operations leave the supplied span reusable. There is no separate
+topology-preservation mode or character-capacity allocator. Formatting inspection
+composes an explicit search with `format_of(span)`, or passes a run or paragraph
+directly. See
+the [replacement](docs/api/paper-search.rst),
+[formatting](docs/api/paper-formatting.rst), and
+[revision](docs/api/paper-revisions.rst) references for details.
+
+Tracked replacement uses the same unique localization and the same start-run
+rule: inserted revision text takes the direct formatting of the run holding the
+first consumed character, while deletion markup retains each source run's own
+formatting. Replacing bold/italic `Alpha` with `Omega` authors a bold `Omega`,
+because the changed interval starts in the bold run. A changed interval that
+would cross distinct inline wrapper owners still refuses and leaves the
+document unchanged.
+
+Live blocks and spans captured from historical revision views remain useful for
+inspection, but mutation destinations must be reacquired from the current view.
+Cross-document composition applies that rule to its destination and refuses
+before importing anything when insertion after a paragraph, table, or block
+content control would remain inside an open complex-field result.
 
 ### Reviewing
 

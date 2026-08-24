@@ -20,6 +20,36 @@ The rest of this page is inherited from python-docx and covers the shared
 foundation for creating and updating Microsoft Word (.docx) files.
 
 
+Selection and preservation
+--------------------------
+
+Search is exact by default across ordinary Word run fragmentation; normalized
+matching is an explicit caller choice. ``find_text(..., near=...)`` orders the
+complete candidate set for inspection; ``find_one()`` keeps ordinary
+zero/one/many resolution and has no contextual-ranking keyword. A live |Span|
+identifies selected text and a live |Block| identifies one attached document
+element. Serialized |Anchor| values remain inert location evidence; reacquire a
+live target after reload. One-paragraph operations refuse cross-paragraph
+targets. See
+:ref:`docx.search <paper_search_api>`, :ref:`docx.story <paper_story_api>`, and
+:ref:`docx.blocks <paper_blocks_api>`.
+
+Ordinary untracked replacement considers every maximal exact prefix/suffix
+alignment. It preserves unchanged affixes and edits one proved formatting and
+structural region only when those alignments agree on the changed interval and
+writable destination. Ambiguous repeated affixes or insertion boundaries refuse
+with guidance to re-find the intended substring. Every successful text-changing
+direct ``Span.replace()`` consumes that span; callers re-find before another
+operation. Direct no-ops and atomically refused or rolled-back operations leave
+the supplied span reusable.
+There is no separate topology-preservation mode or character-capacity
+allocator. Formatting inspection composes explicit search with
+``format_of(span)``, or accepts a run or paragraph directly. See
+:ref:`docx.search <paper_search_api>`,
+:ref:`docx.formatting <paper_formatting_api>`, and
+:ref:`docx.revision <paper_revisions_api>` for the detailed contracts.
+
+
 What it can do
 --------------
 
