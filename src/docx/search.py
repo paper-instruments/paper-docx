@@ -1212,10 +1212,12 @@ class Span:
         """Replace this span's text and return machine-readable change evidence.
 
         The default is an untracked edit over one proved formatting and structural region.
-        Exact unchanged prefix and suffix text stays in its existing atoms; mixed formatting,
-        semantic-scope crossings, unresolved run formatting, and positional-marker crossings
-        refuse instead of adopting one run's formatting. `tracked=True` instead emits a minimal
-        `w:del`/`w:ins` pair and consumes the span; a direct tracked no-op is refused.
+        When maximal exact prefix/suffix alignment identifies one changed interval, unchanged
+        affix text stays in its existing atoms. Ambiguous alignments, changed intervals spanning
+        different complete run properties or inline ancestry, semantic-scope crossings, and
+        positional-marker crossings refuse instead of adopting one run's formatting. A changed
+        interval inside one text node uses that node's formatting. `tracked=True` instead emits
+        a minimal `w:del`/`w:ins` pair and consumes the span; a direct tracked no-op is refused.
 
         `preserve_revision=True` explicitly permits a current-view span wholly owned by one
         existing `w:ins` to be corrected without changing that insertion's id, author, date,
