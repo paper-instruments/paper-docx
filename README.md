@@ -63,7 +63,7 @@ result.document.paragraphs[0].text
 ### Reading and editing one document
 
 - **`docx.story`** traverses the body, headers, footers, footnotes, endnotes, comments, tracked insertions, content controls, and text boxes. Callers can view the document as it stands, before pending revisions, or all at once.
-- **`docx.search`** finds normalized text across Word's run fragmentation. A returned `Span` can replace the matched text while preserving unaffected runs, emit the replacement as a tracked change, or anchor a comment.
+- **`docx.search`** finds exact text by default across Word's run fragmentation, with explicit normalized matching when wanted. A returned `Span` can replace the matched text while preserving unaffected runs, emit the replacement as a tracked change, or anchor a comment.
 - **`docx.blocks`** inserts, deletes, or replaces whole paragraphs relative to a text anchor, as plain edits or as a tracked change.
 - **`docx.tableops` / `docx.numbering`** provide cell, row, and list edits that refuse on unsafe structures such as merged cells, nested tables, or undefined numbering.
 - **`docx.controls`** fills content controls with the correct value type and clears placeholder state so Word treats them as filled.

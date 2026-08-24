@@ -79,12 +79,14 @@ APPROVED_SIGNATURES = [
     (
         "docx.search",
         "find_text",
-        "(document, needle, *, nth=None, near=None, story=None, view='current')",
+        "(document, needle, *, nth=None, near=None, story=None, view='current',"
+        " match='exact')",
     ),
     (
         "docx.search",
         "find_one",
-        "(document, needle, *, nth=None, near=None, story=None, view='current')",
+        "(document, needle, *, nth=None, near=None, story=None, view='current',"
+        " match='exact')",
     ),
     # -- replace -------------------------------------------------------------
     (
@@ -115,7 +117,11 @@ APPROVED_SIGNATURES = [
     ("docx.revision", "Revisions.accept_all", "(self, *, author=None)"),
     ("docx.revision", "Revisions.reject_all", "(self, *, author=None)"),
     # -- tables + numbering --------------------------------------------------
-    ("docx.tableops", "find_table", "(document, *, near_text)"),
+    (
+        "docx.tableops",
+        "find_table",
+        "(document, *, near_text, match='exact')",
+    ),
     (
         "docx.tableops",
         "update_cell",
@@ -137,7 +143,7 @@ APPROVED_SIGNATURES = [
     (
         "docx.search",
         "replace_all",
-        "(document, needle, new_text, *, story=None, view='current',"
+        "(document, needle, new_text, *, story=None, view='current', match='exact',"
         " tracked=False, author=None, date=None, preserve_structure=False,"
         " preserve_revision=False)",
     ),

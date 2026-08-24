@@ -44,10 +44,11 @@ at once (``"all"``). |Outline| reports what it could not read.
     o.blind_region_counts                    # {"tracked_insertions": 2, "text_boxes": 1, ...}
     [b.text for b in o.blocks if b.in_text_box]
 
-:ref:`docx.search <paper_search_api>` normalizes smart quotes, dashes, exotic
-spaces and case, then matches across the multiple runs Word fragments text
-into. The
-returned |Span| maps that text back to the exact runs that hold it.
+:ref:`docx.search <paper_search_api>` matches literal visible text by default,
+across the multiple runs Word fragments text into. Callers can explicitly opt
+into normalization of smart quotes, dashes, exotic spaces, whitespace and
+case. The returned |Span| maps the exact document text back to the runs that
+hold it.
 :ref:`docx.formatting <paper_formatting_api>` answers the complementary
 question: what formatting does this text *actually* carry? It resolves through
 document defaults, the style chain and direct formatting, with every value
@@ -63,8 +64,26 @@ Edit one document
 
     from docx.search import find_one
 
-    span = find_one(doc, "rate: $75-100/hr")     # matches “rate: $75–100/hr”
+    span = find_one(doc, "rate: $75–100/hr")
     span.replace("rate: $85-110/hr")             # formatting intact
+
+Exact targeting is the mutation-safe default. To migrate a convenience lookup
+that intentionally ignores typography or case, opt in once and pass the
+resulting live span to the mutation API:
+
+::
+
+    span = find_one(
+        doc,
+        'rate: $75-100/hr on a "full-service" basis',
+        match="normalized",
+    )
+    span.text                                    # preserves the smart punctuation
+    span.replace("rate: $85-110/hr")
+
+The normalized span is an intentional mutation target, not an inspection-only
+result. APIs outside ``docx.search`` do not repeat the ``match`` keyword; use
+this explicit preselection workflow when they need normalized targeting.
 
 Choose the option that matches the edit's preservation contract:
 

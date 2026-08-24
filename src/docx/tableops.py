@@ -30,12 +30,14 @@ from docx.search import (
     Span,
     _collect_block_atoms,
     _next_revision_id,
+    _validate_match_policy,  # pyright: ignore[reportPrivateUsage]
     normalize_text,
 )
 from docx.story import Anchor, _iter_block_elements, _story_elements, content_hash
 
 if TYPE_CHECKING:
     from docx.document import Document
+    from docx.oxml.table import CT_Tc
     from docx.table import Table, _Cell
 
 check_install()
@@ -180,20 +182,42 @@ def _cell_text(cell: "_Cell") -> str:
     return "\n".join(p.text for p in cell.paragraphs)
 
 
-def find_table(document: "Document", *, near_text: str) -> "Table":
-    """The table whose cell text contains `near_text` (normalized matching).
+def find_table(
+    document: "Document", *, near_text: str, match: str = "exact"
+) -> "Table":
+    """The table with one physical cell containing `near_text`.
 
-    Zero matching tables raise |TargetNotFoundError|; more than one raise
-    |AmbiguousTargetError| — make `near_text` more specific.
+    Matching is literal and exact by default; ``match="normalized"`` folds case,
+    typography, and whitespace. Paragraph boundaries within one cell are represented
+    by literal newlines, but a match never crosses from one cell into another. Only
+    top-level tables in the main document body are searched.
+
+    Zero matching tables raise |TargetNotFoundError|; more than one matching table
+    raises |AmbiguousTargetError| — make `near_text` more specific.
     """
-    needle = normalize_text(near_text)
-    matches = []
-    for table in document.tables:
-        text = normalize_text(
-            "\n".join(_cell_text(cell) for row in table.rows for cell in row.cells)
+    _validate_match_policy(match)
+    needle = near_text if match == "exact" else normalize_text(near_text)
+    if not needle or (match == "normalized" and not needle.strip()):
+        raise TargetNotFoundError(
+            "near_text must contain searchable text; an empty target cannot identify a table"
         )
-        if needle in text:
-            matches.append(table)
+    matches: "list[Table]" = []
+    for table in document.tables:
+        seen_cells: "set[CT_Tc]" = set()
+        for row in table.rows:
+            for cell in row.cells:
+                physical_cell = cell._tc  # pyright: ignore[reportPrivateUsage]
+                if physical_cell in seen_cells:
+                    continue
+                seen_cells.add(physical_cell)
+                text = _cell_text(cell)
+                candidate = text if match == "exact" else normalize_text(text)
+                if needle in candidate:
+                    matches.append(table)
+                    break
+            else:
+                continue
+            break
     if not matches:
         raise TargetNotFoundError(f"no table contains {near_text!r}")
     if len(matches) > 1:
@@ -303,7 +327,8 @@ def update_cell(
         _atoms=atoms,
         _start_offset=0,
         _end_offset=len(atoms[-1].text),
-        _norm_start=0,
+        _raw_start=0,
+        _match_start=0,
     )
     return span.replace(new_text, tracked=tracked, author=author, date=date)
 

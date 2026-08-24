@@ -57,6 +57,6 @@ def it_preserves_paragraph_boundaries_in_anchored_comment_text():
     document = docx.Document()
     document.add_paragraph("Alpha")
     document.add_paragraph("Beta")
-    comment = find_one(document, "Alpha Beta").comment("Review", author="Reviewer")
+    comment = find_one(document, "Alpha\nBeta").comment("Review", author="Reviewer")
 
     assert anchored_text(document, comment) == "Alpha\nBeta"
