@@ -424,7 +424,7 @@ class DescribePlainReplace:
             (" suffix", None, None, True),
         ]
 
-    def it_replaces_equivalent_fragmented_runs_and_refreshes_the_span(
+    def it_replaces_equivalent_fragmented_runs_and_consumes_the_span(
         self, tmp_path: Path
     ):
         document = docx.Document()
@@ -434,11 +434,15 @@ class DescribePlainReplace:
         span = find_one(document, "fragmented")
 
         first = span.replace("unified")
-        second = span.replace("renewed")
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
+            span.replace("renewed")
+        replacement_span = find_one(document, "unified")
+        second = replacement_span.replace("renewed")
 
         assert first.preserved_formatting_regions
         assert second.preserved_formatting_regions
-        assert span.match_policy is None
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
+            replacement_span.replace("again")
         reopened = save_and_reopen(document, tmp_path / "fragmented.docx")
         assert reopened.paragraphs[0].text == "renewed"
         assert "".join(run.text for run in reopened.paragraphs[0].runs if run.bold) == "renewed"
@@ -606,7 +610,8 @@ class DescribePreservationPolicies:
         document, insertion = self._insertion_document()
         attributes = dict(insertion.attrib)
         original = [b.text for b in iter_blocks(document, view="original")]
-        result = find_one(document, "pending").replace(
+        span = find_one(document, "pending")
+        result = span.replace(
             "revised", preserve_revision=True
         )
         assert result.preserved_revision_ids == (41,)
@@ -614,6 +619,8 @@ class DescribePreservationPolicies:
         assert not result.preserved_structure
         assert dict(insertion.attrib) == attributes
         assert [b.text for b in iter_blocks(document, view="original")] == original
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
+            span.replace("again", preserve_revision=True)
         path = tmp_path / "preserved-insertion.docx"
         document.save(path)
         accepted = docx.Document(path)
@@ -731,7 +738,7 @@ class DescribePreservationPolicies:
         span = find_one(document, "abcdef")
         span.replace("x", preserve_structure=True)
         assert [e.text for e in elements] == ["x", "", ""]
-        with pytest.raises(TargetNotFoundError, match="structure-preserving"):
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
             span.replace("again")
         assert find_one(document, "x").text == "x"
 
@@ -1000,11 +1007,13 @@ class DescribeTrackedReplace:
         with pytest.raises(ValueError, match="author"):
             span.replace("x", tracked=True)
 
-    def it_refuses_a_replacement_equal_to_the_existing_text(self):
+    def it_refuses_a_replacement_equal_to_the_existing_text_without_consuming(self):
         document = _doc(MINIMAL)
         span = find_one(document, "perfectly ordinary")
         with pytest.raises(TargetNotFoundError, match="nothing to change"):
             span.replace("perfectly ordinary", tracked=True, author="Carol QA")
+        result = span.replace("quite ordinary")
+        assert result.inserted_text == "quite ordinary"
 
     def it_refuses_cross_paragraph_tracked_targets(self):
         document = _doc(MINIMAL)

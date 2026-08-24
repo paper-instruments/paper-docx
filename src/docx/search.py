@@ -412,25 +412,14 @@ class _TextAssignment:
     after_xml_space: "Optional[str]" = None
 
 
-@dataclass(frozen=True)
-class _FormattingRegionPlan:
-    """A complete ordinary-replacement plan plus its live-span boundaries."""
-
-    assignments: "Tuple[_TextAssignment, ...]"
-    before_prefix: str
-    after_suffix: str
-
-
 def _regional_text_assignments(
     span: "Span", new_text: str
-) -> _FormattingRegionPlan:
+) -> "Tuple[_TextAssignment, ...]":
     """Preflight one materially uniform ordinary replacement region."""
     old_text = span.text
     prefix_len, suffix_len = _common_affix_lengths(old_text, new_text)
-    before_prefix = span._atoms[0].text[: span._start_offset]
-    after_suffix = span._atoms[-1].text[span._end_offset :]
     if old_text == new_text:
-        return _FormattingRegionPlan((), before_prefix, after_suffix)
+        return ()
 
     changed_start = prefix_len
     changed_end = len(old_text) - suffix_len
@@ -520,7 +509,7 @@ def _regional_text_assignments(
         _hollowed_bookmarks_after(planned, span._atoms)
     )
     _refuse_intervening_positional_nodes(region_atoms)
-    return _FormattingRegionPlan(planned, before_prefix, after_suffix)
+    return planned
 
 
 def _validate_one_formatting_region(span: "Span", atoms: "Sequence[_Atom]") -> None:
@@ -656,7 +645,7 @@ class Span:
     _raw_start: int = field(repr=False)  # position in the story's raw visible text
     _match_start: int = field(repr=False)  # position in the selected policy space
     match_policy: "Optional[str]" = field(default=None, init=False)
-    _consumed: bool = field(default=False, repr=False)  # set by tracked replace
+    _consumed: bool = field(default=False, repr=False)
     _context_signatures: "Tuple[tuple, ...]" = field(init=False, repr=False)
     _atom_sequence: "Tuple[_Element, ...]" = field(init=False, repr=False)
     _sequence_view: "Optional[str]" = field(init=False, repr=False)
@@ -966,8 +955,7 @@ class Span:
     def _validate_fresh(self) -> None:
         if self._consumed:
             raise TargetNotFoundError(
-                "span was consumed by a tracked, structure-preserving, or"
-                " unrepresentable replacement; re-find the text"
+                "span was consumed by a successful replacement; re-find the text"
             )
         if self._current_slice() != self.text:
             raise TargetNotFoundError(
@@ -1154,9 +1142,10 @@ class Span:
 
         `preserved_formatting_regions`, `preserved_structure`, and
         `preserved_revision_ids` report independent guarantees; `revision_ids` remains reserved
-        for newly authored tracked revisions. A successful ordinary mutation refreshes the live
-        span when its result remains exactly representable, otherwise consumes it with re-find
-        guidance. Refuses a protected document, a stale or foreign span, and unsafe field,
+        for newly authored tracked revisions. Every successful text-changing replacement consumes
+        the supplied span; use the returned result and re-find the text before another operation.
+        A no-op, refusal, or rolled-back mutation leaves the span reusable. Refuses a protected
+        document, a stale or foreign span, and unsafe field,
         control, revision, bookmark, whitespace, or paragraph-boundary structures before
         mutation.
         """
@@ -1209,8 +1198,6 @@ class Span:
             narrowed = self._narrow_to_change(new_text)
             if narrowed is not None:
                 sub_span, sub_new = narrowed
-                before_prefix = self._atoms[0].text[: self._start_offset]
-                after_suffix = self._atoms[-1].text[self._end_offset :]
 
                 def apply_narrowed() -> ReplaceResult:
                     result = sub_span._replace(
@@ -1222,11 +1209,7 @@ class Span:
                         preserve_revision=preserve_revision,
                         use_transaction=False,
                     )
-                    if not tracked:
-                        self._refresh_after_ordinary_mutation(
-                            before_prefix=before_prefix,
-                            after_suffix=after_suffix,
-                        )
+                    self._consumed = True
                     return result
 
                 if use_transaction:
@@ -1318,7 +1301,6 @@ class Span:
             if use_transaction:
                 with rollback_on_error(self._document, self):
                     _apply_text_assignments(assignments)
-                    self.text = new_text
                     self._consumed = True
             else:
                 try:
@@ -1330,7 +1312,6 @@ class Span:
                     for assignment in assignments:
                         assignment.element.text = assignment.before
                     raise
-                self.text = new_text
                 self._consumed = True
             return result
         if preservation_noop:
@@ -1364,7 +1345,7 @@ class Span:
         placeholder_sdts: "Sequence[_Element]" = (),
         use_transaction: bool,
     ) -> ReplaceResult:
-        plan = _regional_text_assignments(self, new_text)
+        assignments = _regional_text_assignments(self, new_text)
         result = ReplaceResult(
             story=self.story,
             deleted_text=self.text,
@@ -1374,17 +1355,14 @@ class Span:
             preserved_revision_ids=preserved_revision_ids,
             preserved_formatting_regions=True,
         )
-        if not plan.assignments:
+        if not assignments:
             return result
 
         def apply() -> None:
-            _apply_text_assignments(plan.assignments)
+            _apply_text_assignments(assignments)
             for sdt in placeholder_sdts:
                 _clear_placeholder_state(sdt)
-            self._refresh_after_ordinary_mutation(
-                before_prefix=plan.before_prefix,
-                after_suffix=plan.after_suffix,
-            )
+            self._consumed = True
 
         if use_transaction:
             with rollback_on_error(self._document, self):
@@ -1393,120 +1371,9 @@ class Span:
             try:
                 apply()
             except BaseException:
-                _restore_text_assignments(plan.assignments)
+                _restore_text_assignments(assignments)
                 raise
         return result
-
-    def _refresh_after_ordinary_mutation(
-        self, *, before_prefix: str, after_suffix: str
-    ) -> None:
-        """Refresh this span to its exact live result, or consume it."""
-        story_root = next(
-            (
-                root
-                for story_name, root in _story_elements(self._document)
-                if story_name == self.story
-            ),
-            None,
-        )
-        if story_root is None:
-            self._consumed = True
-            return
-        all_atoms = (
-            tuple(_story_atoms(self._document, self.story, story_root))
-            if self._freshness_census is None
-            else tuple(
-                atom
-                for atom in self._freshness_census.atoms
-                if atom.text or atom.is_synthetic
-            )
-        )
-        current_by_element = {id(atom.element): atom for atom in all_atoms}
-        pieces: "List[Tuple[_Atom, int, int]]" = []
-        for index, captured in enumerate(self._atoms):
-            current = current_by_element.get(id(captured.element))
-            if current is None:
-                continue
-            start = len(before_prefix) if index == 0 else 0
-            end = (
-                len(current.text) - len(after_suffix)
-                if index == len(self._atoms) - 1
-                else len(current.text)
-            )
-            if start < 0 or end < start or end > len(current.text):
-                self._consumed = True
-                return
-            if end > start:
-                pieces.append((current, start, end))
-        if not pieces:
-            self.text = ""
-            self._consumed = True
-            return
-        visible_atoms = [atom for atom in all_atoms if _include_atom(atom, "current")]
-        visible_positions = {id(atom.element): index for index, atom in enumerate(visible_atoms)}
-        positions = [
-            visible_positions.get(id(atom.element))
-            for atom, _start, _end in pieces
-        ]
-        if any(position is None for position in positions):
-            self._consumed = True
-            return
-        first_position = positions[0]
-        assert first_position is not None
-        if positions != list(range(first_position, first_position + len(positions))):
-            self._consumed = True
-            return
-        text_parts: "List[str]" = []
-        previous: "Optional[_Atom]" = None
-        for atom, start, end in pieces:
-            if previous is not None and atom.paragraph is not previous.paragraph:
-                text_parts.append("\n")
-            text_parts.append(atom.text[start:end])
-            previous = atom
-        refreshed_text = "".join(text_parts)
-        selected_atoms = [atom for atom, _start, _end in pieces]
-        first_atom, first_start, _ = pieces[0]
-        last_atom, _, last_end = pieces[-1]
-        all_positions = {id(atom.element): index for index, atom in enumerate(all_atoms)}
-        sequence_start = all_positions[id(first_atom.element)]
-        sequence_end = all_positions[id(last_atom.element)]
-        raw_start = first_start
-        previous = None
-        for atom in visible_atoms[:first_position]:
-            if previous is not None and atom.paragraph is not previous.paragraph:
-                raw_start += 1
-            raw_start += len(atom.text)
-            previous = atom
-        if previous is not None and first_atom.paragraph is not previous.paragraph:
-            raw_start += 1
-        self.text = refreshed_text
-        self.anchor = Anchor(
-            story=self.story,
-            index=first_atom.block_index,
-            content_hash=content_hash(refreshed_text),
-        )
-        self.in_insert = any(atom.in_insert for atom in selected_atoms)
-        self.in_delete = any(atom.in_delete or atom.tag == _DEL_TEXT for atom in selected_atoms)
-        self.in_content_control = any(atom.sdt is not None for atom in selected_atoms)
-        self.in_text_box = any(atom.in_text_box for atom in selected_atoms)
-        self.in_field = any(atom.in_field for atom in selected_atoms)
-        self.crosses_paragraphs = any(
-            atom.paragraph is not first_atom.paragraph for atom in selected_atoms
-        )
-        self._atoms = selected_atoms
-        self._start_offset = first_start
-        self._end_offset = last_end
-        self._raw_start = raw_start
-        self._match_start = raw_start
-        self._context_signatures = tuple(
-            _atom_context_signature(atom) for atom in selected_atoms
-        )
-        self._atom_sequence = tuple(
-            atom.element for atom in all_atoms[sequence_start : sequence_end + 1]
-        )
-        self._sequence_view = None
-        self._view = "current"
-        self.match_policy = None
 
     def _tracked_replace(
         self, new_text: str, *, author: str, date: Optional[dt.datetime]
@@ -1668,8 +1535,7 @@ class Span:
             tracked=True,
             revision_ids=tuple(revision_ids),
         )
-        # span state after a tracked replace is complex; force a fresh find
-        self.text = new_text
+        # Successful text changes are one-shot; callers re-find for another edit.
         self._consumed = True
         return result
 

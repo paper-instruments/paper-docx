@@ -115,7 +115,7 @@ class DescribeTabAndBreakMatching:
         find_one(document, "beta").replace("gamma")
         assert paragraph.text == "alpha\tgamma"
 
-    def it_refreshes_the_original_span_after_break_adjacent_narrowing(self):
+    def it_consumes_the_original_span_after_break_adjacent_narrowing(self):
         document = _doc()
         paragraph = document.add_paragraph()
         paragraph.add_run("Section 3.")
@@ -126,9 +126,27 @@ class DescribeTabAndBreakMatching:
         result = span.replace("Section 4. Termination")
 
         assert result.preserved_formatting_regions
-        assert span.text == "Section 4.\tTermination"
-        assert span.match_policy is None
-        span._validate_fresh()
+        assert paragraph.text == "Section 4.\tTermination"
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
+            span.replace("Section 5. Termination")
+        fresh = find_one(document, "Section 4. Termination", match="normalized")
+        fresh.replace("Section 5. Termination")
+        assert paragraph.text == "Section 5.\tTermination"
+
+    def it_consumes_the_outer_span_after_narrowed_tracked_replacement(self):
+        document = _doc()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Section 3.")
+        paragraph.add_run().add_tab()
+        paragraph.add_run("Termination")
+        span = find_one(document, "Section 3. Termination", match="normalized")
+
+        span.replace(
+            "Section 4. Termination", tracked=True, author="Carol QA", date=FROZEN
+        )
+
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
+            span.replace("again", tracked=True, author="Carol QA", date=FROZEN)
 
 
 class DescribeOriginalViewNestedDeletions:
@@ -174,22 +192,26 @@ class DescribeConsumedAndDetachedSpans:
         document = _doc()
         span = find_one(document, "perfectly ordinary")
         span.replace("thoroughly mundane", preserve_structure=True)
-        with pytest.raises(TargetNotFoundError, match="structure-preserving"):
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
             span.replace("again")
         assert find_one(document, "thoroughly mundane").text == "thoroughly mundane"
 
-    def it_refreshes_a_partial_ordinary_span_for_reuse(self):
+    def it_consumes_a_partial_ordinary_span_and_supports_refinding(self):
         document = docx.Document()
         document.add_paragraph("prefix target suffix")
         span = find_one(document, "target")
 
         span.replace("changed")
-        span.replace("renewed")
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
+            span.replace("renewed")
+        fresh = find_one(document, "changed")
+        fresh.replace("renewed")
 
         assert document.paragraphs[0].text == "prefix renewed suffix"
-        span._validate_fresh()
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
+            fresh._validate_fresh()
 
-    def it_refreshes_raw_position_across_a_paragraph_boundary(self):
+    def it_preserves_refind_position_across_a_paragraph_boundary(self):
         document = docx.Document()
         document.add_paragraph("before")
         document.add_paragraph("target")
@@ -198,7 +220,10 @@ class DescribeConsumedAndDetachedSpans:
         span.replace("changed")
 
         assert span._raw_start == len("before\n")  # noqa: SLF001
-        assert span._raw_start == find_one(document, "changed")._raw_start  # noqa: SLF001
+        fresh = find_one(document, "changed")
+        assert span._raw_start == fresh._raw_start  # noqa: SLF001
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
+            span._validate_fresh()
 
 
 class DescribePreservedRevisionAncestry:

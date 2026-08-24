@@ -312,7 +312,7 @@ class DescribeRevisionRollback:
 
 
 class DescribeExactReplacementRollback:
-    def it_rolls_back_a_narrowed_edit_when_original_span_refresh_fails(
+    def it_rolls_back_a_narrowed_edit_after_a_late_failure(
         self, monkeypatch
     ):
         document = docx.Document()
@@ -323,22 +323,13 @@ class DescribeExactReplacementRollback:
         span = find_one(
             document, "Section 3. Termination", match="normalized"
         )
-        original = search_module.Span._refresh_after_ordinary_mutation
+        original = search_module._apply_text_assignments  # pyright: ignore[reportPrivateUsage]
 
-        def refresh_or_refuse(candidate, *, before_prefix, after_suffix):
-            if candidate is span:
-                raise UnsupportedStructureError("forced outer refresh refusal")
-            return original(
-                candidate,
-                before_prefix=before_prefix,
-                after_suffix=after_suffix,
-            )
+        def apply_then_refuse(assignments):  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
+            original(assignments)  # pyright: ignore[reportUnknownArgumentType]
+            raise UnsupportedStructureError("forced narrowed replacement refusal")
 
-        monkeypatch.setattr(
-            search_module.Span,
-            "_refresh_after_ordinary_mutation",
-            refresh_or_refuse,
-        )
+        monkeypatch.setattr(search_module, "_apply_text_assignments", apply_then_refuse)
         assert_refusal_atomic(
             document,
             lambda _document: span.replace("Section 4. Termination"),

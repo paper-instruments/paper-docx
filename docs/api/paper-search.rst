@@ -141,14 +141,14 @@ default ``match`` policy, records each per-match
 |PaperRefusal| while continuing independent matches, and retains one batch
 transaction. A stale target aborts and rolls back the batch. Matches already
 equal to the replacement are skipped rather than producing no-op results.
-After an ordinary no-op the span remains reusable. After mutation, the span is
-refreshed to the exact live contributing atoms and offsets when that interval
-is still representable after empty atoms are removed. A complete deletion or
-other unrepresentable result consumes it; re-find the text before another
-operation. No successful span retains stale coordinates. Because a no-op has
-no text assignments, it does not apply a hypothetical mutation's bookmark-
-hollowing check; all non-bookmark safety and uniform-region preflight still
-runs.
+Every successful text-changing direct ``Span.replace()`` consumes the supplied
+span. Use the returned result as the mutation evidence and re-find the text
+before another operation. A direct no-op, preflight refusal, or rolled-back
+mutation changes nothing and leaves the supplied span reusable. ``replace_all``
+does not return or expose the private spans it uses for each match. Because a
+no-op has no text assignments, it does not apply a hypothetical mutation's
+bookmark-hollowing check; all non-bookmark safety and uniform-region preflight
+still runs.
 
 When a replacement refuses because the changed interval is mixed or crosses a
 marker, target a smaller span wholly inside one formatting/structural region.

@@ -427,25 +427,17 @@ class DescribeReplaceAll:
             paragraph.add_run().add_tab()
             paragraph.add_run("Termination")
             paragraphs.append(paragraph)
-        original = search_module.Span._refresh_after_ordinary_mutation
+        original = search_module._apply_text_assignments  # pyright: ignore[reportPrivateUsage]
         refused = False
 
-        def refresh_then_refuse(candidate, *, before_prefix, after_suffix):
+        def apply_then_refuse(assignments):  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
             nonlocal refused
-            original(
-                candidate,
-                before_prefix=before_prefix,
-                after_suffix=after_suffix,
-            )
-            if not refused and any(atom.is_synthetic for atom in candidate._atoms):
+            original(assignments)  # pyright: ignore[reportUnknownArgumentType]
+            if not refused:
                 refused = True
-                raise UnsupportedStructureError("forced outer refresh refusal")
+                raise UnsupportedStructureError("forced narrowed replacement refusal")
 
-        monkeypatch.setattr(
-            search_module.Span,
-            "_refresh_after_ordinary_mutation",
-            refresh_then_refuse,
-        )
+        monkeypatch.setattr(search_module, "_apply_text_assignments", apply_then_refuse)
         result = replace_all(
             document,
             "Section 3. Termination",

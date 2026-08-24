@@ -183,10 +183,10 @@ evidence are in :ref:`docx.search <paper_search_api>`.
 Successful ordinary results report ``preserved_formatting_regions=True``.
 That evidence is independent of ``preserved_revision_ids``: correcting text
 inside one authorized existing insertion reports both. Tracked edits and
-empty-cell creation report false. A no-op leaves its span reusable; a mutating
-ordinary span refreshes to the exact live result when possible and is consumed
-with re-find guidance after an unrepresentable result such as complete
-deletion.
+empty-cell creation report false. Every successful text-changing direct
+replacement consumes its supplied span; use the returned result and re-find
+before another operation. A direct no-op, refusal, or rolled-back mutation
+leaves the span reusable.
 
 :ref:`docx.blocks <paper_blocks_api>` does the clause-level equivalent (insert,
 delete or replace whole paragraphs). :ref:`docx.tableops <paper_tableops_api>` and
