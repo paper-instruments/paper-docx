@@ -33,6 +33,17 @@ simpler uniform template. Complex templates are never repaired or flattened.
 Rows with ``gridBefore``/``gridAfter``, omitted grid columns, or horizontal
 merges are not positional templates and refuse before the table is mutated.
 
+``insert_row_after()`` copies row, cell, and paragraph properties, then fills
+each physical cell as one run. A copied cell is accepted only when it contains
+exactly one direct paragraph of plain direct text runs and all text-bearing
+runs have identical complete explicit run properties; an ordinary unformatted
+empty cell is also accepted. Every cell is checked while the copied row is
+detached, before any cell is populated or the row is attached. Conflicting run
+properties, extra paragraphs, fields, controls, revisions, hyperlinks,
+markers, drawings, nested content, and unknown wrappers raise
+|UnsupportedStructureError| with the template row/cell and guidance to use a
+simpler uniform template. Complex templates are never repaired or flattened.
+
 .. currentmodule:: docx.tableops
 
 
