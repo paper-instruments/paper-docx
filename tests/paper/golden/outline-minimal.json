@@ -35,59 +35,7 @@
       "in_content_control": false,
       "in_text_box": false,
       "has_field": false,
-      "table": null,
-      "locator": {
-        "schema": "paper_block_locator",
-        "version": 1,
-        "story": "word/document.xml",
-        "view": "current",
-        "kind": "paragraph",
-        "evidence": {
-          "kind": "paragraph",
-          "text": "Minimal Clean Document",
-          "style_id": "Heading1",
-          "in_content_control": false,
-          "in_text_box": false,
-          "container_path": [
-            {
-              "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}body",
-              "id": null
-            },
-            {
-              "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}document",
-              "id": null
-            }
-          ],
-          "table": null
-        },
-        "context": {
-          "previous": {
-            "boundary": "start"
-          },
-          "next": {
-            "block": {
-              "kind": "paragraph",
-              "text": "First body paragraph with perfectly ordinary text.",
-              "style_id": null,
-              "in_content_control": false,
-              "in_text_box": false,
-              "container_path": [
-                {
-                  "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}body",
-                  "id": null
-                },
-                {
-                  "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}document",
-                  "id": null
-                }
-              ],
-              "table": null
-            }
-          }
-        },
-        "position_hint": 0,
-        "paragraph_id": null
-      }
+      "table": null
     },
     {
       "story": "word/document.xml",
@@ -106,76 +54,7 @@
       "in_content_control": false,
       "in_text_box": false,
       "has_field": false,
-      "table": null,
-      "locator": {
-        "schema": "paper_block_locator",
-        "version": 1,
-        "story": "word/document.xml",
-        "view": "current",
-        "kind": "paragraph",
-        "evidence": {
-          "kind": "paragraph",
-          "text": "First body paragraph with perfectly ordinary text.",
-          "style_id": null,
-          "in_content_control": false,
-          "in_text_box": false,
-          "container_path": [
-            {
-              "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}body",
-              "id": null
-            },
-            {
-              "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}document",
-              "id": null
-            }
-          ],
-          "table": null
-        },
-        "context": {
-          "previous": {
-            "block": {
-              "kind": "paragraph",
-              "text": "Minimal Clean Document",
-              "style_id": "Heading1",
-              "in_content_control": false,
-              "in_text_box": false,
-              "container_path": [
-                {
-                  "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}body",
-                  "id": null
-                },
-                {
-                  "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}document",
-                  "id": null
-                }
-              ],
-              "table": null
-            }
-          },
-          "next": {
-            "block": {
-              "kind": "paragraph",
-              "text": "Second body paragraph, equally unremarkable.",
-              "style_id": null,
-              "in_content_control": false,
-              "in_text_box": false,
-              "container_path": [
-                {
-                  "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}body",
-                  "id": null
-                },
-                {
-                  "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}document",
-                  "id": null
-                }
-              ],
-              "table": null
-            }
-          }
-        },
-        "position_hint": 1,
-        "paragraph_id": null
-      }
+      "table": null
     },
     {
       "story": "word/document.xml",
@@ -194,59 +73,7 @@
       "in_content_control": false,
       "in_text_box": false,
       "has_field": false,
-      "table": null,
-      "locator": {
-        "schema": "paper_block_locator",
-        "version": 1,
-        "story": "word/document.xml",
-        "view": "current",
-        "kind": "paragraph",
-        "evidence": {
-          "kind": "paragraph",
-          "text": "Second body paragraph, equally unremarkable.",
-          "style_id": null,
-          "in_content_control": false,
-          "in_text_box": false,
-          "container_path": [
-            {
-              "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}body",
-              "id": null
-            },
-            {
-              "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}document",
-              "id": null
-            }
-          ],
-          "table": null
-        },
-        "context": {
-          "previous": {
-            "block": {
-              "kind": "paragraph",
-              "text": "First body paragraph with perfectly ordinary text.",
-              "style_id": null,
-              "in_content_control": false,
-              "in_text_box": false,
-              "container_path": [
-                {
-                  "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}body",
-                  "id": null
-                },
-                {
-                  "tag": "{http://schemas.openxmlformats.org/wordprocessingml/2006/main}document",
-                  "id": null
-                }
-              ],
-              "table": null
-            }
-          },
-          "next": {
-            "boundary": "end"
-          }
-        },
-        "position_hint": 2,
-        "paragraph_id": null
-      }
+      "table": null
     }
   ]
 }

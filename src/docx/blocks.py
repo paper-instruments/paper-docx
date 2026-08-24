@@ -29,7 +29,6 @@ from docx._guard import check_install
 from docx._ownership import require_anchor_owner
 from docx._transaction import rollback_on_error
 from docx.errors import (
-    AmbiguousTargetError,
     BoundaryViolationError,
     TargetNotFoundError,
     UnsupportedStructureError,
@@ -48,8 +47,6 @@ from docx.story import (
     VIEWS,
     Anchor,
     Block,
-    BlockLocator,
-    _build_story_blocks,  # pyright: ignore[reportPrivateUsage]
     _container_elements,  # pyright: ignore[reportPrivateUsage]
     _iter_block_elements,
     _story_elements,
@@ -62,7 +59,7 @@ if TYPE_CHECKING:
 
 check_install()
 
-BlockTarget = Union[str, Block, Span, BlockLocator]
+BlockTarget = Union[str, Block, Span]
 
 _P = qn("w:p")
 _PPR = qn("w:pPr")
@@ -124,7 +121,7 @@ class BlockEditResult:
 
 
 def _resolve_anchor_paragraph(
-    document: "Document", anchor: BlockTarget
+    document: "Document", anchor: object
 ) -> "Tuple[str, _Element]":
     """(story, paragraph element) for `anchor`, staleness-verified.
 
@@ -139,13 +136,12 @@ def _resolve_anchor_paragraph(
 
 
 def _locate_anchor_paragraph(
-    document: "Document", anchor: BlockTarget
+    document: "Document", anchor: object
 ) -> "Tuple[str, _Element]":
     """(story, paragraph element) for `anchor`, staleness-verified.
 
-    Strings are found exactly via `find_one` (ambiguity refuses), live blocks
-    resolve by owner and OOXML element identity, and portable locators resolve
-    only when their complete exact evidence has one candidate.
+    Strings are found exactly via `find_one` (ambiguity refuses), while live
+    spans and blocks resolve by owner and exact OOXML element identity.
     """
     require_anchor_owner(document, anchor)
     if isinstance(anchor, str):
@@ -164,11 +160,11 @@ def _locate_anchor_paragraph(
         raise UnsupportedStructureError(
             "legacy Anchor values are inert location evidence and cannot"
             " authorize a block mutation; reacquire a live Block or exact"
-            " Span, use an exact string, or deserialize a current BlockLocator"
+            " Span, or use an exact string"
         )
     if isinstance(anchor, Block):
         return _locate_live_block(document, anchor)
-    return _locate_block_locator(document, anchor)
+    raise TypeError(f"unsupported block target {type(anchor).__name__!r}")
 
 
 def _paragraph_block(story: str, kind: str, element: "_Element") -> "Tuple[str, _Element]":
@@ -221,55 +217,6 @@ def _locate_live_block(
             "live block is stale: its kind or containing story structure changed"
         )
     return _paragraph_block(block.story, candidates[0], element)
-
-
-def _locator_matches(expected: BlockLocator, candidate: BlockLocator) -> bool:
-    return (
-        candidate.story == expected.story
-        and candidate.view == expected.view
-        and candidate.kind == expected.kind
-        and candidate.evidence == expected.evidence
-        and candidate.previous == expected.previous
-        and candidate.next == expected.next
-    )
-
-
-def _locate_block_locator(
-    document: "Document", locator: BlockLocator
-) -> "Tuple[str, _Element]":
-    root = dict(_story_elements(document)).get(locator.story)
-    if root is None:
-        raise TargetNotFoundError(f"locator story part {locator.story!r} not found")
-    matches: "List[Block]" = []
-    for block in _build_story_blocks(document, locator.story, root, locator.view):
-        if block.locator is not None and _locator_matches(locator, block.locator):
-            matches.append(block)
-    if not matches:
-        raise TargetNotFoundError(
-            "block locator is stale: no block matches its exact content,"
-            " topology, structural, and adjacent-context evidence"
-        )
-    if len(matches) > 1:
-        locations = ", ".join(
-            f"{block.story}#{block.index}" for block in matches[:5]
-        )
-        raise AmbiguousTargetError(
-            f"block locator matches {len(matches)} blocks ({locations}"
-            f"{', …' if len(matches) > 5 else ''}); reacquire a live Block"
-            " or a locator with distinctive adjacent context"
-        )
-    block = matches[0]
-    if (
-        locator.paragraph_id is not None
-        and block.locator is not None
-        and block.locator.paragraph_id != locator.paragraph_id
-    ):
-        raise TargetNotFoundError(
-            "block locator is stale: its sole exact candidate carries a"
-            " contradictory Word paragraph ID"
-        )
-    assert block._element is not None  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
-    return _paragraph_block(block.story, block.kind, block._element)  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
 
 
 def _validated_style_id(

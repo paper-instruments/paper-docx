@@ -28,7 +28,6 @@ from docx.oxml.ns import qn
 from docx.protection import _refuse_if_protected
 from docx.story import (
     Anchor,
-    BlockLocator,
     _build_story_blocks,
     _first_choice_children,
     _story_elements,
@@ -192,7 +191,6 @@ class Revision:
     anchor: Anchor
     is_paragraph_mark: bool
     _element: "_Element"
-    block_locator: Optional[BlockLocator] = None
     _document: "Optional[Document]" = None
     _snapshot_signature: "Tuple[_Element, ...]" = field(
         default=(), repr=False, compare=False
@@ -286,9 +284,6 @@ class Revision:
             "story": self.story,
             "anchor": self.anchor.to_dict(),
             "anchor_role": "legacy_inert_location_evidence",
-            "block_locator": (
-                self.block_locator.to_dict() if self.block_locator else None
-            ),
             "is_paragraph_mark": self.is_paragraph_mark,
         }
 
@@ -414,7 +409,7 @@ class Revisions(Sequence[Revision]):
             # v2: move/format_change types + census
             # v3: row_insertion/row_deletion + named exotic types; format
             #     changes and row revisions resolvable
-            # v4: inert location evidence is distinct from optional block locators
+            # v4: Anchor is explicitly inert location evidence
             "version": 4,
             "revisions": [revision.to_dict() for revision in self._items],
             "remaining_unsupported": self.remaining_unsupported(),
@@ -867,7 +862,6 @@ def _enumerate_revisions(document: "Document") -> Iterator[Revision]:
                     text=text,
                     story=story,
                     anchor=block.anchor,
-                    block_locator=block.locator,
                     is_paragraph_mark=_is_paragraph_mark_revision(node),
                     _element=node,
                     _document=document,
@@ -889,7 +883,6 @@ def _enumerate_revisions(document: "Document") -> Iterator[Revision]:
                     text="",
                     story=story,
                     anchor=Anchor(story=story, index=-1, content_hash=content_hash("")),
-                    block_locator=None,
                     is_paragraph_mark=False,
                     _element=node,
                     _document=document,

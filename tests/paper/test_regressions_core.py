@@ -361,19 +361,6 @@ class DescribeParagraphMarkResolution:
 
 
 class DescribeRevisionAnchors:
-    def it_carries_block_locators_usable_for_block_operations(self):
-        from docx.blocks import insert_section_after
-
-        document = _doc("generated/feature-isolated/tracked-ins-del.docx")
-        revision = next(
-            r for r in document.revisions if not r.is_paragraph_mark
-        )
-        assert revision.block_locator is not None
-        insert_section_after(
-            document, revision.block_locator, heading="After Revision", paragraphs=[]
-        )
-        assert "After Revision" in [b.text for b in iter_blocks(document)]
-
     def it_refuses_a_revisions_legacy_location_evidence(self):
         from docx.blocks import insert_section_after
 
@@ -382,7 +369,10 @@ class DescribeRevisionAnchors:
         before = document.element.xml
         with pytest.raises(UnsupportedStructureError, match="inert location evidence"):
             insert_section_after(
-                document, revision.anchor, heading="Wrong", paragraphs=[]
+                document,
+                revision.anchor,  # pyright: ignore[reportArgumentType]
+                heading="Wrong",
+                paragraphs=[],
             )
         assert document.element.xml == before
 

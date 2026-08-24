@@ -57,7 +57,7 @@ def require_block_owner(
     if owner is None:
         raise TargetNotFoundError(
             f"{argument} is not a live block; reacquire it with iter_blocks()"
-            " or outline(), or use its current BlockLocator"
+            " or outline()"
         )
     if getattr(owner, "part", None) is not document.part:
         raise BoundaryViolationError(

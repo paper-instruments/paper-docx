@@ -15,6 +15,7 @@ from docx.blocks import tracked_delete_paragraphs, tracked_replace_paragraphs
 from docx.errors import UnsupportedStructureError
 from docx.oxml.ns import nsdecls
 from docx.oxml.parser import parse_xml
+from docx.revision import Revision
 from docx.search import find_one
 from docx.story import iter_blocks
 
@@ -63,9 +64,8 @@ class DescribeEnumeration:
     def it_carries_block_anchors(self):
         revision = _doc(TRACKED).revisions[0]
         assert revision.anchor.story == "word/document.xml"
-        assert revision.block_locator is not None
-        assert revision.block_locator.story == revision.story
         assert revision.story == "word/document.xml"
+        assert "block_" + "locator" not in Revision.__dataclass_fields__
 
     def it_serializes_deterministically(self):
         payload_1 = json.dumps(_doc(TRACKED).revisions.to_dict())
@@ -79,11 +79,9 @@ class DescribeEnumeration:
         assert parsed["revisions"][0]["anchor_role"] == (
             "legacy_inert_location_evidence"
         )
-        assert parsed["revisions"][0]["block_locator"]["schema"] == (
-            "paper_block_locator"
-        )
+        assert "block_" + "locator" not in parsed["revisions"][0]
 
-    def it_keeps_story_level_section_changes_outside_block_locator_space(self):
+    def it_keeps_story_level_section_changes_as_inert_evidence(self):
         document = docx.Document()
         document.sections[-1]._sectPr.append(  # noqa: SLF001
             parse_xml(
@@ -97,11 +95,11 @@ class DescribeEnumeration:
             if item.revision_type == "section_property_change"
         )
         assert revision.anchor.index == -1
-        assert revision.block_locator is None
+        assert "block_" + "locator" not in Revision.__dataclass_fields__
         assert revision.to_dict()["anchor_role"] == (
             "legacy_inert_location_evidence"
         )
-        assert revision.to_dict()["block_locator"] is None
+        assert "block_" + "locator" not in revision.to_dict()
 
 
 class DescribeAcceptReject:

@@ -20,7 +20,6 @@ from docx.blocks import (
     tracked_replace_paragraphs,
 )
 from docx.errors import (
-    AmbiguousTargetError,
     BoundaryViolationError,
     TargetNotFoundError,
     UnsupportedStructureError,
@@ -126,6 +125,8 @@ class DescribeLiveBlockTargets:
             {"_view": "bogus"},
             {"kind": "table"},
             {"story": "word/missing.xml"},
+            {"_story_root": OxmlElement("w:document")},
+            {"_container_elements": ()},
         ],
     )
     def it_refuses_live_blocks_with_contradictory_attachment_state(self, changes):
@@ -134,98 +135,12 @@ class DescribeLiveBlockTargets:
         with pytest.raises(TargetNotFoundError, match="stale"):
             insert_section_after(document, target, heading="wrong", paragraphs=[])
 
-
-class DescribePortableBlockLocators:
-    def it_resolves_after_a_pure_index_shift_with_context_intact(self):
-        document = _memory_doc("A", "target", "C")
-        locator = tuple(iter_blocks(document))[1].locator
-        assert locator is not None
-        document.paragraphs[0].insert_paragraph_before("new first")
-        insert_section_after(document, locator, heading="after target", paragraphs=[])
-        assert _texts(document) == ["new first", "A", "target", "after target", "C"]
-
-    def it_uses_exact_neighbor_evidence_to_resolve_duplicate_text(self):
-        document = _memory_doc("A", "target", "B", "target", "C")
-        locator = tuple(iter_blocks(document))[3].locator
-        assert locator is not None
-        insert_section_after(document, locator, heading="chosen", paragraphs=[])
-        assert _texts(document)[3:6] == ["target", "chosen", "C"]
-
-    def it_refuses_when_exact_content_or_required_context_changed(self):
-        content_changed = _memory_doc("A", "target", "C")
-        content_locator = tuple(iter_blocks(content_changed))[1].locator
-        assert content_locator is not None
-        content_changed.paragraphs[1].text = "TARGET"
-        with pytest.raises(TargetNotFoundError, match="stale"):
-            insert_section_after(
-                content_changed, content_locator, heading="wrong", paragraphs=[]
-            )
-
-        context_changed = _memory_doc("A", "target", "C")
-        context_locator = tuple(iter_blocks(context_changed))[1].locator
-        assert context_locator is not None
-        context_changed.paragraphs[0].text = "changed neighbor"
-        with pytest.raises(TargetNotFoundError, match="stale"):
-            insert_section_after(
-                context_changed, context_locator, heading="wrong", paragraphs=[]
-            )
-
-    @pytest.mark.parametrize(
-        "replacement",
-        ["TARGET", " target ", "target!", "tárget", "t\u00adarget"],
-    )
-    def it_never_normalizes_exact_candidate_evidence(self, replacement: str):
-        document = _memory_doc("A", "target", "C")
-        locator = tuple(iter_blocks(document))[1].locator
-        assert locator is not None
-        document.paragraphs[1].text = replacement
-        with pytest.raises(TargetNotFoundError, match="stale"):
-            insert_section_after(document, locator, heading="wrong", paragraphs=[])
-
-    def it_refuses_a_syntactically_valid_locator_for_a_missing_story(self):
-        document = _memory_doc("target")
-        locator = next(iter(iter_blocks(document))).locator
-        assert locator is not None
-        missing = replace(locator, story="word/missing.xml")
-        with pytest.raises(TargetNotFoundError, match="story part"):
-            insert_section_after(document, missing, heading="wrong", paragraphs=[])
-
-    def it_reports_multiple_complete_candidates_without_using_index_order(self):
-        document = _memory_doc("A", "target", "A", "target", "A")
-        locator = tuple(iter_blocks(document))[1].locator
-        assert locator is not None
-        before = document.element.xml
-        with pytest.raises(AmbiguousTargetError, match="matches 2 blocks"):
-            insert_section_after(document, locator, heading="wrong", paragraphs=[])
-        assert document.element.xml == before
-
-    def it_treats_word_id_as_supporting_not_overriding_evidence(self):
-        document = _memory_doc("A", "target", "C")
-        paragraph = document.paragraphs[1]._p
-        paragraph.set(qn("w14:paraId"), "AAAAAAAA")
-        locator = tuple(iter_blocks(document))[1].locator
-        assert locator is not None
-        paragraph.set(qn("w14:paraId"), "BBBBBBBB")
-        with pytest.raises(TargetNotFoundError, match="stale"):
-            insert_section_after(document, locator, heading="wrong", paragraphs=[])
-
-    def it_does_not_use_word_id_to_break_an_exact_evidence_tie(self):
-        document = _memory_doc("A", "target", "A", "target", "A")
-        document.paragraphs[1]._p.set(qn("w14:paraId"), "AAAAAAAA")
-        document.paragraphs[3]._p.set(qn("w14:paraId"), "BBBBBBBB")
-        locator = tuple(iter_blocks(document))[1].locator
-        assert locator is not None
-        with pytest.raises(AmbiguousTargetError, match="matches 2 blocks"):
-            insert_section_after(document, locator, heading="wrong", paragraphs=[])
-
-    def it_refuses_live_and_portable_table_targets_as_tables(self):
-        document = _memory_doc("same text")
-        document.add_table(rows=1, cols=1).cell(0, 0).text = "same text"
-        table_block = next(block for block in iter_blocks(document) if block.kind == "table")
-        assert table_block.locator is not None
-        for target in (table_block, table_block.locator):
-            with pytest.raises(UnsupportedStructureError, match="table block"):
-                insert_section_after(document, target, heading="wrong", paragraphs=[])
+    def it_refuses_a_live_table_block_as_a_paragraph_anchor(self):
+        document = _memory_doc("paragraph")
+        document.add_table(rows=1, cols=1).cell(0, 0).text = "cell"
+        table = next(block for block in iter_blocks(document) if block.kind == "table")
+        with pytest.raises(UnsupportedStructureError, match="table block"):
+            insert_section_after(document, table, heading="wrong", paragraphs=[])
 
 
 class DescribeLegacyAnchorRefusal:
@@ -282,16 +197,6 @@ class DescribeInsertSectionAfter:
             document, anchor, heading="Anchored Section", paragraphs=["Body."]
         )
         assert "Anchored Section" in _texts(document)
-
-    def it_refuses_a_stale_block_locator(self):
-        document = _doc(MINIMAL)
-        anchor = outline(document).blocks[1].locator
-        assert anchor is not None
-        from docx.search import find_one
-
-        find_one(document, "perfectly ordinary").replace("entirely different")
-        with pytest.raises(TargetNotFoundError, match="stale"):
-            insert_section_after(document, anchor, heading="X", paragraphs=[])
 
     def it_validates_style_ids_before_mutating(self):
         document = _doc(MINIMAL)
