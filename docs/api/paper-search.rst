@@ -47,27 +47,26 @@ candidate uses the closest one. Equal distances retain stable document order,
 and missing context leaves the complete candidate set in ordinary document
 order. Neither case means that the first result has unique authority.
 
-``find_one(..., near=...)`` applies the authoritative form of that selector.
-It returns a span only when eligible context exists and exactly one target has
-the finite minimum distance. Missing context raises |TargetNotFoundError| and
-points the caller toward its context text, match policy, view, and story
-scope. A tied minimum raises |AmbiguousTargetError| with the tied locations
-and distance; use more distinctive context or a narrower story scope.
-Context in a different story or excluded by the selected view cannot rank a
-target.
+The single-result ``find_one()`` resolver has no contextual-ranking keyword. It
+resolves ordinary zero/one/many matching: no candidate raises
+|TargetNotFoundError| and multiple candidates raise |AmbiguousTargetError|. Use
+a more specific exact target, narrow ``story``, or deliberately use ``nth=``
+when position is the intended identity.
 
-Use ``nth=`` only as an explicit 1-based positional selector when ``near`` is
-absent. ``near`` and ``nth`` are mutually exclusive and combining them raises
-:exc:`ValueError` before the document is searched. To inspect an inconclusive
-contextual selection before refining it:
+On ``find_text()``, ``nth=`` is an explicit 1-based positional selector and is
+mutually exclusive with ``near``. Combining them raises :exc:`ValueError`
+before the document is searched. To use contextual ranking for inspection:
 
 .. code-block:: python
 
    candidates = find_text(doc, "Payment terms", near="Renewal")
    # all candidates remain visible, even if context is absent or tied
 
-   target = find_one(doc, "Payment terms", near="Renewal")
-   # succeeds only for one unique nearest candidate
+   for candidate in candidates:
+       print(candidate.story, candidate.anchor, candidate.text)
+
+   # After inspecting the evidence, retain the deliberately chosen live span.
+   target = candidates[chosen_index]
 
 Choose a replacement policy
 ---------------------------

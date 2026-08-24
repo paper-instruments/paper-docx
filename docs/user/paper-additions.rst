@@ -85,23 +85,23 @@ The normalized span is an intentional mutation target, not an inspection-only
 result. APIs outside ``docx.search`` do not repeat the ``match`` keyword; use
 this explicit preselection workflow when they need normalized targeting.
 
-When repeated text needs context, use ``near`` as a unique-nearest selector:
+When repeated text needs context, use ``near`` to rank the complete candidate
+set for inspection:
 
 ::
 
     candidates = find_text(doc, "Payment terms", near="Renewal")
     # inspection stays complete and proximity-ranked, including ties
 
-    span = find_one(doc, "Payment terms", near="Renewal")
-    # authoritative only when context exists and one candidate is nearest
+    for candidate in candidates:
+        print(candidate.story, candidate.anchor, candidate.text)
 
-``find_one`` raises |TargetNotFoundError| when the context is absent from the
-same story, view, or match policy, even if the target itself is unique. It
-raises |AmbiguousTargetError| when multiple candidates share the minimum
-distance. Refine ``near`` or narrow ``story`` in that case; document order is
-only presentation order, not identity. ``nth`` remains available as an
-explicit positional selector when no context is supplied, but cannot be
-combined with ``near``.
+Context in a different story or excluded by the selected view cannot rank a
+target. Missing or tied context leaves all candidates visible in stable order;
+the first result is not automatically authoritative. After inspecting the
+evidence, retain the deliberately chosen live span, or refine an ordinary
+``find_one`` call with a more specific exact target, ``story``, or explicit
+``nth``. On ``find_text``, ``nth`` cannot be combined with ``near``.
 
 Choose the option that matches the edit's preservation contract:
 

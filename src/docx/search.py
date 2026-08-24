@@ -2059,7 +2059,6 @@ def find_one(
     needle: str,
     *,
     nth: Optional[int] = None,
-    near: Optional[str] = None,
     story: Optional[str] = None,
     view: str = "current",
     match: str = "exact",
@@ -2068,38 +2067,13 @@ def find_one(
 
     Exact matching is the default; pass ``match="normalized"`` to opt into
     folded targeting. Zero matches raise `TargetNotFoundError`. Two or more
-    raise `AmbiguousTargetError`. `nth` and `story` narrow the set when no
-    context is supplied. `near` instead requires one finite nearest match;
-    missing context or a tied minimum refuses rather than choosing by order.
+    raise `AmbiguousTargetError`. `nth` and `story` explicitly narrow the set.
     """
-    ranked = _ranked_matches(
-        document, needle, nth=nth, near=near, story=story, view=view, match=match
+    matches = find_text(
+        document, needle, nth=nth, story=story, view=view, match=match
     )
-    if not ranked:
+    if not matches:
         raise TargetNotFoundError(f"no match for {needle!r} in any story part")
-    if near is not None:
-        eligible = [item for item in ranked if item.distance is not None]
-        if not eligible:
-            raise TargetNotFoundError(
-                f"no eligible context match for {near!r} while resolving"
-                f" {needle!r}; check the context text, match={match!r} policy,"
-                f" view={view!r}, or story scope"
-            )
-        minimum = eligible[0].distance
-        tied = [item for item in eligible if item.distance == minimum]
-        if len(tied) > 1:
-            locations = ", ".join(
-                f"{item.span.story}#{item.span.anchor.index}"
-                f" at character {item.span._raw_start}"
-                for item in tied
-            )
-            raise AmbiguousTargetError(
-                f"{len(tied)} matches for {needle!r} are equally near"
-                f" {near!r} at distance {minimum} (at {locations}); use more"
-                " distinctive near= context or a narrower story= scope"
-            )
-        return eligible[0].span
-    matches = [item.span for item in ranked]
     if len(matches) > 1:
         locations = ", ".join(
             f"{span.story}#{span.anchor.index}" for span in matches[:5]
@@ -2107,6 +2081,7 @@ def find_one(
         raise AmbiguousTargetError(
             f"{len(matches)} matches for {needle!r} (at {locations}"
             f"{', …' if len(matches) > 5 else ''}); disambiguate with nth=,"
-            " near=, or story="
+            " story=, a more specific exact target, or inspect"
+            " find_text(..., near=...)"
         )
     return matches[0]

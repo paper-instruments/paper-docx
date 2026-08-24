@@ -40,8 +40,8 @@ class AmbiguousTargetError(PaperRefusal):
     """The target specification matches more than one location.
 
     Supply a more specific exact target: for example a live span or block, a
-    narrower story, an explicit `nth` when supported, or a `near` context with
-    one unique nearest winner. `near` and `nth` are mutually exclusive.
+    narrower story, or an explicit `nth` when supported. To inspect contextual
+    ranking without hiding candidates, use `find_text(..., near=...)`.
     """
 
 
