@@ -131,6 +131,21 @@ class DescribeBreakTolerantReplace:
         with pytest.raises(UnsupportedStructureError, match="tab or line break"):
             span.replace("Section3Termination")  # no whitespace for the tab
 
+    def it_refuses_ambiguous_synthetic_affix_narrowing_atomically(self):
+        document = _doc()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("A")
+        paragraph.add_run().add_tab()
+        paragraph.add_run("A")
+        span = find_one(document, "A A", match="normalized")
+
+        with pytest.raises(
+            UnsupportedStructureError, match="exact affix alignment is ambiguous"
+        ):
+            span.replace("A")
+
+        assert find_one(document, "A A", match="normalized").text == "A\tA"
+
 
 class DescribeHyperlinkInteriorEdits:
     """Text inside one hyperlink is redlinable; crossing its boundary is not."""
@@ -273,6 +288,21 @@ class DescribeReplaceAll:
             "value",
             "token",
         ]
+
+    def it_records_ambiguous_affix_refusals_without_mutation(self):
+        document = _doc()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Term").bold = True
+        paragraph.add_run("Term")
+        before = document.element.xml
+
+        result = replace_all(document, "TermTerm", "Term")
+
+        assert result.replaced_count == 0
+        assert len(result.refused) == 1  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        assert result.refused[0]["error"] == "UnsupportedStructureError"  # pyright: ignore[reportUnknownMemberType]
+        assert "exact affix alignment is ambiguous" in result.refused[0]["message"]  # pyright: ignore[reportUnknownMemberType]
+        assert document.element.xml == before
 
     def it_preserves_revision_identity_only_where_needed(self):
         document = _doc()

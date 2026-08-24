@@ -276,18 +276,37 @@ class DescribeUpdateCell:
             UnsupportedStructureError,
         )
 
-    def it_refuses_unresolved_cell_formatting_atomically(self):
+    def it_accepts_single_node_complete_cell_formatting(self, tmp_path: Path):
         document, table = _doc_with_simple_table()
         run = table.cell(0, 0).paragraphs[0].runs[0]
-        run._r.get_or_add_rPr().append(
+        run._r.get_or_add_rPr().append(  # pyright: ignore[reportPrivateUsage]
             parse_xml(f'<w:shd {W} w:fill="FFFF00"/>')
         )
 
-        assert_refusal_atomic(
+        result = update_cell(table, 0, 0, "updated")
+
+        assert result.preserved_formatting_regions
+        reopened = save_and_reopen(document, tmp_path / "shaded-cell.docx")
+        paragraph = reopened.tables[0].cell(0, 0).paragraphs[0]
+        assert paragraph.text == "updated"
+        assert paragraph._p.xpath(  # pyright: ignore[reportPrivateUsage]
+            'w:r/w:rPr/w:shd[@w:fill="FFFF00"]'
+        )
+
+    def it_refuses_ambiguous_repeated_cell_affixes_atomically(self):
+        document, table = _doc_with_simple_table()
+        paragraph = table.cell(0, 0).paragraphs[0]
+        paragraph.clear()
+        paragraph.add_run("Term").bold = True
+        paragraph.add_run("Term")
+
+        refusal = assert_refusal_atomic(
             document,
-            lambda _document: update_cell(table, 0, 0, "updated"),
+            lambda _document: update_cell(table, 0, 0, "Term"),
             UnsupportedStructureError,
         )
+
+        assert "exact affix alignment is ambiguous" in str(refusal)
 
     def it_refuses_a_character_style_divided_cell_atomically(self):
         document, table = _doc_with_simple_table()

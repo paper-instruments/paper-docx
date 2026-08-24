@@ -87,9 +87,9 @@ positional marker or non-text run node cannot sit inside the changed interval.
      - Contract
    * - Ordinary untracked edit
      - ``span.replace(text)``
-     - Preserves exact unchanged affixes and replaces one proved uniform
-       formatting/structural region. Mixed, unresolved, scope-crossing, or
-       marker-crossing intent refuses before mutation.
+     - Preserves exact unchanged affixes only when maximal alignment identifies
+       one changed interval and one formatting/inline-ancestry destination.
+       Ambiguous, mixed, scope-crossing, or marker-crossing intent refuses.
    * - Author a new redline
      - ``span.replace(text, tracked=True, author=...)``
      - Emits a minimal ``w:del``/``w:ins`` pair and consumes the span. A direct
@@ -117,6 +117,20 @@ lets ``replace_all`` apply one policy to both base text and insertion-owned
 matches. ``preserve_structure=True`` alone does not authorize an edit inside
 an insertion; request both guarantees for that case.
 
+Ordinary replacement considers every non-overlapping exact prefix/suffix split
+that preserves the maximal number of characters. It narrows only when all
+maximal splits identify the same changed interval. A pure insertion may choose
+between adjacent text nodes only when their complete run properties and inline
+ancestry agree; otherwise the operation refuses with guidance to re-find and
+replace only the intended exact substring. This private narrowing is not a text
+selector and does not change tracked replacement behavior.
+
+A changed interval inside one text node keeps that node's complete formatting.
+When it spans multiple text nodes, their complete canonical ``w:rPr`` and full
+inline ancestry must agree. This comparison includes generic wrappers such as
+hyperlinks, revisions, controls, smart tags, ``customXml``, and directional
+containers; it does not infer equivalence from a partial effective-format model.
+
 Exact topology means structural preservation, not preservation of inferred
 formatting intent. Replacement text fills each selected text-node slice from
 left to right up to that slice's original capacity; the final selected node
@@ -129,9 +143,10 @@ no longer describe the same text. A no-op still runs the full preflight and
 reports preservation evidence, but changes nothing and leaves the span
 reusable.
 
-|ReplaceResult| sets ``preserved_formatting_regions`` only when the ordinary
-untracked planner proved this regional contract, including a fully preflighted
-no-op. Tracked edits and empty-cell creation report false. The flag is
+|ReplaceResult| sets ``preserved_formatting_regions`` for a successful ordinary
+untracked replacement. For a no-op, it records that no formatting changed; a
+no-op is not a formatting probe and leaves the span reusable. Tracked edits and
+empty-cell creation report false. The flag is
 orthogonal to ``preserved_revision_ids``: an authorized correction inside one
 existing insertion reports both the preserved insertion ID and formatting-
 region evidence. ``preserved_structure`` remains separate, and
@@ -147,8 +162,7 @@ before another operation. A direct no-op, preflight refusal, or rolled-back
 mutation changes nothing and leaves the supplied span reusable. ``replace_all``
 does not return or expose the private spans it uses for each match. Because a
 no-op has no text assignments, it does not apply a hypothetical mutation's
-bookmark-hollowing check; all non-bookmark safety and uniform-region preflight
-still runs.
+bookmark-hollowing or changed-region checks.
 
 When a replacement refuses because the changed interval is mixed or crosses a
 marker, target a smaller span wholly inside one formatting/structural region.

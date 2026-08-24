@@ -162,7 +162,11 @@ Choose the option that matches the edit's preservation contract:
 
 - Use the default for an ordinary untracked correction inside one proved
   uniform region. Arbitrary same-format run fragmentation is supported; the
-  first run is never treated as representative of mixed text.
+  first run is never treated as representative of mixed text. Exact unchanged
+  affixes stay in place only when maximal alignment identifies one changed
+  interval and one complete formatting/inline-ancestry destination. If repeated
+  affixes or an insertion boundary leave more than one outcome, re-find and
+  replace only the intended exact substring.
 - Use ``tracked=True`` with ``author=...`` to author a new ``w:ins``/``w:del``
   redline.
 - Use ``preserve_revision=True`` only to correct current-view text wholly

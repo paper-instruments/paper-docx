@@ -424,6 +424,92 @@ class DescribePlainReplace:
             (" suffix", None, None, True),
         ]
 
+    @pytest.mark.parametrize("same_format", [False, True])
+    def it_refuses_ambiguous_repeated_affixes_atomically(self, same_format: bool):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Term").bold = True
+        second = paragraph.add_run("Term")
+        if same_format:
+            second.bold = True
+        span = find_one(document, "TermTerm")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("Term"),
+            UnsupportedStructureError,
+        )
+
+        assert "exact affix alignment is ambiguous" in str(refusal)
+        assert "re-find" in str(refusal)
+        assert "'payment'" in str(refusal)
+        assert "'settlement'" in str(refusal)
+        assert span.replace("TermTerm").preserved_formatting_regions
+
+    def it_refuses_an_insertion_at_a_formatting_boundary_atomically(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("A").bold = True
+        paragraph.add_run("B")
+        span = find_one(document, "AB")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("AXB"),
+            UnsupportedStructureError,
+        )
+
+        assert "exact affix alignment is ambiguous" in str(refusal)
+        assert span.replace("AB").preserved_formatting_regions
+
+    def it_refuses_an_insertion_at_an_unlisted_wrapper_boundary_atomically(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("A")
+        paragraph._p.append(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(f'<w:customXml {W}><w:r><w:t>B</w:t></w:r></w:customXml>')
+        )
+        span = find_one(document, "AB")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("AXB"),
+            UnsupportedStructureError,
+        )
+
+        assert "exact affix alignment is ambiguous" in str(refusal)
+
+    def it_allows_an_insertion_between_equivalent_destinations(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("A").bold = True
+        paragraph.add_run("B").bold = True
+
+        find_one(document, "AB").replace("AXB")
+
+        assert paragraph.text == "AXB"
+        assert "".join(run.text for run in paragraph.runs if run.bold) == "AXB"
+
+    def it_allows_equivalent_distinct_inline_wrappers(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph._p.append(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(
+                f'<w:smartTag {W} w:uri="urn:test" w:element="same">'
+                '<w:r><w:t>A</w:t></w:r></w:smartTag>'
+            )
+        )
+        paragraph._p.append(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(
+                f'<w:smartTag {W} w:uri="urn:test" w:element="same">'
+                '<w:r><w:t>B</w:t></w:r></w:smartTag>'
+            )
+        )
+
+        find_one(document, "AB").replace("AXB")
+
+        assert find_one(document, "AXB").text == "AXB"
+
     def it_replaces_equivalent_fragmented_runs_and_consumes_the_span(
         self, tmp_path: Path
     ):
@@ -489,19 +575,38 @@ class DescribePlainReplace:
             UnsupportedStructureError,
         )
 
-    def it_refuses_present_unresolved_run_formatting(self):
+    def it_accepts_single_node_complete_run_formatting(self, tmp_path: Path):
         document = docx.Document()
         paragraph = document.add_paragraph("target")
-        rpr = paragraph.runs[0]._r.get_or_add_rPr()
+        rpr = paragraph.runs[0]._r.get_or_add_rPr()  # pyright: ignore[reportPrivateUsage]
         rpr.append(parse_xml(f'<w:shd {W} w:fill="FFFF00"/>'))
-        span = find_one(document, "target")
 
-        refusal = assert_refusal_atomic(
-            document,
-            lambda _document: span.replace("changed"),
-            UnsupportedStructureError,
+        result = find_one(document, "target").replace("changed")
+
+        assert result.preserved_formatting_regions
+        reopened = save_and_reopen(document, tmp_path / "single-node-shading.docx")
+        assert reopened.paragraphs[0].text == "changed"
+        assert reopened.paragraphs[0]._p.xpath(  # pyright: ignore[reportPrivateUsage]
+            'w:r/w:rPr/w:shd[@w:fill="FFFF00"]'
         )
-        assert "cannot compare" in str(refusal)
+
+    def it_accepts_fragmented_identical_complete_run_properties(self, tmp_path: Path):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        for text in ("alpha", "beta"):
+            run = paragraph.add_run(text)
+            run._r.get_or_add_rPr().append(  # pyright: ignore[reportPrivateUsage]
+                parse_xml(f'<w:shd {W} w:fill="FFFF00"/>')
+            )
+
+        result = find_one(document, "alphabeta").replace("changed")
+
+        assert result.preserved_formatting_regions
+        reopened = save_and_reopen(document, tmp_path / "fragmented-shading.docx")
+        assert reopened.paragraphs[0].text == "changed"
+        assert reopened.paragraphs[0]._p.xpath(  # pyright: ignore[reportPrivateUsage]
+            'w:r/w:rPr/w:shd[@w:fill="FFFF00"]'
+        )
 
     def it_refuses_distinct_effective_character_styles(self):
         document = docx.Document()
@@ -934,6 +1039,22 @@ class DescribeReplaceRefusals:
 
 
 class DescribeTrackedReplace:
+    def it_keeps_its_existing_greedy_repeated_affix_behavior(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Term").bold = True
+        paragraph.add_run("Term")
+
+        result = find_one(document, "TermTerm").replace(
+            "Term", tracked=True, author="Carol QA", date=FROZEN
+        )
+
+        assert result.deleted_text == "Term"
+        assert result.inserted_text == ""
+        document.revisions.accept_all()
+        assert paragraph.text == "Term"
+        assert paragraph.runs[0].bold
+
     def it_marks_only_the_minimal_changed_span(self, tmp_path: Path):
         """The redline marks `75-10 -> 85-11`, not the sentence (pinned)."""
         document = _doc(FRAGMENTED)
