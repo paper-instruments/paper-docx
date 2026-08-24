@@ -11,8 +11,7 @@ import pytest
 
 import docx
 from docx.enum.style import WD_STYLE_TYPE
-from docx.errors import BoundaryViolationError
-from docx.formatting import format_of, surrounding_format
+from docx.formatting import format_of
 from docx.search import find_one
 from docx.shared import Pt
 
@@ -189,23 +188,3 @@ class DescribeParagraphAndSpanTargets:
     def it_rejects_unsupported_targets(self):
         with pytest.raises(TypeError, match="format_of"):
             format_of("just a string")
-
-
-class DescribeSurroundingFormat:
-    def it_reports_the_anchor_neighborhood_for_insertions(self):
-        document = _doc()
-        resolved = surrounding_format(document, "Minimal Clean Document")
-        assert resolved["style_name"].value == "Heading 1"
-        # Heading 1 in the default template resolves sz through its chain
-        assert resolved["size_pt"].value is not None
-
-    @pytest.mark.parametrize("as_string", [True, False])
-    def it_refuses_a_cross_paragraph_target(self, as_string: bool):
-        document = docx.Document()
-        document.add_paragraph("alpha end")
-        document.add_paragraph("beta start")
-        span = find_one(document, "alpha end\nbeta start")
-        target = span.text if as_string else span
-
-        with pytest.raises(BoundaryViolationError, match="one paragraph"):
-            surrounding_format(document, target)

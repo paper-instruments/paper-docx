@@ -591,15 +591,19 @@ class DescribeFormattingRegressions:
         assert resolved["size_pt"].value == 17
         assert resolved["size_pt"].source == "paragraph_style:LinkyPara"
 
-    def it_uses_hyperlink_runs_for_surrounding_format(self):
+    def it_uses_hyperlink_runs_for_explicit_span_formatting(self):
         from docx.enum.style import WD_STYLE_TYPE
-        from docx.formatting import surrounding_format
+        from docx.formatting import format_of  # pyright: ignore[reportUnknownVariableType]
+        from docx.search import find_one
         from docx.shared import Pt
 
         document = docx.Document(str(fixture_path(MINIMAL)))
         style = document.styles.add_style("LinkOnly", WD_STYLE_TYPE.PARAGRAPH)
         style.font.size = Pt(19)
         paragraph = document.add_paragraph(style="LinkOnly")
+        ordinary = paragraph.add_run("ordinary text first ")
+        ordinary.bold = False
+        ordinary.font.size = Pt(8)
         paragraph._p.append(
             parse_xml(
                 f"<w:hyperlink {W} w:anchor='x'>"
@@ -607,8 +611,9 @@ class DescribeFormattingRegressions:
                 "</w:hyperlink>"
             )
         )
-        resolved = surrounding_format(document, "only linked text here")
-        assert resolved["bold"].value is True  # the RUN resolved, not a fallback
+        span = find_one(document, "only linked text here")
+        resolved = format_of(span)
+        assert resolved["bold"].value is True  # the hyperlink run, not the first run
         assert resolved["size_pt"].value == 19
 
     def it_reports_agreeing_values_from_different_layers_honestly(self):

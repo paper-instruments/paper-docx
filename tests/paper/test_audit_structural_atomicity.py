@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING
+
 import pytest
 from lxml import etree
 
@@ -11,6 +13,13 @@ from docx.errors import UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
 from docx.tableops import insert_row_after
+
+from .harness.contract import assert_refusal_atomic
+
+if TYPE_CHECKING:
+    from lxml.etree import _Element  # pyright: ignore[reportPrivateUsage]
+
+    from docx.table import _Cell  # pyright: ignore[reportPrivateUsage]
 
 
 def _empty_control(tag: str, *, with_content: bool):
@@ -62,6 +71,89 @@ def _append_revision_marker(table, container_tag: str, marker_tag: str) -> None:
     if snapshot_tag is not None:
         marker.append(OxmlElement(snapshot_tag))
     container.append(marker)
+
+
+def _text_run(text: str) -> "_Element":
+    run = OxmlElement("w:r")
+    text_element = OxmlElement("w:t")
+    text_element.text = text
+    run.append(text_element)
+    return run
+
+
+def _make_complex_template_cell(cell: "_Cell", shape: str) -> None:
+    paragraph = cell.paragraphs[0]
+    paragraph.clear()
+    paragraph.add_run("template")
+    if shape == "multiple-paragraphs":
+        cell.add_paragraph("second")
+    elif shape == "simple-field":
+        paragraph.clear()
+        field = OxmlElement("w:fldSimple")
+        field.append(_text_run("result"))
+        paragraph._p.append(field)  # pyright: ignore[reportPrivateUsage]
+    elif shape == "complex-field":
+        run = paragraph.runs[0]._r  # pyright: ignore[reportPrivateUsage]
+        field_char = OxmlElement("w:fldChar")
+        field_char.set(qn("w:fldCharType"), "begin")
+        run.insert(0, field_char)
+    elif shape == "inline-control":
+        paragraph.clear()
+        sdt = _empty_control("inline-template", with_content=True)
+        content = sdt.find(qn("w:sdtContent"))
+        assert content is not None
+        content.append(_text_run("controlled"))
+        paragraph._p.append(sdt)  # pyright: ignore[reportPrivateUsage]
+    elif shape == "block-control":
+        paragraph_element = paragraph._p  # pyright: ignore[reportPrivateUsage]
+        parent = paragraph_element.getparent()
+        assert parent is not None
+        parent.remove(paragraph_element)
+        sdt = _empty_control("block-template", with_content=True)
+        block = OxmlElement("w:p")
+        block.append(_text_run("controlled"))
+        content = sdt.find(qn("w:sdtContent"))
+        assert content is not None
+        content.append(block)
+        cell._tc.append(sdt)  # pyright: ignore[reportPrivateUsage]
+    elif shape == "revision":
+        paragraph.clear()
+        insertion = OxmlElement("w:ins")
+        insertion.set(qn("w:id"), "81")
+        insertion.set(qn("w:author"), "Reviewer")
+        insertion.append(_text_run("pending"))
+        paragraph._p.append(insertion)  # pyright: ignore[reportPrivateUsage]
+    elif shape == "hyperlink":
+        paragraph.clear()
+        hyperlink = OxmlElement("w:hyperlink")
+        hyperlink.append(_text_run("linked"))
+        paragraph._p.append(hyperlink)  # pyright: ignore[reportPrivateUsage]
+    elif shape == "marker":
+        marker = OxmlElement("w:bookmarkStart")
+        marker.set(qn("w:id"), "82")
+        marker.set(qn("w:name"), "template-marker")
+        paragraph._p.insert(0, marker)  # pyright: ignore[reportPrivateUsage]
+    elif shape == "drawing":
+        paragraph.runs[0]._r.append(  # pyright: ignore[reportPrivateUsage]
+            OxmlElement("w:drawing")
+        )
+    elif shape == "nested-table":
+        cell.add_table(rows=1, cols=1)
+    elif shape == "late-cell-properties":
+        tc_pr = cell._tc.tcPr  # pyright: ignore[reportPrivateUsage]
+        assert tc_pr is not None
+        cell._tc.remove(tc_pr)  # pyright: ignore[reportPrivateUsage]
+        cell._tc.append(tc_pr)  # pyright: ignore[reportPrivateUsage]
+    elif shape == "late-paragraph-properties":
+        p_pr = paragraph._p.get_or_add_pPr()  # pyright: ignore[reportPrivateUsage]
+        paragraph._p.remove(p_pr)  # pyright: ignore[reportPrivateUsage]
+        paragraph._p.append(p_pr)  # pyright: ignore[reportPrivateUsage]
+    else:
+        assert shape == "unknown-wrapper"
+        paragraph.clear()
+        wrapper = OxmlElement("w:customXml")
+        wrapper.append(_text_run("wrapped"))
+        paragraph._p.append(wrapper)  # pyright: ignore[reportPrivateUsage]
 
 
 class DescribeEmptyContentControls:
@@ -133,6 +225,70 @@ class DescribeDetachedRowPopulation:
             insert_row_after(table, 0, ["first was populated", "replacement"])
 
         assert table._tbl.xml == before
+        assert len(table.rows) == 1
+
+    def it_refuses_conflicting_complete_run_properties_atomically(self):
+        document = Document()
+        table = document.add_table(rows=1, cols=2)
+        table.cell(0, 0).text = "valid first physical cell"
+        paragraph = table.cell(0, 1).paragraphs[0]
+        paragraph.clear()
+        first = paragraph.add_run("first")
+        first.bold = True
+        second = paragraph.add_run("second")
+        highlight = OxmlElement("w:highlight")
+        highlight.set(qn("w:val"), "yellow")
+        second._r.get_or_add_rPr().append(  # pyright: ignore[reportPrivateUsage]
+            highlight
+        )
+
+        raised = assert_refusal_atomic(
+            document,
+            lambda _doc: insert_row_after(table, 0, ["changed", "changed"]),
+            UnsupportedStructureError,
+        )
+
+        message = str(raised)
+        assert "template row 0" in message
+        assert "physical cell 1" in message
+        assert "conflicting complete direct run properties" in message
+        assert "simpler uniform template" in message
+        assert len(table.rows) == 1
+
+    @pytest.mark.parametrize(
+        "shape",
+        [
+            "multiple-paragraphs",
+            "simple-field",
+            "complex-field",
+            "inline-control",
+            "block-control",
+            "revision",
+            "hyperlink",
+            "marker",
+            "drawing",
+            "nested-table",
+            "late-cell-properties",
+            "late-paragraph-properties",
+            "unknown-wrapper",
+        ],
+    )
+    def it_refuses_complex_later_template_cells_atomically(self, shape: str):
+        document = Document()
+        table = document.add_table(rows=1, cols=2)
+        table.cell(0, 0).text = "valid first physical cell"
+        _make_complex_template_cell(table.cell(0, 1), shape)
+
+        raised = assert_refusal_atomic(
+            document,
+            lambda _doc: insert_row_after(table, 0, ["changed", "changed"]),
+            UnsupportedStructureError,
+        )
+
+        message = str(raised)
+        assert "template row 0" in message
+        assert "physical cell 1" in message
+        assert "simpler uniform template" in message
         assert len(table.rows) == 1
 
 

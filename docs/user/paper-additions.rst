@@ -77,7 +77,25 @@ hold it.
 :ref:`docx.formatting <paper_formatting_api>` answers the complementary
 question: what formatting does this text *actually* carry? It resolves through
 document defaults, the style chain and direct formatting, with every value
-naming the layer it came from.
+naming the layer it came from. Select text explicitly, then inspect the returned
+live span so the formatting comes from the matched text rather than a
+representative run elsewhere in the paragraph:
+
+::
+
+    from docx.formatting import format_of
+    from docx.search import find_one
+
+    exact_span = find_one(doc, "Payment terms")
+    exact = format_of(exact_span)
+    normalized_span = find_one(doc, "payment terms", match="normalized")
+    normalized = format_of(normalized_span)
+
+A span touching multiple runs reports ``mixed`` for disagreeing properties and
+preserves provenance when equal values come from different layers. If you
+already hold a paragraph proxy, pass it directly to ``format_of(paragraph)`` to
+inspect its paragraph properties and style-derived run defaults. ``format_of``
+does not search strings or resolve blocks.
 
 
 Edit one document
@@ -112,10 +130,10 @@ this explicit preselection workflow when they need normalized targeting.
 
 Search can also return spans that cross paragraph boundaries, representing the
 boundary as a literal ``"\\n"``. Those spans are valid for inspection. APIs
-that need one paragraph—block edits, composition endpoints, TOC insertion,
-and ``surrounding_format()``—raise |BoundaryViolationError| instead of choosing
-the first or last paragraph. Refine the text to one paragraph or pass an
-explicit live block endpoint.
+that need one paragraph—block edits, composition endpoints, and TOC
+insertion—raise |BoundaryViolationError| instead of choosing the first or last
+paragraph. Refine the text to one paragraph or pass an explicit live block
+endpoint.
 
 When repeated text needs context, use ``near`` to rank the complete candidate
 set for inspection:

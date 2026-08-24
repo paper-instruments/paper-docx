@@ -7,8 +7,10 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from lxml import etree
 
 import docx
+from docx.enum.text import WD_ALIGN_PARAGRAPH
 from docx.errors import (
     AmbiguousTargetError,
     TargetNotFoundError,
@@ -20,9 +22,16 @@ from docx.numbering import (
     ensure_bullet_definition,
     list_numbering,
 )
+from docx.oxml.ns import qn
+from docx.oxml.parser import OxmlElement
+from docx.shared import Inches
 from docx.tableops import delete_row, find_table, insert_row_after, update_cell
 
-from .harness.contract import assert_refusal_atomic, save_and_reopen
+from .harness.contract import (
+    assert_changed_parts,
+    assert_refusal_atomic,
+    save_and_reopen,
+)
 from .harness.paths import fixture_path
 
 MINIMAL = "generated/minimal-clean/minimal.docx"
@@ -229,10 +238,70 @@ class DescribeRowOperations:
         grid = [[c.text for c in row.cells] for row in reopened.tables[0].rows]
         assert grid == [["cell 00", "cell 01"], ["new a", "new b"], ["cell 10", "cell 11"]]
 
-    def it_pads_missing_values_with_empty_cells(self):
-        _, table = _doc_with_simple_table()
+    def it_pads_missing_values_with_empty_cells(self, tmp_path: Path):
+        document, table = _doc_with_simple_table()
         insert_row_after(table, 1, ["only one"])
-        assert [c.text for c in table.rows[2].cells] == ["only one", ""]
+        reopened = save_and_reopen(document, tmp_path / "padded.docx")
+        assert [c.text for c in reopened.tables[0].rows[2].cells] == [
+            "only one",
+            "",
+        ]
+
+    def it_preserves_one_complete_uniform_formatting_outcome(self, tmp_path: Path):
+        document = _doc(MINIMAL)
+        table = document.add_table(rows=1, cols=1)
+        cell = table.cell(0, 0)
+        paragraph = cell.paragraphs[0]
+        paragraph.alignment = WD_ALIGN_PARAGRAPH.RIGHT
+        table.rows[0].height = Inches(0.4)
+        for text in ("uniform ", "template"):
+            run = paragraph.add_run(text)
+            rpr = run._r.get_or_add_rPr()  # pyright: ignore[reportPrivateUsage]
+            highlight = OxmlElement("w:highlight")
+            highlight.set(qn("w:val"), "yellow")
+            language = OxmlElement("w:lang")
+            language.set(qn("w:val"), "en-US")
+            rpr.extend((highlight, language))
+        shading = OxmlElement("w:shd")
+        shading.set(qn("w:fill"), "D9EAF7")
+        cell._tc.get_or_add_tcPr().append(  # pyright: ignore[reportPrivateUsage]
+            shading
+        )
+
+        original = tmp_path / "before.docx"
+        modified = tmp_path / "after.docx"
+        document.save(str(original))
+        tc_pr = cell._tc.tcPr  # pyright: ignore[reportPrivateUsage]
+        p_pr = paragraph._p.pPr  # pyright: ignore[reportPrivateUsage]
+        r_pr = paragraph.runs[0]._r.rPr  # pyright: ignore[reportPrivateUsage]
+        tr_pr = table.rows[0]._tr.trPr  # pyright: ignore[reportPrivateUsage]
+        assert tc_pr is not None
+        assert p_pr is not None
+        assert r_pr is not None
+        assert tr_pr is not None
+        expected_tcpr = etree.tostring(tc_pr, method="c14n")
+        expected_ppr = etree.tostring(p_pr, method="c14n")
+        expected_rpr = etree.tostring(r_pr, method="c14n")
+        expected_trpr = etree.tostring(tr_pr, method="c14n")
+
+        insert_row_after(table, 0, ["replacement value"])
+        reopened = save_and_reopen(document, modified)
+        inserted = reopened.tables[0].cell(1, 0)
+        assert inserted.text == "replacement value"
+        assert [run.text for run in inserted.paragraphs[0].runs] == ["replacement value"]
+        inserted_tcpr = inserted._tc.tcPr  # pyright: ignore[reportPrivateUsage]
+        inserted_ppr = inserted.paragraphs[0]._p.pPr  # pyright: ignore[reportPrivateUsage]
+        inserted_rpr = inserted.paragraphs[0].runs[0]._r.rPr  # pyright: ignore[reportPrivateUsage]
+        inserted_trpr = reopened.tables[0].rows[1]._tr.trPr  # pyright: ignore[reportPrivateUsage]
+        assert inserted_tcpr is not None
+        assert inserted_ppr is not None
+        assert inserted_rpr is not None
+        assert inserted_trpr is not None
+        assert etree.tostring(inserted_tcpr, method="c14n") == expected_tcpr
+        assert etree.tostring(inserted_ppr, method="c14n") == expected_ppr
+        assert etree.tostring(inserted_rpr, method="c14n") == expected_rpr
+        assert etree.tostring(inserted_trpr, method="c14n") == expected_trpr
+        assert_changed_parts(original, modified, {"word/document.xml"})
 
     def it_rejects_too_many_values(self):
         _, table = _doc_with_simple_table()
@@ -271,6 +340,29 @@ class DescribeRowOperations:
         document = _doc(COMPLEX_TABLE)
         with pytest.raises(UnsupportedStructureError, match="gridSpan"):
             insert_row_after(document.tables[0], 0, ["a", "b", "c"])
+
+    @pytest.mark.parametrize(
+        ("omitted_side", "property_tag"),
+        [("start", "w:gridBefore"), ("end", "w:gridAfter")],
+    )
+    def it_refuses_nonrectangular_copied_templates_before_mutation(
+        self, omitted_side: str, property_tag: str
+    ):
+        document = _doc(MINIMAL)
+        table = document.add_table(rows=1, cols=3)
+        row = table.rows[0]
+        omitted = row._tr.tc_lst[0 if omitted_side == "start" else -1]  # pyright: ignore[reportPrivateUsage]
+        row._tr.remove(omitted)  # pyright: ignore[reportPrivateUsage]
+        grid_omission = OxmlElement(property_tag)
+        grid_omission.set(qn("w:val"), "1")
+        row._tr.get_or_add_trPr().append(grid_omission)  # pyright: ignore[reportPrivateUsage]
+        before = table._tbl.xml  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(UnsupportedStructureError, match="nonrectangular"):
+            insert_row_after(table, 0, ["a", "b", "c"])
+
+        assert table._tbl.xml == before  # pyright: ignore[reportPrivateUsage]
+        assert len(table.rows) == 1
 
     def and_it_allows_deleting_a_grid_span_row(self, tmp_path: Path):
         """Deleting a whole horizontally merged row is unambiguous."""
