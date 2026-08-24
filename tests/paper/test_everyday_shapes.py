@@ -304,6 +304,35 @@ class DescribeReplaceAll:
         assert "exact affix alignment is ambiguous" in result.refused[0]["message"]  # pyright: ignore[reportUnknownMemberType]
         assert document.element.xml == before
 
+    def it_records_tracked_formatting_refusals_and_continues_safe_matches(self):
+        document = _doc()
+        document.add_paragraph("token")
+        mixed = document.add_paragraph()
+        mixed.add_run("to").bold = True
+        mixed.add_run("ken").italic = True
+
+        result = replace_all(
+            document,
+            "token",
+            "value",
+            tracked=True,
+            author="Carol QA",
+            date=FROZEN,
+        )
+
+        assert result.replaced_count == 1
+        assert result.results[0].deleted_text == "token"
+        assert result.results[0].inserted_text == "value"
+        assert len(result.refused) == 1  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        assert result.refused[0]["error"] == "UnsupportedStructureError"  # pyright: ignore[reportUnknownMemberType]
+        assert "formatting or structural regions" in result.refused[0]["message"]  # pyright: ignore[reportUnknownMemberType]
+        assert "token" in mixed.text
+        document.revisions.accept_all()
+        assert [block.text for block in iter_blocks(document)][-2:] == [
+            "value",
+            "token",
+        ]
+
     def it_preserves_revision_identity_only_where_needed(self):
         document = _doc()
         document.add_paragraph("base term")

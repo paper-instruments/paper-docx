@@ -168,7 +168,12 @@ Choose the option that matches the edit's preservation contract:
   affixes or an insertion boundary leave more than one outcome, re-find and
   replace only the intended exact substring.
 - Use ``tracked=True`` with ``author=...`` to author a new ``w:ins``/``w:del``
-  redline.
+  redline. Tracked edits use the same unique maximal affix localization. Any
+  inserted text requires one complete formatting and inline-ancestry
+  destination; if the selected changed text has competing outcomes, target a
+  smaller uniform substring or construct the intended formatting explicitly.
+  Deletion-only tracked edits may cross differently formatted source runs
+  because each deleted run retains its own properties.
 - Use ``preserve_revision=True`` only to correct current-view text wholly
   inside one existing insertion while retaining that insertion's attribution
   and accept/reject behavior. The correction remains attributed to the

@@ -419,6 +419,8 @@ class _OrdinaryOutcome:
 
     replacement: str
     segments: "Tuple[Tuple[int, int, int], ...]"
+    changed_start: int
+    changed_end: int
 
 
 def _maximal_affix_decompositions(
@@ -451,6 +453,14 @@ def _refuse_ambiguous_affix_alignment() -> None:
         "exact affix alignment is ambiguous; re-find and replace only the"
         " exact substring you intend to change (for example, 'payment' with"
         " 'settlement')"
+    )
+
+
+def _refuse_ambiguous_insertion_destination() -> None:
+    raise UnsupportedStructureError(
+        "the insertion point has competing formatting or structural"
+        " destinations; re-find a smaller span with one uniform destination"
+        " or construct the intended formatting and structure explicitly"
     )
 
 
@@ -557,7 +567,7 @@ def _ordinary_outcome(span: "Span", new_text: str) -> _OrdinaryOutcome:
             not _same_destination(first_evidence, _destination_evidence(atom))
             for atom in candidate_atoms[1:]
         ):
-            _refuse_ambiguous_affix_alignment()
+            _refuse_ambiguous_insertion_destination()
         _refuse_intervening_positional_nodes(candidate_atoms)
         destination_index, destination_offset = candidates[0]
         segments = ((destination_index, destination_offset, destination_offset),)
@@ -589,6 +599,8 @@ def _ordinary_outcome(span: "Span", new_text: str) -> _OrdinaryOutcome:
     return _OrdinaryOutcome(
         replacement=replacement,
         segments=segments,
+        changed_start=changed_start,
+        changed_end=changed_end,
     )
 
 
@@ -644,7 +656,8 @@ def _validate_one_formatting_region(atoms: "Sequence[_Atom]") -> None:
     if any(not _same_destination(evidence[0], item) for item in evidence[1:]):
         raise UnsupportedStructureError(
             "the changed interval crosses formatting or structural regions;"
-            " target and replace a smaller span within one uniform region"
+            " target and replace a smaller span within one uniform region,"
+            " or construct the intended formatting and structure explicitly"
         )
 
 
@@ -897,9 +910,7 @@ class Span:
             cursor += len(text)
         return positions
 
-    def _narrow_to_change(
-        self, new_text: str, *, ambiguity_safe: bool = False
-    ) -> "Optional[Tuple[Span, str]]":
+    def _narrow_to_change(self, new_text: str) -> "Optional[Tuple[Span, str]]":
         """A sub-span covering only the changed region, or None if the trim
         cannot shrink this span (caller falls through to normal validation).
 
@@ -907,9 +918,8 @@ class Span:
         aligns with an existing tab/break: callers cannot write `\\t`,
         so "Section 4. Termination" against "Section 3.<TAB>Termination"
         keeps the document's tab and changes only the "3" — matching is
-        normalized, documents keep their original characters. Ordinary edits
-        require one maximal alignment; tracked edits retain their established
-        greedy alignment.
+        normalized, documents keep their original characters. Every edit
+        requires one maximal alignment.
         """
         synthetic = self._synthetic_positions()
         old = self.text
@@ -919,27 +929,10 @@ class Span:
                 old_pos in synthetic and new_text[new_pos].isspace()
             )
 
-        if ambiguity_safe:
-            decompositions = _maximal_affix_decompositions(old, new_text, aligned)
-            if len(decompositions) != 1:
-                _refuse_ambiguous_affix_alignment()
-            prefix_len, suffix_len = decompositions[0]
-        else:
-            # Tracked replacement retains its established greedy narrowing.
-            prefix_len = 0
-            limit = min(len(old), len(new_text))
-            while prefix_len < limit and aligned(prefix_len, prefix_len):
-                prefix_len += 1
-            suffix_len = 0
-            while (
-                suffix_len < len(old) - prefix_len
-                and suffix_len < len(new_text) - prefix_len
-                and aligned(
-                    len(old) - suffix_len - 1,
-                    len(new_text) - suffix_len - 1,
-                )
-            ):
-                suffix_len += 1
+        decompositions = _maximal_affix_decompositions(old, new_text, aligned)
+        if len(decompositions) != 1:
+            _refuse_ambiguous_affix_alignment()
+        prefix_len, suffix_len = decompositions[0]
         if prefix_len == 0 and suffix_len == 0:
             return None
         changed_old = self.text[prefix_len : len(self.text) - suffix_len]
@@ -1216,8 +1209,12 @@ class Span:
         affix text stays in its existing atoms. Ambiguous alignments, changed intervals spanning
         different complete run properties or inline ancestry, semantic-scope crossings, and
         positional-marker crossings refuse instead of adopting one run's formatting. A changed
-        interval inside one text node uses that node's formatting. `tracked=True` instead emits
-        a minimal `w:del`/`w:ins` pair and consumes the span; a direct tracked no-op is refused.
+        interval inside one text node uses that node's formatting. `tracked=True` uses the same
+        unique localization and emits a minimal `w:del`/`w:ins` pair only when nonempty inserted
+        text has one complete formatting/inline-ancestry destination. Deletion-only tracked edits
+        retain each source run's properties. Ambiguity tells the caller to target a smaller
+        uniform substring or construct explicit formatting; it is never repaired internally.
+        A successful tracked change consumes the span; a direct tracked no-op is refused.
 
         `preserve_revision=True` explicitly permits a current-view span wholly owned by one
         existing `w:ins` to be corrected without changing that insertion's id, author, date,
@@ -1260,6 +1257,7 @@ class Span:
         preserve_structure: bool,
         preserve_revision: bool,
         use_transaction: bool,
+        tracked_context: "Optional[Tuple[Tuple[Optional[_Element], ...], bool]]" = None,
     ) -> ReplaceResult:
         """Implementation shared with the already-transactional batch path."""
         _validate_replacement_options(
@@ -1267,9 +1265,9 @@ class Span:
             preserve_structure=preserve_structure,
             preserve_revision=preserve_revision,
         )
-        if tracked and not author:
-            raise ValueError("author is required when tracked=True")
         if tracked:
+            if not author:
+                raise ValueError("author is required when tracked=True")
             # the w:ins/w:del identity attributes are stamped AFTER mutation
             # begins; malformed values must refuse before anything changes
             _validate_xml_characters(author, argument="author")
@@ -1278,17 +1276,29 @@ class Span:
         _validate_writable_text(new_text, argument="new_text")
         _refuse_if_protected(self._document, "replace text")
         self._validate_fresh()
-        if (
-            not preserve_structure
-            and (any(atom.is_synthetic for atom in self._atoms) or self.crosses_paragraphs)
+        if tracked and tracked_context is None:
+            tracked_context = _tracked_layering_context(self, author)  # type: ignore[arg-type]
+        if tracked and self.text == new_text:
+            raise TargetNotFoundError(
+                "replacement equals the existing text; nothing to change"
+            )
+        if not preserve_structure and (
+            tracked
+            or any(atom.is_synthetic for atom in self._atoms)
+            or self.crosses_paragraphs
         ):
+            if tracked and not (
+                any(atom.is_synthetic for atom in self._atoms)
+                or self.crosses_paragraphs
+            ):
+                # Retained affixes may stay outside the changed interval, but
+                # they cannot make a cross-scope target authoritative.
+                self._validate_replaceable(validate_bookmarks=False)
             # spans matched ACROSS a tab/break/paragraph boundary may still
             # edit safely when the actual change lies within one segment:
             # narrow to the changed region; if the change itself crosses a
             # break or boundary, validation below refuses as before
-            narrowed = self._narrow_to_change(
-                new_text, ambiguity_safe=not tracked
-            )
+            narrowed = self._narrow_to_change(new_text)
             if narrowed is not None:
                 sub_span, sub_new = narrowed
 
@@ -1301,6 +1311,7 @@ class Span:
                         preserve_structure=False,
                         preserve_revision=preserve_revision,
                         use_transaction=False,
+                        tracked_context=tracked_context,
                     )
                     self._consumed = True
                     return result
@@ -1418,7 +1429,13 @@ class Span:
                 preserved_formatting_regions=True,
             )
         if tracked:
-            result = self._tracked_replace(new_text, author=author, date=date)  # type: ignore[arg-type]
+            assert author is not None
+            result = self._tracked_replace(
+                new_text,
+                author=author,
+                date=date,
+                tracked_context=tracked_context,
+            )
         else:
             return self._plain_replace(
                 new_text,
@@ -1469,7 +1486,12 @@ class Span:
         return result
 
     def _tracked_replace(
-        self, new_text: str, *, author: str, date: Optional[dt.datetime]
+        self,
+        new_text: str,
+        *,
+        author: str,
+        date: Optional[dt.datetime],
+        tracked_context: "Optional[Tuple[Tuple[Optional[_Element], ...], bool]]",
     ) -> ReplaceResult:
         from docx.oxml.revision import CT_RunTrackChange
 
@@ -1490,44 +1512,21 @@ class Span:
         # extending their own insertion where the span starts in base
         # text and ends in/at their insertion (their inserted text is simply
         # removed, never re-marked as a base-text deletion).
-        enclosing = [_enclosing_insertion(atom.element) for atom in self._atoms]
-        scopes = {id(e) if e is not None else None for e in enclosing}
-        extends_own_insertion = False
-        if len(scopes) > 1:
-            non_none = [e for e in enclosing if e is not None]
-            all_own = all(
-                e.tag == _INS and (e.get(_W_AUTHOR) or "") == author for e in non_none
-            )
-            inside_seen = False
-            contiguous_tail = True
-            for e in enclosing:
-                if e is not None:
-                    inside_seen = True
-                elif inside_seen:
-                    contiguous_tail = False
-                    break
-            if not (all_own and enclosing[0] is None and contiguous_tail):
-                raise UnsupportedStructureError(
-                    "span overlaps a pending tracked insertion it cannot layer"
-                    " over (different author, a tracked move, or base text"
-                    " following the insertion); accept or reject the existing"
-                    " revision first, or target text inside or outside it"
-                )
-            extends_own_insertion = True
-        if self.text == new_text:
-            raise TargetNotFoundError(
-                "replacement equals the existing text; nothing to change"
-            )
-        prefix_len, suffix_len = _common_affix_lengths(self.text, new_text)
+        if tracked_context is None:
+            tracked_context = _tracked_layering_context(self, author)
+        enclosing, extends_own_insertion = tracked_context
+        outcome = _ordinary_outcome(self, new_text)
+        prefix_len = outcome.changed_start
+        suffix_len = len(self.text) - outcome.changed_end
         first, last = self._atoms[0], self._atoms[-1]
-        if first is not last:
-            # kept characters must never cross run boundaries (they would
-            # silently adopt another run's formatting): clamp the trim so the
-            # prefix stays in the first run and the suffix in the last
-            prefix_len = min(prefix_len, len(first.text) - self._start_offset)
-            suffix_len = min(suffix_len, self._end_offset)
-        old_mid = self.text[prefix_len : len(self.text) - suffix_len]
-        new_mid = new_text[prefix_len : len(new_text) - suffix_len]
+        old_mid = self.text[outcome.changed_start : outcome.changed_end]
+        new_mid = outcome.replacement
+        changed_atoms = [
+            self._atoms[index] for index, _start, _end in outcome.segments
+        ]
+        _refuse_intervening_positional_nodes(changed_atoms)
+        if new_mid:
+            _validate_one_formatting_region(changed_atoms)
         stamp = date if date is not None else _clock.now()
         next_id = _next_revision_id(self._document)
         rpr = first.run.find(_RPR) if first.run is not None else None
@@ -1543,8 +1542,9 @@ class Span:
         deleted_pieces = _pieces_in_range(
             span_pieces, prefix_len, len(self.text) - suffix_len
         )
-        # the inserted text renders with the first CHANGED run's formatting
-        ins_source_run = deleted_pieces[0][0] if deleted_pieces else first.run
+        # Formatting/ancestry equality above proves that any changed source
+        # atom describes the same insertion destination.
+        ins_source_run = changed_atoms[0].run if changed_atoms else first.run
         ins_rpr = (
             ins_source_run.find(_RPR) if ins_source_run is not None else None
         )
@@ -1670,6 +1670,41 @@ def _enclosing_insertion(element: "_Element") -> "Optional[_Element]":
             return node
         node = node.getparent()
     return None
+
+
+def _tracked_layering_context(
+    span: Span, author: str
+) -> "Tuple[Tuple[Optional[_Element], ...], bool]":
+    """Validate revision scopes before affix narrowing hides retained text."""
+    enclosing = tuple(
+        _enclosing_insertion(atom.element)
+        for atom in span._atoms  # pyright: ignore[reportPrivateUsage]
+    )
+    scopes = {id(element) if element is not None else None for element in enclosing}
+    if len(scopes) <= 1:
+        return enclosing, False
+
+    non_none = [element for element in enclosing if element is not None]
+    all_own = all(
+        element.tag == _INS and (element.get(_W_AUTHOR) or "") == author
+        for element in non_none
+    )
+    inside_seen = False
+    contiguous_tail = True
+    for element in enclosing:
+        if element is not None:
+            inside_seen = True
+        elif inside_seen:
+            contiguous_tail = False
+            break
+    if not (all_own and enclosing[0] is None and contiguous_tail):
+        raise UnsupportedStructureError(
+            "span overlaps a pending tracked insertion it cannot layer over"
+            " (different author, a tracked move, or base text following the"
+            " insertion); accept or reject the existing revision first, or"
+            " target text inside or outside it"
+        )
+    return enclosing, True
 
 
 def _revision_ancestors(element: "_Element") -> "Tuple[_Element, ...]":
@@ -2066,21 +2101,6 @@ def _set_preserved_text(element: "_Element", text: str) -> None:
         element.set(_XML_SPACE, "preserve")
     elif _XML_SPACE in element.attrib:
         del element.attrib[_XML_SPACE]
-
-
-def _common_affix_lengths(old: str, new: str) -> Tuple[int, int]:
-    prefix = 0
-    limit = min(len(old), len(new))
-    while prefix < limit and old[prefix] == new[prefix]:
-        prefix += 1
-    suffix = 0
-    while (
-        suffix < len(old) - prefix
-        and suffix < len(new) - prefix
-        and old[len(old) - suffix - 1] == new[len(new) - suffix - 1]
-    ):
-        suffix += 1
-    return prefix, suffix
 
 
 def _spans_for_story(

@@ -93,8 +93,10 @@ non-text run node cannot sit inside the changed interval.
        Ambiguous, mixed, scope-crossing, or marker-crossing intent refuses.
    * - Author a new redline
      - ``span.replace(text, tracked=True, author=...)``
-     - Emits a minimal ``w:del``/``w:ins`` pair and consumes the span. A direct
-       tracked no-op is refused.
+     - Uses the same unique maximal affix localization, then emits a minimal
+       ``w:del``/``w:ins`` pair only when inserted text has one complete
+       formatting/inline-ancestry destination. A direct tracked no-op is
+       refused and a successful change consumes the span.
    * - Correct one existing insertion
      - ``span.replace(text, preserve_revision=True)``
      - For a current-view span wholly owned by one ``w:ins``, keeps that
@@ -118,19 +120,25 @@ lets ``replace_all`` apply one policy to both base text and insertion-owned
 matches. ``preserve_structure=True`` alone does not authorize an edit inside
 an insertion; request both guarantees for that case.
 
-Ordinary replacement considers every non-overlapping exact prefix/suffix split
+Ordinary and tracked replacement consider every non-overlapping exact prefix/suffix split
 that preserves the maximal number of characters. It narrows only when all
 maximal splits identify the same changed interval. A pure insertion may choose
 between adjacent text nodes only when their complete run properties and inline
 ancestry agree; otherwise the operation refuses with guidance to re-find and
-replace only the intended exact substring. This private narrowing is not a text
-selector and does not change tracked replacement behavior.
+replace only the intended exact substring. This private narrowing is an
+optimization, not a text selector or proof of author intent.
 
 A changed interval inside one text node keeps that node's complete formatting.
 When it spans multiple text nodes, their complete canonical ``w:rPr`` and full
 inline ancestry must agree. This comparison includes generic wrappers such as
 hyperlinks, revisions, controls, smart tags, ``customXml``, and directional
 containers; it does not infer equivalence from a partial effective-format model.
+For tracked edits that insert text, this proof determines the one run-property
+and ancestry outcome for the new ``w:ins``. A deletion-only tracked edit needs
+unique localization but may cross differently formatted source runs because
+each ``w:del/w:r`` retains its own complete source properties. When the proof
+is ambiguous, target a smaller uniform substring or construct the intended
+formatting and structure explicitly.
 
 Exact topology means structural preservation, not preservation of inferred
 formatting intent. Replacement text fills each selected text-node slice from
