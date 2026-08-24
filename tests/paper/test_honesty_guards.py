@@ -11,6 +11,7 @@ from pathlib import Path
 import pytest
 
 import docx
+from docx.bookmarks import list_bookmarks
 from docx.errors import TargetNotFoundError, UnsupportedStructureError
 from docx.package import diagnose
 from docx.search import find_one
@@ -121,11 +122,15 @@ class DescribeUntrackedEditInsideInsertions:
 class DescribeBookmarkHollowing:
     """Replaces must not silently empty cross-reference targets."""
 
-    def it_refuses_a_replace_that_hollows_a_named_bookmark(self):
+    def it_preserves_a_named_bookmark_around_exact_unchanged_affixes(self):
         document = _doc(BOOKMARKS)
         span = find_one(document, "See the Master Agreement for definitions.")
-        with pytest.raises(UnsupportedStructureError, match="DefinedTerm"):
-            span.replace("See the Purchase Agreement for definitions.")
+        span.replace("See the Purchase Agreement for definitions.")
+
+        bookmark = next(
+            item for item in list_bookmarks(document) if item.name == "DefinedTerm"
+        )
+        assert bookmark.text == "the Purchase Agreement"
 
     def it_allows_replacing_text_inside_the_bookmark(self):
         """Markers outside the span: the new text stays bookmarked."""

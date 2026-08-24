@@ -101,7 +101,14 @@ does not search strings or resolve blocks.
 Edit one document
 -----------------
 
-|Span| replaces matched text while untouched runs retain their formatting.
+|Span| replaces matched text only when exact affix alignment identifies one
+changed interval within one concrete wrapper owner. Exact unchanged prefix and
+suffix text stays in its original runs, formatting, semantic scopes, and marker
+order. Nonempty replacement text takes the complete direct formatting of the
+changed interval's starting run. Ambiguous alignment, a wrapper-owner boundary,
+or a positional marker inside the changed interval raises
+|UnsupportedStructureError| before mutation; find and replace a smaller span
+on one side.
 
 ::
 
@@ -155,10 +162,18 @@ evidence, retain the deliberately chosen live span, or refine an ordinary
 
 Choose the option that matches the edit's preservation contract:
 
-- Use the default for an ordinary untracked correction. The replacement takes
-  the start run's formatting.
+- Use the default for an ordinary untracked correction inside one concrete
+  wrapper owner. Exact unchanged affixes stay in place when maximal alignment
+  identifies one changed interval. Nonempty replacement text takes the complete
+  direct formatting of that interval's starting run, even when it consumes
+  later runs with different formatting. If repeated affixes or an insertion
+  boundary leave more than one outcome, re-find and replace only the intended
+  exact substring.
 - Use ``tracked=True`` with ``author=...`` to author a new ``w:ins``/``w:del``
-  redline.
+  redline. Tracked edits use the same unique maximal affix localization. Any
+  inserted text follows the same start-run formatting rule. Separate inline
+  wrapper owners still refuse; deletion markup retains each source run's own
+  properties.
 - Use ``preserve_revision=True`` only to correct current-view text wholly
   inside one existing insertion while retaining that insertion's attribution
   and accept/reject behavior. The correction remains attributed to the
@@ -170,9 +185,21 @@ Choose the option that matches the edit's preservation contract:
 - Combine the two preservation options when both contracts apply. Neither can
   be combined with ``tracked=True``.
 
+Ordinary replacement changes the proved regional interval without allocating
+text according to old text-node lengths. If structural ownership is ambiguous,
+target a smaller span inside one wrapper owner.
+
 These are text-structure contracts, not a promise that the serialized bytes of
 the changed XML part remain identical. The full refusal rules and result
 evidence are in :ref:`docx.search <paper_search_api>`.
+
+Successful ordinary results report ``preserved_formatting_regions=True`` only
+when the changed text did not collapse multiple direct formatting regions into
+the starting run. That evidence is independent of ``preserved_revision_ids``.
+Tracked edits and empty-cell creation report false. Every successful
+text-changing direct replacement consumes its supplied span; use the returned
+result and re-find before another operation. A direct no-op, refusal, or
+rolled-back mutation leaves the span reusable.
 
 :ref:`docx.blocks <paper_blocks_api>` does the clause-level equivalent (insert,
 delete or replace whole paragraphs). :ref:`docx.tableops <paper_tableops_api>` and

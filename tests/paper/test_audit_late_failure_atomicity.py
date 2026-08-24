@@ -312,6 +312,68 @@ class DescribeRevisionRollback:
 
 
 class DescribeExactReplacementRollback:
+    def it_rolls_back_a_narrowed_edit_after_a_late_failure(
+        self, monkeypatch
+    ):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Section 3.")
+        paragraph.add_run().add_tab()
+        paragraph.add_run("Termination")
+        span = find_one(
+            document, "Section 3. Termination", match="normalized"
+        )
+        original = search_module._apply_text_assignments  # pyright: ignore[reportPrivateUsage]
+
+        def apply_then_refuse(assignments):  # pyright: ignore[reportMissingParameterType, reportUnknownParameterType]
+            original(assignments)  # pyright: ignore[reportUnknownArgumentType]
+            raise UnsupportedStructureError("forced narrowed replacement refusal")
+
+        monkeypatch.setattr(search_module, "_apply_text_assignments", apply_then_refuse)
+        assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("Section 4. Termination"),
+            UnsupportedStructureError,
+        )
+        assert paragraph.text == "Section 3.\tTermination"
+        assert span.text == "Section 3.\tTermination"
+        assert span.match_policy == "normalized"
+        span._validate_fresh()
+
+    def it_restores_ordinary_assignments_and_the_live_span_after_a_late_failure(
+        self, monkeypatch
+    ):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("alpha").bold = True
+        paragraph.add_run("beta").bold = True
+        span = find_one(document, "alphabeta")
+        elements = tuple(paragraph._p.iter(qn("w:t")))
+        original_atoms = tuple(span._atoms)
+        original_offsets = (span._start_offset, span._end_offset)
+        original_policy = span.match_policy
+
+        def apply_then_refuse(assignments):
+            assignments[0].element.text = assignments[0].after
+            assignments[0].element.set(qn("xml:space"), "preserve")
+            raise UnsupportedStructureError("forced late ordinary refusal")
+
+        monkeypatch.setattr(
+            search_module, "_apply_text_assignments", apply_then_refuse
+        )
+        assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("changed"),
+            UnsupportedStructureError,
+        )
+        assert [element.text for element in elements] == ["alpha", "beta"]
+        assert all(element.get(qn("xml:space")) is None for element in elements)
+        assert tuple(span._atoms) == original_atoms
+        assert (span._start_offset, span._end_offset) == original_offsets
+        assert span.match_policy == original_policy
+        assert span.text == "alphabeta"
+        span._validate_fresh()
+
     def it_restores_text_nodes_and_the_live_span_after_a_late_failure(
         self, monkeypatch
     ):

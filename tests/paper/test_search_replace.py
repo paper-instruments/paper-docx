@@ -10,12 +10,14 @@ from __future__ import annotations
 import datetime as dt
 import shutil
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from lxml import etree
 
 import docx
 import docx._clock
+from docx.enum.style import WD_STYLE_TYPE
 from docx.errors import (
     AmbiguousTargetError,
     BoundaryViolationError,
@@ -362,11 +364,17 @@ class DescribePlainReplace:
         bold_text = "".join(r.text for r in paragraph.runs if r.bold)
         assert bold_text.startswith("$85")
 
-    def it_survives_a_bold_to_italic_formatting_transition(self, tmp_path: Path):
+    def it_inherits_the_start_run_across_a_bold_to_italic_transition(self, tmp_path: Path):
         document = _doc(FRAGMENTED)
-        find_one(document, "100/hr on a “full-").replace("90/hr on any “full-")
-        reopened = save_and_reopen(document, tmp_path / "out.docx")
-        assert "90/hr on any “full-service”" in reopened.paragraphs[0].text
+        span = find_one(document, "100/hr on a “full-")
+        result = span.replace("90/hr on any “full-")
+
+        assert not result.preserved_formatting_regions
+        reopened = save_and_reopen(document, tmp_path / "start-run-inheritance.docx")
+        assert any(
+            run.bold and "90/hr on any " in run.text for run in reopened.paragraphs[0].runs
+        )
+        assert any(run.italic and "“full-" in run.text for run in reopened.paragraphs[0].runs)
 
     def it_restores_text_and_formatting_when_inverting_a_uniform_span(
         self, tmp_path: Path
@@ -389,27 +397,381 @@ class DescribePlainReplace:
         bold_text = "".join(r.text for r in paragraph.runs if r.bold)
         assert bold_text == "$75–100/hr"
 
-    def it_restores_text_and_outside_formatting_for_mixed_spans(
+    def it_replaces_a_mixed_span_using_the_start_run_formatting(self):
+        document = _doc(FRAGMENTED)
+        span = find_one(document, RATE_TEXT)
+        result = span.replace("something else entirely")
+
+        assert not result.preserved_formatting_regions
+        assert any(
+            run.bold and run.text == "something else entirely"
+            for run in document.paragraphs[0].runs
+        )
+
+    def it_inherits_italic_when_the_changed_interval_starts_in_italics(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Al").italic = True
+        paragraph.add_run("pha").bold = True
+
+        result = find_one(document, "Alpha").replace("Omega")
+
+        assert not result.preserved_formatting_regions
+        assert paragraph.text == "Omega"
+        assert any(run.italic and run.text == "Omega" for run in paragraph.runs)
+        assert not any(run.bold and run.text for run in paragraph.runs)
+
+    def it_preserves_an_unchanged_prefix_before_start_run_inheritance(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("PRE").underline = True
+        paragraph.add_run("Al").bold = True
+        paragraph.add_run("pha").italic = True
+
+        result = find_one(document, "PREAlpha").replace("PREOmega")
+
+        assert not result.preserved_formatting_regions
+        assert paragraph.text == "PREOmega"
+        assert any(run.underline and run.text == "PRE" for run in paragraph.runs)
+        assert any(run.bold and run.text == "Omega" for run in paragraph.runs)
+        assert not any(run.italic and run.text for run in paragraph.runs)
+
+    def it_leaves_later_suffix_runs_untouched_when_inheriting_from_the_start_run(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Al").bold = True
+        paragraph.add_run("pha").italic = True
+        paragraph.add_run(" END").underline = True
+
+        result = find_one(document, "Alpha END").replace("Omega END")
+
+        assert not result.preserved_formatting_regions
+        assert paragraph.text == "Omega END"
+        assert any(run.bold and run.text == "Omega" for run in paragraph.runs)
+        assert any(run.underline and run.text == " END" for run in paragraph.runs)
+
+    def it_preserves_exact_affixes_in_their_own_formatting_regions(
         self, tmp_path: Path
     ):
-        """A span covering a formatting transition collapses ITS OWN interior
-        formatting into the start run when replaced — that information is
-        destroyed by any replacement. The
-        inverse still restores the visible text exactly and never disturbs
-        formatting outside the span."""
-        document = _doc(FRAGMENTED)
-        find_one(document, RATE_TEXT).replace("something else entirely")
-        find_one(document, "something else entirely").replace(RATE_TEXT)
-        reopened = save_and_reopen(document, tmp_path / "out.docx")
-        paragraph = reopened.paragraphs[0]
-        assert paragraph.text == (
-            "Consulting rate: $75–100/hr on a “full-service” basis"
-            " — travel time billed at $37.50/hr."
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("prefix ").bold = True
+        paragraph.add_run("middle").italic = True
+        paragraph.add_run(" suffix").underline = True
+
+        result = find_one(document, "prefix middle suffix").replace(
+            "prefix changed suffix"
         )
-        # outside the span, formatting is untouched
-        plain_runs = [r.text for r in paragraph.runs if not r.bold and not r.italic]
-        assert "Consulting rate: " in plain_runs[0]
-        assert any("travel time billed" in text for text in plain_runs)
+
+        assert result.preserved_formatting_regions
+        reopened = save_and_reopen(document, tmp_path / "affixes.docx")
+        runs = reopened.paragraphs[0].runs
+        assert [(run.text, run.bold, run.italic, run.underline) for run in runs] == [
+            ("prefix ", True, None, None),
+            ("changed", None, True, None),
+            (" suffix", None, None, True),
+        ]
+
+    @pytest.mark.parametrize("same_format", [False, True])
+    def it_refuses_ambiguous_repeated_affixes_atomically(self, same_format: bool):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Term").bold = True
+        second = paragraph.add_run("Term")
+        if same_format:
+            second.bold = True
+        span = find_one(document, "TermTerm")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("Term"),
+            UnsupportedStructureError,
+        )
+
+        assert "exact affix alignment is ambiguous" in str(refusal)
+        assert "re-find" in str(refusal)
+        assert "'payment'" in str(refusal)
+        assert "'settlement'" in str(refusal)
+        assert span.replace("TermTerm").preserved_formatting_regions
+
+    def it_refuses_an_insertion_at_a_formatting_boundary_atomically(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("A").bold = True
+        paragraph.add_run("B")
+        span = find_one(document, "AB")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("AXB"),
+            UnsupportedStructureError,
+        )
+
+        assert "insertion point has competing" in str(refusal)
+        assert span.replace("AB").preserved_formatting_regions
+
+    def it_refuses_an_insertion_at_an_unlisted_wrapper_boundary_atomically(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("A")
+        paragraph._p.append(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(f'<w:customXml {W}><w:r><w:t>B</w:t></w:r></w:customXml>')
+        )
+        span = find_one(document, "AB")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("AXB"),
+            UnsupportedStructureError,
+        )
+
+        assert "insertion point has competing" in str(refusal)
+
+    def it_allows_an_insertion_between_equivalent_destinations(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("A").bold = True
+        paragraph.add_run("B").bold = True
+
+        find_one(document, "AB").replace("AXB")
+
+        assert paragraph.text == "AXB"
+        assert "".join(run.text for run in paragraph.runs if run.bold) == "AXB"
+
+    def it_refuses_an_insertion_across_a_proofing_marker_atomically(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("A")
+        first.bold = True
+        first._r.addnext(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(f'<w:proofErr {W} w:type="spellStart"/>')
+        )
+        paragraph.add_run("B").bold = True
+        span = find_one(document, "AB")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("AXB"),
+            UnsupportedStructureError,
+        )
+
+        assert "positional marker" in str(refusal)
+
+    def it_refuses_an_insertion_across_a_bookmark_boundary_atomically(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("A")
+        first.bold = True
+        first._r.addnext(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(f'<w:bookmarkStart {W} w:id="42" w:name="target"/>')
+        )
+        last = paragraph.add_run("B")
+        last.bold = True
+        last._r.addnext(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(f'<w:bookmarkEnd {W} w:id="42"/>')
+        )
+        span = find_one(document, "AB")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("AXB"),
+            UnsupportedStructureError,
+        )
+
+        assert "bookmark 'target'" in str(refusal)
+
+    def it_refuses_replacement_across_equivalent_but_distinct_inline_wrappers(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph._p.append(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(
+                f'<w:smartTag {W} w:uri="urn:test" w:element="same">'
+                "<w:r><w:t>A</w:t></w:r></w:smartTag>"
+            )
+        )
+        paragraph._p.append(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(
+                f'<w:smartTag {W} w:uri="urn:test" w:element="same">'
+                "<w:r><w:t>B</w:t></w:r></w:smartTag>"
+            )
+        )
+
+        span = find_one(document, "AB")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("XY"),
+            UnsupportedStructureError,
+        )
+
+        assert "separate inline wrapper owners" in str(refusal)
+
+    def it_replaces_equivalent_fragmented_runs_and_consumes_the_span(
+        self, tmp_path: Path
+    ):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("frag").bold = True
+        paragraph.add_run("mented").bold = True
+        span = find_one(document, "fragmented")
+
+        first = span.replace("unified")
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
+            span.replace("renewed")
+        replacement_span = find_one(document, "unified")
+        second = replacement_span.replace("renewed")
+
+        assert first.preserved_formatting_regions
+        assert second.preserved_formatting_regions
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
+            replacement_span.replace("again")
+        reopened = save_and_reopen(document, tmp_path / "fragmented.docx")
+        assert reopened.paragraphs[0].text == "renewed"
+        assert "".join(run.text for run in reopened.paragraphs[0].runs if run.bold) == "renewed"
+
+    def it_keeps_a_plain_noop_reusable_and_consumes_complete_deletion(self):
+        document = docx.Document()
+        document.add_paragraph("target")
+        span = find_one(document, "target")
+
+        result = span.replace("target")
+        assert result.preserved_formatting_regions
+        span.replace("target")
+        span.replace("")
+
+        with pytest.raises(TargetNotFoundError, match="re-find"):
+            span.replace("again")
+
+    def it_updates_xml_space_for_an_ordinary_replacement(self, tmp_path: Path):
+        document = docx.Document()
+        document.add_paragraph("plain")
+
+        result = find_one(document, "plain").replace(" edged ")
+
+        assert result.preserved_formatting_regions
+        reopened = save_and_reopen(document, tmp_path / "space.docx")
+        element = reopened.paragraphs[0]._p.find(".//" + qn("w:t"))
+        assert element is not None
+        assert element.text == " edged "
+        assert element.get(qn("xml:space")) == "preserve"
+
+    def it_clears_placeholder_state_after_an_ordinary_replacement(self):
+        document = docx.Document()
+        body = cast(Any, document.element).body
+        body.insert(
+            0,
+            parse_xml(
+                f'<w:p {W}><w:sdt><w:sdtPr><w:showingPlcHdr/></w:sdtPr>'
+                '<w:sdtContent><w:r><w:rPr>'
+                '<w:rStyle w:val="PlaceholderText"/></w:rPr>'
+                '<w:t>Click or tap here to enter text.</w:t>'
+                '</w:r></w:sdtContent></w:sdt></w:p>'
+            ),
+        )
+
+        find_one(document, "Click or tap here to enter text.").replace("Filled")
+
+        assert not body.xpath("//w:sdtPr/w:showingPlcHdr")
+        assert not body.xpath('//w:rStyle[@w:val="PlaceholderText"]')
+
+    def it_reports_start_run_inheritance_for_lexically_different_run_properties(
+        self,
+    ):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("alpha")
+        second = paragraph.add_run("beta")
+        first.bold = True
+        second.bold = True
+        second._r.get_or_add_rPr().find(qn("w:b")).set(qn("w:val"), "1")
+        span = find_one(document, "alphabeta")
+
+        result = span.replace("changed")
+
+        assert not result.preserved_formatting_regions
+        assert paragraph.text == "changed"
+        assert paragraph.runs[0].bold
+
+    def it_accepts_single_node_complete_run_formatting(self, tmp_path: Path):
+        document = docx.Document()
+        paragraph = document.add_paragraph("target")
+        rpr = paragraph.runs[0]._r.get_or_add_rPr()  # pyright: ignore[reportPrivateUsage]
+        rpr.append(parse_xml(f'<w:shd {W} w:fill="FFFF00"/>'))
+
+        result = find_one(document, "target").replace("changed")
+
+        assert result.preserved_formatting_regions
+        reopened = save_and_reopen(document, tmp_path / "single-node-shading.docx")
+        assert reopened.paragraphs[0].text == "changed"
+        assert reopened.paragraphs[0]._p.xpath(  # pyright: ignore[reportPrivateUsage]
+            'w:r/w:rPr/w:shd[@w:fill="FFFF00"]'
+        )
+
+    def it_accepts_fragmented_identical_complete_run_properties(self, tmp_path: Path):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        for text in ("alpha", "beta"):
+            run = paragraph.add_run(text)
+            run._r.get_or_add_rPr().append(  # pyright: ignore[reportPrivateUsage]
+                parse_xml(f'<w:shd {W} w:fill="FFFF00"/>')
+            )
+
+        result = find_one(document, "alphabeta").replace("changed")
+
+        assert result.preserved_formatting_regions
+        reopened = save_and_reopen(document, tmp_path / "fragmented-shading.docx")
+        assert reopened.paragraphs[0].text == "changed"
+        assert reopened.paragraphs[0]._p.xpath(  # pyright: ignore[reportPrivateUsage]
+            'w:r/w:rPr/w:shd[@w:fill="FFFF00"]'
+        )
+
+    def it_inherits_the_starting_character_style(self):
+        document = docx.Document()
+        first_style = document.styles.add_style("Replacement First", WD_STYLE_TYPE.CHARACTER)
+        first_style.font.bold = True
+        second_style = document.styles.add_style("Replacement Second", WD_STYLE_TYPE.CHARACTER)
+        second_style.font.italic = True
+        paragraph = document.add_paragraph()
+        paragraph.add_run("alpha", style=first_style)
+        paragraph.add_run("beta", style=second_style)
+        span = find_one(document, "alphabeta")
+
+        result = span.replace("changed")
+
+        assert not result.preserved_formatting_regions
+        assert paragraph.text == "changed"
+        assert paragraph.runs[0].style.name == "Replacement First"
+
+    def it_refuses_a_positional_marker_inside_the_changed_interval(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("alpha")
+        paragraph.add_run("beta")
+        first._r.addnext(parse_xml(f'<w:proofErr {W} w:type="spellStart"/>'))
+        span = find_one(document, "alphabeta")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("changed"),
+            UnsupportedStructureError,
+        )
+        assert "positional marker" in str(refusal)
+
+    def it_preserves_a_marker_wholly_inside_an_unchanged_affix(self, tmp_path: Path):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        first = paragraph.add_run("prefix")
+        marker = parse_xml(f'<w:proofErr {W} w:type="spellStart"/>')
+        first._r.addnext(marker)
+        paragraph.add_run(" target")
+
+        find_one(document, "prefix target").replace("prefix changed")
+
+        reopened = save_and_reopen(document, tmp_path / "marker-affix.docx")
+        children = list(reopened.paragraphs[0]._p)
+        assert [child.tag for child in children] == [
+            qn("w:r"), qn("w:proofErr"), qn("w:r")
+        ]
 
     def it_keeps_the_changed_part_budget_to_the_document_part(self, tmp_path: Path):
         source = fixture_path(FRAGMENTED)
@@ -420,6 +782,35 @@ class DescribePlainReplace:
         out = tmp_path / "out.docx"
         docx.package.patch_save(working, document, out)
         assert_changed_parts(working, out, {"word/document.xml"})
+
+    def it_keeps_a_header_edit_to_its_own_story_part(self, tmp_path: Path):
+        source = fixture_path(GAUNTLET)
+        working = tmp_path / "header-work.docx"
+        shutil.copyfile(source, working)
+        document = docx.Document(str(working))
+        result = find_one(document, "Gauntlet header, section one").replace(
+            "Reviewed header, section one"
+        )
+        out = tmp_path / "header-out.docx"
+        docx.package.patch_save(working, document, out)
+        assert result.story == "word/header1.xml"
+        assert result.preserved_formatting_regions
+        assert_changed_parts(working, out, {"word/header1.xml"})
+
+    @pytest.mark.lo_smoke
+    def it_writes_a_safe_fragmented_replacement_libreoffice_can_open(
+        self, tmp_path: Path
+    ):
+        from .harness.lo import assert_libreoffice_opens
+
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("frag").bold = True
+        paragraph.add_run("mented").bold = True
+        find_one(document, "fragmented").replace("unified")
+        out = tmp_path / "safe-fragmented.docx"
+        document.save(out)
+        assert_libreoffice_opens(out)
 
 
 class DescribePreservationPolicies:
@@ -437,13 +828,17 @@ class DescribePreservationPolicies:
         document, insertion = self._insertion_document()
         attributes = dict(insertion.attrib)
         original = [b.text for b in iter_blocks(document, view="original")]
-        result = find_one(document, "pending").replace(
+        span = find_one(document, "pending")
+        result = span.replace(
             "revised", preserve_revision=True
         )
         assert result.preserved_revision_ids == (41,)
+        assert result.preserved_formatting_regions
         assert not result.preserved_structure
         assert dict(insertion.attrib) == attributes
         assert [b.text for b in iter_blocks(document, view="original")] == original
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
+            span.replace("again", preserve_revision=True)
         path = tmp_path / "preserved-insertion.docx"
         document.save(path)
         accepted = docx.Document(path)
@@ -561,7 +956,7 @@ class DescribePreservationPolicies:
         span = find_one(document, "abcdef")
         span.replace("x", preserve_structure=True)
         assert [e.text for e in elements] == ["x", "", ""]
-        with pytest.raises(TargetNotFoundError, match="structure-preserving"):
+        with pytest.raises(TargetNotFoundError, match="consumed.*re-find"):
             span.replace("again")
         assert find_one(document, "x").text == "x"
 
@@ -625,10 +1020,14 @@ class DescribePreservationPolicies:
         result = span.replace("outsideinside", preserve_revision=True)
 
         assert result.preserved_revision_ids == (42,)
+        assert result.preserved_formatting_regions
         assert document.element.xml == before
         span.replace("outsideinside", preserve_revision=True)
 
-    def it_does_not_apply_the_revision_noop_policy_to_base_text(self):
+    @pytest.mark.parametrize("preserve_revision", [False, True])
+    def it_keeps_a_base_text_noop_reusable_across_a_bookmark(
+        self, preserve_revision: bool
+    ):
         document = docx.Document()
         paragraph = document.add_paragraph()
         first = paragraph.add_run("outside")
@@ -638,13 +1037,16 @@ class DescribePreservationPolicies:
         inside = paragraph.add_run("inside")
         inside._r.addnext(parse_xml(f'<w:bookmarkEnd {W} w:id="11"/>'))
         before = document.element.xml
+        span = find_one(document, "outsideinside")
 
-        with pytest.raises(UnsupportedStructureError, match="hollow"):
-            find_one(document, "outsideinside").replace(
-                "outsideinside", preserve_revision=True
-            )
+        result = span.replace(
+            "outsideinside", preserve_revision=preserve_revision
+        )
 
+        assert result.preserved_revision_ids == ()
+        assert result.preserved_formatting_regions
         assert document.element.xml == before
+        span.replace("outsideinside", preserve_revision=preserve_revision)
 
     def it_leaves_an_exact_noop_reusable(self):
         document = docx.Document()
@@ -652,6 +1054,9 @@ class DescribePreservationPolicies:
         span = find_one(document, "same")
         before = document.element.xml
         assert span.replace("same", preserve_structure=True).preserved_structure
+        assert not span.replace(
+            "same", preserve_structure=True
+        ).preserved_formatting_regions
         assert document.element.xml == before
         span.replace("same", preserve_structure=True)
 
@@ -747,6 +1152,493 @@ class DescribeReplaceRefusals:
 
 
 class DescribeTrackedReplace:
+    def it_rolls_back_a_late_direct_tracked_failure_and_keeps_the_span_reusable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from docx.oxml.revision import CT_RunTrackChange
+
+        document = docx.Document()
+        paragraph = document.add_paragraph("Alpha")
+        span = find_one(document, "Alpha")
+        before = document.element.xml  # pyright: ignore[reportUnknownMemberType]
+
+        def fail_revision_creation(*_args, **_kwargs):
+            raise RuntimeError("injected revision creation failure")
+
+        monkeypatch.setattr(
+            CT_RunTrackChange,
+            "new",
+            staticmethod(fail_revision_creation),
+        )
+        with pytest.raises(RuntimeError, match="injected revision"):
+            span.replace("Zulu", tracked=True, author="Carol QA", date=FROZEN)
+
+        assert document.element.xml == before  # pyright: ignore[reportUnknownMemberType]
+        assert paragraph.text == "Alpha"
+        assert span.replace("Zulu").inserted_text == "Zulu"
+
+    def it_refuses_repeated_affix_ambiguity_atomically(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Term")
+        paragraph.add_run("Term")
+        span = find_one(document, "TermTerm")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace(
+                "Term", tracked=True, author="Carol QA", date=FROZEN
+            ),
+            UnsupportedStructureError,
+        )
+
+        assert "exact affix alignment is ambiguous" in str(refusal)
+        assert "exact substring" in str(refusal)
+        assert not paragraph._p.xpath(  # pyright: ignore[reportPrivateUsage]
+            ".//w:ins | .//w:del"
+        )
+        assert span.replace("TermTerm!").tracked is False
+
+    def it_tracks_mixed_formatting_with_the_start_run_properties(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Al").bold = True
+        paragraph.add_run("pha").italic = True
+        span = find_one(document, "Alpha")
+
+        result = span.replace("Omega", tracked=True, author="Carol QA", date=FROZEN)
+
+        assert result.deleted_text == "Alpha"
+        assert result.inserted_text == "Omega"
+        (inserted_rpr,) = paragraph._p.xpath("w:ins/w:r/w:rPr")  # pyright: ignore[reportPrivateUsage]
+        assert inserted_rpr.find(qn("w:b")) is not None
+        assert inserted_rpr.find(qn("w:i")) is None
+        document.revisions.accept_all()
+        assert paragraph.text == "Omega"
+
+    def it_tracks_mixed_formatting_without_collapsing_prefix_or_suffix_runs(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("KEEP").underline = True
+        paragraph.add_run(" PRE").underline = True
+        paragraph.add_run("Al").bold = True
+        paragraph.add_run("pha").italic = True
+        paragraph.add_run(" END").font.small_caps = True
+
+        result = find_one(document, "KEEP PREAlpha END").replace(
+            "KEEP PREOmega END",
+            tracked=True,
+            author="Carol QA",
+            date=FROZEN,
+        )
+
+        assert result.deleted_text == "Alpha"
+        assert result.inserted_text == "Omega"
+        assert paragraph.runs[0].text == "KEEP"
+        assert paragraph.runs[0].underline
+        assert paragraph.runs[1].text == " PRE"
+        assert paragraph.runs[1].underline
+        assert paragraph.runs[-1].text == " END"
+        assert paragraph.runs[-1].font.small_caps
+        document.revisions.accept_all()
+        assert paragraph.text == "KEEP PREOmega END"
+        assert any(run.bold and run.text == "Omega" for run in paragraph.runs)
+        assert paragraph.runs[-1].font.small_caps
+
+    def it_tracks_a_uniform_fragmented_change_and_round_trips(self, tmp_path: Path):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Al").bold = True
+        paragraph.add_run("pha").bold = True
+
+        result = find_one(document, "Alpha").replace(
+            "Omega", tracked=True, author="Carol QA", date=FROZEN
+        )
+
+        assert result.deleted_text == "Alph"
+        assert result.inserted_text == "Omeg"
+        path = tmp_path / "uniform-fragmented.docx"
+        reopened = save_and_reopen(document, path)
+        assert [block.text for block in iter_blocks(reopened)] == ["Omega"]
+        assert [block.text for block in iter_blocks(reopened, view="original")] == [
+            "Alpha"
+        ]
+        (inserted_rpr,) = reopened.element.body.xpath(  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue, reportUnknownVariableType]
+            "//w:ins/w:r/w:rPr"
+        )
+        assert inserted_rpr.find(qn("w:b")) is not None  # pyright: ignore[reportUnknownMemberType]
+
+        accepted = docx.Document(str(path))
+        accepted.revisions.accept_all()
+        assert [block.text for block in iter_blocks(accepted)] == ["Omega"]
+        assert accepted.paragraphs[0].runs[0].bold
+        rejected = docx.Document(str(path))
+        rejected.revisions.reject_all()
+        assert [block.text for block in iter_blocks(rejected)] == ["Alpha"]
+        assert all(run.bold for run in rejected.paragraphs[0].runs if run.text)
+
+    def it_keeps_differently_formatted_exact_affixes_in_place(self, tmp_path: Path):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("pre-").bold = True
+        paragraph._p.append(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(f'<w:proofErr {W} w:type="spellStart"/>')
+        )
+        paragraph.add_run("old")
+        paragraph.add_run("-post").italic = True
+
+        result = find_one(document, "pre-old-post").replace(
+            "pre-new-post", tracked=True, author="Carol QA", date=FROZEN
+        )
+
+        assert result.deleted_text == "old"
+        assert result.inserted_text == "new"
+        reopened = save_and_reopen(document, tmp_path / "tracked-affixes.docx")
+        assert "".join(
+            reopened.element.body.xpath("//w:del//w:delText/text()")  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue, reportUnknownArgumentType]
+        ) == "old"
+        assert "".join(
+            reopened.element.body.xpath("//w:ins//w:t/text()")  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue, reportUnknownArgumentType]
+        ) == "new"
+        assert reopened.paragraphs[0].runs[0].text == "pre-"
+        assert reopened.paragraphs[0].runs[0].bold
+        assert reopened.paragraphs[0].runs[-1].text == "-post"
+        assert reopened.paragraphs[0].runs[-1].italic
+
+    def it_deletes_mixed_formatting_with_each_source_property(self, tmp_path: Path):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("xAl").bold = True
+        paragraph.add_run("phay").italic = True
+
+        result = find_one(document, "Alpha").replace(
+            "", tracked=True, author="Carol QA", date=FROZEN
+        )
+
+        assert result.deleted_text == "Alpha"
+        assert result.inserted_text == ""
+        path = tmp_path / "mixed-delete.docx"
+        reopened = save_and_reopen(document, path)
+        assert not reopened.element.body.xpath("//w:ins")  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+        deleted_runs = reopened.element.body.xpath("//w:del/w:r")  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue, reportUnknownVariableType]
+        assert "".join(deleted_runs[0].xpath(".//w:delText/text()")) == "Al"  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        assert deleted_runs[0].find("w:rPr/w:b", deleted_runs[0].nsmap) is not None  # pyright: ignore[reportUnknownMemberType]
+        assert "".join(deleted_runs[1].xpath(".//w:delText/text()")) == "pha"  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
+        assert deleted_runs[1].find("w:rPr/w:i", deleted_runs[1].nsmap) is not None  # pyright: ignore[reportUnknownMemberType]
+        assert [block.text for block in iter_blocks(reopened)] == ["xy"]
+        assert [block.text for block in iter_blocks(reopened, view="original")] == [
+            "xAlphay"
+        ]
+
+        accepted = docx.Document(str(path))
+        accepted.revisions.accept_all()
+        assert accepted.paragraphs[0].text == "xy"
+        rejected = docx.Document(str(path))
+        rejected.revisions.reject_all()
+        assert rejected.paragraphs[0].text == "xAlphay"
+        assert any(run.bold and "Al" in run.text for run in rejected.paragraphs[0].runs)
+        assert any(run.italic and "pha" in run.text for run in rejected.paragraphs[0].runs)
+
+    def it_deletes_mixed_formatting_inside_one_wrapper_without_moving_ownership(
+        self, tmp_path: Path
+    ):
+        document = docx.Document()
+        paragraph = parse_xml(
+            f'<w:p {W}><w:customXml w:uri="urn:paper" w:element="owner">'
+            "<w:r><w:rPr><w:b/></w:rPr><w:t>Al</w:t></w:r>"
+            "<w:r><w:rPr><w:i/></w:rPr><w:t>pha</w:t></w:r>"
+            "</w:customXml></w:p>"
+        )
+        document.element.body.insert(0, paragraph)  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+
+        find_one(document, "Alpha").replace("", tracked=True, author="Carol QA", date=FROZEN)
+        path = tmp_path / "same-wrapper-delete.docx"
+        document.save(path)
+        rejected = docx.Document(path)
+        rejected.revisions.reject_all()
+
+        (wrapper,) = rejected.element.body.xpath("//w:customXml")  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+        assert "".join(element.text or "" for element in wrapper.iter(qn("w:t"))) == "Alpha"
+        assert not rejected.element.body.xpath("//w:customXml[not(@w:element='owner')]//w:t")  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+
+    def it_refuses_a_tracked_deletion_across_separate_identical_wrappers(self):
+        document = docx.Document()
+        paragraph = parse_xml(
+            f"<w:p {W}>"
+            '<w:customXml w:uri="urn:paper" w:element="same">'
+            "<w:r><w:rPr><w:b/></w:rPr><w:t>Al</w:t></w:r>"
+            "</w:customXml>"
+            '<w:customXml w:uri="urn:paper" w:element="same">'
+            "<w:r><w:rPr><w:i/></w:rPr><w:t>pha</w:t></w:r>"
+            "</w:customXml>"
+            "</w:p>"
+        )
+        document.element.body.insert(0, paragraph)  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+        span = find_one(document, "Alpha")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("", tracked=True, author="Carol QA", date=FROZEN),
+            UnsupportedStructureError,
+        )
+
+        assert "separate inline wrapper owners" in str(refusal)
+        assert span.replace("Alpha!").inserted_text == "Alpha!"
+
+    def it_inserts_only_at_a_proved_tracked_destination(self):
+        inside = docx.Document()
+        inside_paragraph = inside.add_paragraph()
+        inside_paragraph.add_run("AB").bold = True
+        find_one(inside, "AB").replace(
+            "AXB", tracked=True, author="Carol QA", date=FROZEN
+        )
+        inside.revisions.accept_all()
+        assert inside_paragraph.text == "AXB"
+        assert all(run.bold for run in inside_paragraph.runs if run.text)
+
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("A").bold = True
+        paragraph.add_run("B")
+        span = find_one(document, "AB")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace(
+                "AXB", tracked=True, author="Carol QA", date=FROZEN
+            ),
+            UnsupportedStructureError,
+        )
+
+        assert "insertion point has competing" in str(refusal)
+        assert "explicitly" in str(refusal)
+        assert span.replace("AB!").tracked is False
+
+        uniform = docx.Document()
+        uniform_paragraph = uniform.add_paragraph()
+        uniform_paragraph.add_run("A").bold = True
+        uniform_paragraph.add_run("B").bold = True
+        find_one(uniform, "AB").replace(
+            "AXB", tracked=True, author="Carol QA", date=FROZEN
+        )
+        uniform.revisions.accept_all()
+        assert uniform_paragraph.text == "AXB"
+
+    def it_keeps_multirun_affixes_untouched_around_a_tracked_insertion(
+        self, tmp_path: Path
+    ):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("A").bold = True
+        paragraph.add_run("A")
+        paragraph.add_run("B")
+
+        result = find_one(document, "AAB").replace(
+            "AAXB", tracked=True, author="Carol QA", date=FROZEN
+        )
+
+        assert result.deleted_text == ""
+        assert result.inserted_text == "X"
+        path = tmp_path / "tracked-insertion-affixes.docx"
+        reopened = save_and_reopen(document, path)
+        assert [block.text for block in iter_blocks(reopened)] == ["AAXB"]
+        assert [block.text for block in iter_blocks(reopened, view="original")] == [
+            "AAB"
+        ]
+        assert [(run.text, run.bold) for run in reopened.paragraphs[0].runs] == [
+            ("A", True),
+            ("A", None),
+            ("B", None),
+        ]
+
+        accepted = docx.Document(str(path))
+        accepted.revisions.accept_all()
+        assert [(run.text, run.bold) for run in accepted.paragraphs[0].runs] == [
+            ("A", True),
+            ("A", None),
+            ("X", None),
+            ("B", None),
+        ]
+        rejected = docx.Document(str(path))
+        rejected.revisions.reject_all()
+        assert [(run.text, run.bold) for run in rejected.paragraphs[0].runs] == [
+            ("A", True),
+            ("A", None),
+            ("B", None),
+        ]
+
+    @pytest.mark.parametrize(
+        ("retained_xml", "refusal_type", "message"),
+        [
+            (
+                '<w:fldSimple w:instr=" DATE "><w:r><w:t>B</w:t></w:r></w:fldSimple>',
+                UnsupportedStructureError,
+                "field result",
+            ),
+            (
+                '<w:hyperlink w:anchor="target"><w:r><w:t>B</w:t></w:r></w:hyperlink>',
+                BoundaryViolationError,
+                "hyperlink boundary",
+            ),
+            (
+                "<w:sdt><w:sdtPr><w:tag w:val=\"target\"/></w:sdtPr>"
+                "<w:sdtContent><w:r><w:t>B</w:t></w:r></w:sdtContent></w:sdt>",
+                BoundaryViolationError,
+                "content-control boundary",
+            ),
+        ],
+    )
+    def it_refuses_narrowing_across_retained_mutation_scopes(
+        self,
+        retained_xml: str,
+        refusal_type: type[BaseException],
+        message: str,
+    ):
+        document = docx.Document()
+        paragraph = parse_xml(
+            f'<w:p {W}><w:r><w:t>A</w:t><w:tab/></w:r>{retained_xml}</w:p>'
+        )
+        document.element.body.insert(0, paragraph)  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+        span = find_one(document, "A B", match="normalized")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace(
+                "X B", tracked=True, author="Carol QA", date=FROZEN
+            ),
+            refusal_type,
+        )
+
+        assert message in str(refusal)
+        assert not paragraph.xpath(".//w:ins | .//w:del")
+
+    def it_proves_complete_tracked_destination_evidence(self):
+        compatible = docx.Document()
+        compatible_paragraph = parse_xml(
+            f"<w:p {W}>"
+            '<w:customXml w:uri="urn:paper" w:element="same">'
+            "<w:r><w:rPr><w:smallCaps/></w:rPr><w:t>A</w:t></w:r>"
+            "<w:r><w:rPr><w:smallCaps/></w:rPr><w:t>B</w:t></w:r>"
+            "</w:customXml>"
+            "</w:p>"
+        )
+        compatible.element.body.insert(  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+            0, compatible_paragraph
+        )
+        find_one(compatible, "AB").replace("AXB", tracked=True, author="Carol QA", date=FROZEN)
+        compatible.revisions.accept_all()
+        assert [block.text for block in iter_blocks(compatible)] == ["AXB"]
+
+        identical_separate_ancestry = docx.Document()
+        identical_separate_ancestry.element.body.insert(  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+            0,
+            parse_xml(
+                f"<w:p {W}>"
+                '<w:customXml w:uri="urn:paper" w:element="same">'
+                "<w:r><w:rPr><w:smallCaps/></w:rPr><w:t>A</w:t></w:r>"
+                "</w:customXml>"
+                '<w:customXml w:uri="urn:paper" w:element="same">'
+                "<w:r><w:rPr><w:smallCaps/></w:rPr><w:t>B</w:t></w:r>"
+                "</w:customXml>"
+                "</w:p>"
+            ),
+        )
+        identical_span = find_one(identical_separate_ancestry, "AB")
+        identical_refusal = assert_refusal_atomic(
+            identical_separate_ancestry,
+            lambda _document: identical_span.replace(
+                "AXB", tracked=True, author="Carol QA", date=FROZEN
+            ),
+            UnsupportedStructureError,
+        )
+        assert "competing formatting or structural destinations" in str(identical_refusal)
+
+        different_ancestry = docx.Document()
+        different_ancestry.element.body.insert(  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+            0,
+            parse_xml(
+                f"<w:p {W}>"
+                '<w:customXml w:uri="urn:paper" w:element="left">'
+                "<w:r><w:t>A</w:t></w:r></w:customXml>"
+                '<w:customXml w:uri="urn:paper" w:element="right">'
+                "<w:r><w:t>B</w:t></w:r></w:customXml>"
+                "</w:p>"
+            ),
+        )
+        ancestry_span = find_one(different_ancestry, "AB")
+        ancestry_refusal = assert_refusal_atomic(
+            different_ancestry,
+            lambda _document: ancestry_span.replace(
+                "AXB", tracked=True, author="Carol QA", date=FROZEN
+            ),
+            UnsupportedStructureError,
+        )
+        assert "competing formatting or structural destinations" in str(ancestry_refusal)
+
+        lexical_rpr = docx.Document()
+        lexical_rpr.element.body.insert(  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+            0,
+            parse_xml(
+                f"<w:p {W}>"
+                "<w:r><w:rPr><w:b/></w:rPr><w:t>A</w:t></w:r>"
+                '<w:r><w:rPr><w:b w:val="true"/></w:rPr><w:t>B</w:t></w:r>'
+                "</w:p>"
+            ),
+        )
+        rpr_span = find_one(lexical_rpr, "AB")
+        rpr_refusal = assert_refusal_atomic(
+            lexical_rpr,
+            lambda _document: rpr_span.replace("AXB", tracked=True, author="Carol QA", date=FROZEN),
+            UnsupportedStructureError,
+        )
+        assert "competing formatting or structural destinations" in str(rpr_refusal)
+
+    def it_refuses_a_tracked_insertion_across_a_positional_marker(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("A")
+        paragraph._p.append(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(f'<w:proofErr {W} w:type="spellStart"/>')
+        )
+        paragraph.add_run("B")
+        span = find_one(document, "AB")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace(
+                "AXB", tracked=True, author="Carol QA", date=FROZEN
+            ),
+            UnsupportedStructureError,
+        )
+
+        assert "positional marker" in str(refusal)
+        assert not paragraph._p.xpath(  # pyright: ignore[reportPrivateUsage]
+            ".//w:ins | .//w:del"
+        )
+
+    def it_refuses_a_tracked_deletion_across_a_positional_marker(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Al")
+        paragraph._p.append(  # pyright: ignore[reportPrivateUsage]
+            parse_xml(f'<w:proofErr {W} w:type="spellStart"/>')
+        )
+        paragraph.add_run("pha")
+        span = find_one(document, "Alpha")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace(
+                "", tracked=True, author="Carol QA", date=FROZEN
+            ),
+            UnsupportedStructureError,
+        )
+
+        assert "positional marker" in str(refusal)
+        assert not paragraph._p.xpath(  # pyright: ignore[reportPrivateUsage]
+            ".//w:ins | .//w:del"
+        )
+
     def it_marks_only_the_minimal_changed_span(self, tmp_path: Path):
         """The redline marks `75-10 -> 85-11`, not the sentence (pinned)."""
         document = _doc(FRAGMENTED)
@@ -755,6 +1647,7 @@ class DescribeTrackedReplace:
         )
         assert result.deleted_text == "75–10"
         assert result.inserted_text == "85–11"
+        assert not result.preserved_formatting_regions
         reopened = save_and_reopen(document, tmp_path / "out.docx")
         blocks = list(iter_blocks(reopened))
         assert "$85–110/hr" in blocks[0].text  # current view: change applied
@@ -774,10 +1667,10 @@ class DescribeTrackedReplace:
     def it_allocates_unique_increasing_revision_ids(self):
         document = _doc(TRACKED)  # fixture already holds ids 11, 12, 21
         first = find_one(document, "Paragraph before").replace(
-            "Paragraph just before", tracked=True, author="Carol QA", date=FROZEN
+            "Clause before", tracked=True, author="Carol QA", date=FROZEN
         )
         second = find_one(document, "Paragraph after").replace(
-            "Paragraph right after", tracked=True, author="Carol QA", date=FROZEN
+            "Sentence after", tracked=True, author="Carol QA", date=FROZEN
         )
         all_ids = [int(v) for v in document.element.body.xpath(
             "//w:ins/@w:id | //w:del/@w:id"
@@ -819,11 +1712,13 @@ class DescribeTrackedReplace:
         with pytest.raises(ValueError, match="author"):
             span.replace("x", tracked=True)
 
-    def it_refuses_a_replacement_equal_to_the_existing_text(self):
+    def it_refuses_a_replacement_equal_to_the_existing_text_without_consuming(self):
         document = _doc(MINIMAL)
         span = find_one(document, "perfectly ordinary")
         with pytest.raises(TargetNotFoundError, match="nothing to change"):
             span.replace("perfectly ordinary", tracked=True, author="Carol QA")
+        result = span.replace("quite ordinary")
+        assert result.inserted_text == "quite ordinary"
 
     def it_refuses_cross_paragraph_tracked_targets(self):
         document = _doc(MINIMAL)
