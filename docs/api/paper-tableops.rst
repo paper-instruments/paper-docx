@@ -30,6 +30,8 @@ properties, extra paragraphs, fields, controls, revisions, hyperlinks,
 markers, drawings, nested content, and unknown wrappers raise
 |UnsupportedStructureError| with the template row/cell and guidance to use a
 simpler uniform template. Complex templates are never repaired or flattened.
+Rows with ``gridBefore``/``gridAfter``, omitted grid columns, or horizontal
+merges are not positional templates and refuse before the table is mutated.
 
 .. currentmodule:: docx.tableops
 

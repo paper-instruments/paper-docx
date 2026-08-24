@@ -398,11 +398,28 @@ def insert_row_after(
         raise TargetNotFoundError(f"row {row} does not exist (0..{len(rows) - 1})")
     template_index = row if copy_format_from is None else copy_format_from
     if not 0 <= template_index < len(rows):
-        raise TargetNotFoundError(
-            f"copy_format_from row {template_index} does not exist"
-        )
+        raise TargetNotFoundError(f"copy_format_from row {template_index} does not exist")
     template_tr = rows[template_index]._tr
-    for cell_index, template_tc in enumerate(_row_cells(template_tr)):
+    template_cells = tuple(_row_cells(template_tr))
+    has_grid_span = any(
+        tc.find(_TC_PR) is not None and tc.find(_TC_PR).find(_GRID_SPAN) is not None
+        for tc in template_cells
+    )
+    if (
+        template_tr.grid_before
+        or template_tr.grid_after
+        or (
+            len(template_cells) != table._tbl.col_count  # pyright: ignore[reportPrivateUsage]
+            and not has_grid_span
+        )
+    ):
+        raise UnsupportedStructureError(
+            f"template row {template_index} is nonrectangular: its physical"
+            " cells do not map one-to-one to every table grid column"
+            " (gridBefore/gridAfter or omitted columns); copy formatting from"
+            " a complete rectangular row"
+        )
+    for cell_index, template_tc in enumerate(template_cells):
         if _cell_has_nested_table(template_tc):
             _refuse_copied_cell_template(
                 template_index,
@@ -410,37 +427,29 @@ def insert_row_after(
                 "contains a nested table",
             )
     _refuse_row_op(table, affected_rows={template_index}, splits_before=row + 1)
-    from docx.search import _validate_writable_text
-
-    for position, value in enumerate(values):
-        _validate_writable_text(value, argument=f"values[{position}]")
-    column_count = len(rows[row].cells)
-    if len(values) > column_count:
-        raise ValueError(
-            f"{len(values)} values for a {column_count}-column table"
-        )
-    # a horizontally merged template row repeats its merged tc through
-    # rows[..].cells, so positional value assignment would silently drop or
-    # misplace values — refuse instead
-    _refuse_tracked_template_row(template_tr, row=template_index)
-    if any(
-        tc.find(_TC_PR) is not None and tc.find(_TC_PR).find(_GRID_SPAN) is not None
-        for tc in _row_cells(template_tr)
-    ):
+    if has_grid_span:
         raise UnsupportedStructureError(
             f"template row {template_index} contains horizontally merged cells"
             " (gridSpan); positional values cannot be assigned unambiguously —"
             " copy formatting from an unmerged row"
         )
+    from docx.search import _validate_writable_text
 
+    for position, value in enumerate(values):
+        _validate_writable_text(value, argument=f"values[{position}]")
+    column_count = len(template_cells)
+    if len(values) > column_count:
+        raise ValueError(f"{len(values)} values for a {column_count}-column table")
+    # a horizontally merged template row repeats its merged tc through
+    # rows[..].cells, so positional value assignment would silently drop or
+    # misplace values — refuse instead
+    _refuse_tracked_template_row(template_tr, row=template_index)
     # Populate the copied row while detached. Any refusal or unexpected error
     # leaves the table tree untouched.
     new_tr = copy.deepcopy(rows[template_index]._tr)
     from docx.table import _Cell
 
-    detached_cells = tuple(
-        _Cell(cast("CT_Tc", tc), table) for tc in _row_cells(new_tr)
-    )
+    detached_cells = tuple(_Cell(cast("CT_Tc", tc), table) for tc in _row_cells(new_tr))
     template_rprs = tuple(
         _copied_cell_template_rpr(
             cell,

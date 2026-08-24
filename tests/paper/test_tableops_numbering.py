@@ -341,6 +341,29 @@ class DescribeRowOperations:
         with pytest.raises(UnsupportedStructureError, match="gridSpan"):
             insert_row_after(document.tables[0], 0, ["a", "b", "c"])
 
+    @pytest.mark.parametrize(
+        ("omitted_side", "property_tag"),
+        [("start", "w:gridBefore"), ("end", "w:gridAfter")],
+    )
+    def it_refuses_nonrectangular_copied_templates_before_mutation(
+        self, omitted_side: str, property_tag: str
+    ):
+        document = _doc(MINIMAL)
+        table = document.add_table(rows=1, cols=3)
+        row = table.rows[0]
+        omitted = row._tr.tc_lst[0 if omitted_side == "start" else -1]  # pyright: ignore[reportPrivateUsage]
+        row._tr.remove(omitted)  # pyright: ignore[reportPrivateUsage]
+        grid_omission = OxmlElement(property_tag)
+        grid_omission.set(qn("w:val"), "1")
+        row._tr.get_or_add_trPr().append(grid_omission)  # pyright: ignore[reportPrivateUsage]
+        before = table._tbl.xml  # pyright: ignore[reportPrivateUsage]
+
+        with pytest.raises(UnsupportedStructureError, match="nonrectangular"):
+            insert_row_after(table, 0, ["a", "b", "c"])
+
+        assert table._tbl.xml == before  # pyright: ignore[reportPrivateUsage]
+        assert len(table.rows) == 1
+
     def and_it_allows_deleting_a_grid_span_row(self, tmp_path: Path):
         """Deleting a whole horizontally merged row is unambiguous."""
         document = _doc(COMPLEX_TABLE)
