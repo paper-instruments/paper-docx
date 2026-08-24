@@ -120,20 +120,30 @@ class BlockEditResult:
 # ---------------------------------------------------------------------------
 
 
+def _refuse_paragraph_mutation(document: "Document") -> None:
+    """The one paragraph-mutation protection gate call in this module.
+
+    Single-target and range block operations both reach the gate through
+    here, so the refusal wording and the operation class stay identical
+    however the caller located its anchors.
+    """
+    _refuse_if_protected(document, "insert or remove paragraphs")
+
+
 def _resolve_anchor_paragraph(
     document: "Document", anchor: object
 ) -> "Tuple[str, _Element]":
     """(story, paragraph element) for `anchor`, staleness-verified.
 
-    Every block operation resolves its MUTATION anchor here, so this is
-    also the protection choke point; read-only anchor
-    resolution (e.g. a composition SOURCE range) uses
-    `_locate_anchor_paragraph` directly.
+    Single-target block operations resolve their MUTATION anchor here.
+    Range operations locate every endpoint first, then call the same
+    protection gate. Read-only anchor resolution (e.g. a composition
+    SOURCE range) uses `_locate_anchor_paragraph` directly.
     """
     require_anchor_owner(document, anchor)
     located = _locate_anchor_paragraph(document, anchor)
     _require_current_mutation_view(anchor)
-    _refuse_if_protected(document, "insert or remove paragraphs")
+    _refuse_paragraph_mutation(document)
     return located
 
 
@@ -469,7 +479,7 @@ def _select_paragraph_range(
     if end_anchor is not None:
         end_location = _locate_anchor_paragraph(document, end_anchor)
         _require_current_mutation_view(end_anchor)
-    _refuse_if_protected(document, "insert or remove paragraphs")
+    _refuse_paragraph_mutation(document)
     root = dict(_story_elements(document))[story]
     _refuse_paragraph_in_open_field(story, root, start_p, for_insertion=False)
     # ranges are counted among the start paragraph's SIBLINGS: nested
