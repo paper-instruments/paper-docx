@@ -19,6 +19,7 @@ from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
 
 from .harness import checks
+from .harness.contract import assert_changed_parts
 from .harness.paths import fixture_path
 
 MINIMAL = "generated/minimal-clean/minimal.docx"
@@ -513,12 +514,16 @@ class DescribeAppendDocument:
         _clear_body(source)
         source.add_paragraph("Appended after closed field")
         destination = _closed_field_append_destination(kind)
+        original = _saved(destination, tmp_path / f"closed-field-{kind}-before.docx")
 
         report = append_document(destination, source, section="continuous")
 
         assert report.inserted_blocks == 1
-        assert report.to_dict()["schema"] == "paper_composition"  # pyright: ignore[reportUnknownMemberType]
+        report_payload = report.to_dict()
+        assert report_payload["schema"] == "paper_composition"  # pyright: ignore[reportUnknownMemberType]
+        assert report_payload["version"] == 1  # pyright: ignore[reportUnknownMemberType]
         out = _saved(destination, tmp_path / f"closed-field-{kind}.docx")
+        assert_changed_parts(original, out, {"word/document.xml"})
         reopened = docx.Document(str(out))
         body = cast(Any, reopened.element).body
         body_blocks: list[Any] = [
