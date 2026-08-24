@@ -43,7 +43,14 @@ from docx.search import (
     _validate_xml_characters,
     find_one,
 )
-from docx.story import Anchor, Block, _iter_block_elements, _story_elements
+from docx.story import (
+    VIEWS,
+    Anchor,
+    Block,
+    _container_elements,  # pyright: ignore[reportPrivateUsage]
+    _iter_block_elements,
+    _story_elements,
+)
 
 if TYPE_CHECKING:
     from lxml.etree import _Element
@@ -52,7 +59,7 @@ if TYPE_CHECKING:
 
 check_install()
 
-AnchorLike = Union[str, Block, Span, Anchor]
+BlockTarget = Union[str, Block, Span]
 
 _P = qn("w:p")
 _PPR = qn("w:pPr")
@@ -113,29 +120,57 @@ class BlockEditResult:
 # ---------------------------------------------------------------------------
 
 
+def _refuse_paragraph_mutation(document: "Document") -> None:
+    """The one paragraph-mutation protection gate call in this module.
+
+    Single-target and range block operations both reach the gate through
+    here, so the refusal wording and the operation class stay identical
+    however the caller located its anchors.
+    """
+    _refuse_if_protected(document, "insert or remove paragraphs")
+
+
 def _resolve_anchor_paragraph(
-    document: "Document", anchor: AnchorLike
+    document: "Document", anchor: object
 ) -> "Tuple[str, _Element]":
     """(story, paragraph element) for `anchor`, staleness-verified.
 
-    Every block operation resolves its MUTATION anchor here, so this is
-    also the protection choke point; read-only anchor
-    resolution (e.g. a composition SOURCE range) uses
-    `_locate_anchor_paragraph` directly.
+    Single-target block operations resolve their MUTATION anchor here.
+    Range operations locate every endpoint first, then call the same
+    protection gate. Read-only anchor resolution (e.g. a composition
+    SOURCE range) uses `_locate_anchor_paragraph` directly.
     """
     require_anchor_owner(document, anchor)
-    _refuse_if_protected(document, "insert or remove paragraphs")
-    return _locate_anchor_paragraph(document, anchor)
+    located = _locate_anchor_paragraph(document, anchor)
+    _require_current_mutation_view(anchor)
+    _refuse_paragraph_mutation(document)
+    return located
+
+
+def _require_current_mutation_view(anchor: object) -> None:
+    """Require live mutation targets to come from the current projection."""
+    if not isinstance(anchor, (Block, Span)):
+        return
+    view = anchor._view  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    if view not in VIEWS:
+        raise TargetNotFoundError(
+            f"live {type(anchor).__name__} is stale: its captured view is invalid"
+        )
+    if view != "current":
+        raise UnsupportedStructureError(
+            f"live {type(anchor).__name__} was captured from view={view!r};"
+            " historical projections are inspection-only as mutation anchors."
+            " Reacquire the intended target with view=\"current\" and retry"
+        )
 
 
 def _locate_anchor_paragraph(
-    document: "Document", anchor: AnchorLike
+    document: "Document", anchor: object
 ) -> "Tuple[str, _Element]":
     """(story, paragraph element) for `anchor`, staleness-verified.
 
-    Strings are found via `find_one` (ambiguity refuses); Block/Anchor values
-    are re-verified by content hash against the current-view text of the
-    block at their recorded position.
+    Strings are found exactly via `find_one` (ambiguity refuses), while live
+    spans and blocks resolve by owner and exact OOXML element identity.
     """
     require_anchor_owner(document, anchor)
     if isinstance(anchor, str):
@@ -150,33 +185,67 @@ def _locate_anchor_paragraph(
         if paragraph is None:
             raise TargetNotFoundError("span anchor is not inside a paragraph")
         return anchor.story, paragraph
-    block_anchor = anchor.anchor if isinstance(anchor, Block) else anchor
-    for story, root in _story_elements(document):
-        if story != block_anchor.story:
-            continue
-        for kind, index, element, _sdt, _txbx in _iter_block_elements(story, root):
-            if index != block_anchor.index:
-                continue
-            if kind != "paragraph":
-                raise UnsupportedStructureError(
-                    "anchor addresses a table block; block operations anchor"
-                    " on paragraphs"
-                )
-            from docx.story import _build_block
-
-            block = _build_block(
-                story, kind, index, element, "current", in_sdt=_sdt, in_txbx=_txbx
-            )
-            if block.anchor.content_hash != block_anchor.content_hash:
-                raise TargetNotFoundError(
-                    f"anchor is stale: block {block_anchor.index} in"
-                    f" {block_anchor.story} no longer carries the anchored content"
-                )
-            return story, element
-        raise TargetNotFoundError(
-            f"anchor index {block_anchor.index} does not exist in {block_anchor.story}"
+    if isinstance(anchor, Anchor):
+        raise UnsupportedStructureError(
+            "legacy Anchor values are inert location evidence and cannot"
+            " authorize a block mutation; reacquire a live Block or exact"
+            " Span, or use an exact string"
         )
-    raise TargetNotFoundError(f"story part {block_anchor.story!r} not found")
+    if isinstance(anchor, Block):
+        return _locate_live_block(document, anchor)
+    raise TypeError(f"unsupported block target {type(anchor).__name__!r}")
+
+
+def _paragraph_block(story: str, kind: str, element: "_Element") -> "Tuple[str, _Element]":
+    if kind != "paragraph":
+        raise UnsupportedStructureError(
+            "target addresses a table block; block operations anchor on paragraphs"
+        )
+    return story, element
+
+
+def _locate_live_block(
+    document: "Document", block: Block
+) -> "Tuple[str, _Element]":
+    roots = dict(_story_elements(document))
+    root = roots.get(block.story)
+    if root is None or root is not block._story_root:  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        raise TargetNotFoundError(
+            f"live block is stale: story part {block.story!r} was removed or replaced"
+        )
+    element = block._element  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    if element is None or element.getparent() is not block._parent:  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        raise TargetNotFoundError(
+            "live block is stale: its exact document element was detached or reparented"
+        )
+    if block._view not in VIEWS:  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        raise TargetNotFoundError("live block is stale: its captured view is invalid")
+    candidates = [
+        kind
+        for kind, _index, candidate, _in_sdt, _in_txbx in _iter_block_elements(
+            block.story, root
+        )
+        if candidate is element
+    ]
+    if len(candidates) != 1:
+        raise TargetNotFoundError(
+            "live block is stale: its exact element is no longer reachable once"
+            " through supported story traversal"
+        )
+    captured_containers = block._container_elements  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    current_containers = _container_elements(element, root)
+    if (
+        candidates[0] != block.kind
+        or len(current_containers) != len(captured_containers)
+        or any(
+            current is not captured
+            for current, captured in zip(current_containers, captured_containers)
+        )
+    ):
+        raise TargetNotFoundError(
+            "live block is stale: its kind or containing story structure changed"
+        )
+    return _paragraph_block(block.story, candidates[0], element)
 
 
 def _validated_style_id(
@@ -393,8 +462,8 @@ def _mark_paragraph_deleted(
 
 def _select_paragraph_range(
     document: "Document",
-    start_anchor: AnchorLike,
-    end_anchor: Optional[AnchorLike],
+    start_anchor: BlockTarget,
+    end_anchor: Optional[BlockTarget],
     count: int,
 ) -> "Tuple[str, List[_Element]]":
     if count < 1:
@@ -404,7 +473,13 @@ def _select_paragraph_range(
     require_anchor_owner(document, start_anchor, argument="start_anchor")
     if end_anchor is not None:
         require_anchor_owner(document, end_anchor, argument="end_anchor")
-    story, start_p = _resolve_anchor_paragraph(document, start_anchor)
+    story, start_p = _locate_anchor_paragraph(document, start_anchor)
+    _require_current_mutation_view(start_anchor)
+    end_location = None
+    if end_anchor is not None:
+        end_location = _locate_anchor_paragraph(document, end_anchor)
+        _require_current_mutation_view(end_anchor)
+    _refuse_paragraph_mutation(document)
     root = dict(_story_elements(document))[story]
     _refuse_paragraph_in_open_field(story, root, start_p, for_insertion=False)
     # ranges are counted among the start paragraph's SIBLINGS: nested
@@ -414,7 +489,8 @@ def _select_paragraph_range(
     siblings = [child for child in parent if child.tag == _P]
     start_index = next(i for i, p in enumerate(siblings) if p is start_p)
     if end_anchor is not None:
-        end_story, end_p = _resolve_anchor_paragraph(document, end_anchor)
+        assert end_location is not None
+        end_story, end_p = end_location
         if end_story != story:
             raise BoundaryViolationError(
                 "start and end anchors live in different story parts"
@@ -465,7 +541,7 @@ def _validate_tracked_identity(author: "Optional[str]", date: object) -> None:
 
 def insert_section_after(
     document: "Document",
-    anchor: AnchorLike,
+    anchor: BlockTarget,
     *,
     heading: str,
     paragraphs: Sequence[str],
@@ -519,9 +595,9 @@ def insert_section_after(
 
 def tracked_delete_paragraphs(
     document: "Document",
-    start_anchor: AnchorLike,
+    start_anchor: BlockTarget,
     *,
-    end_anchor: Optional[AnchorLike] = None,
+    end_anchor: Optional[BlockTarget] = None,
     count: int = 1,
     author: str,
     date: Optional[dt.datetime] = None,
@@ -560,10 +636,10 @@ def tracked_delete_paragraphs(
 
 def tracked_replace_paragraphs(
     document: "Document",
-    start_anchor: AnchorLike,
+    start_anchor: BlockTarget,
     replacement_paragraphs: Sequence[str],
     *,
-    end_anchor: Optional[AnchorLike] = None,
+    end_anchor: Optional[BlockTarget] = None,
     count: int = 1,
     body_style: Optional[str] = None,
     author: str,
@@ -756,7 +832,7 @@ def _new_table(document: "Document", block: TableBlock) -> "_Element":
 
 def insert_blocks_after(
     document: "Document",
-    anchor: AnchorLike,
+    anchor: BlockTarget,
     *,
     blocks: "Sequence[object]",
     tracked: bool = False,

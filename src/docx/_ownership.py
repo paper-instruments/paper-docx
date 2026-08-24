@@ -8,7 +8,7 @@ document can mutate that other package.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING
 
 from docx.errors import (
     BoundaryViolationError,
@@ -20,6 +20,7 @@ if TYPE_CHECKING:
     from docx.comments import Comment
     from docx.document import Document
     from docx.search import Span
+    from docx.story import Block
 
 
 def require_span_owner(
@@ -39,8 +40,30 @@ def require_anchor_owner(
     document: "Document", anchor: object, *, argument: str = "anchor"
 ) -> None:
     """Check ownership for live anchor forms; value/string anchors are inert."""
-    if getattr(anchor, "_document", None) is not None:
-        require_span_owner(document, cast("Span", anchor), argument=argument)
+    from docx.search import Span
+    from docx.story import Block
+
+    if isinstance(anchor, Span):
+        require_span_owner(document, anchor, argument=argument)
+    elif isinstance(anchor, Block):
+        require_block_owner(document, anchor, argument=argument)
+
+
+def require_block_owner(
+    document: "Document", block: "Block", *, argument: str = "block"
+) -> None:
+    """Refuse unattached snapshots and live blocks from another package."""
+    owner = getattr(block, "_document", None)
+    if owner is None:
+        raise TargetNotFoundError(
+            f"{argument} is not a live block; reacquire it with iter_blocks()"
+            " or outline()"
+        )
+    if getattr(owner, "part", None) is not document.part:
+        raise BoundaryViolationError(
+            f"{argument} belongs to a different document; reacquire the block"
+            " from the document passed to this operation"
+        )
 
 
 def require_comment_owner(

@@ -13,9 +13,12 @@ from pathlib import Path
 from typing import List
 
 import pytest
+from lxml.etree import SubElement
 
 import docx
 from docx._normalize import normalize_text
+from docx.oxml import OxmlElement
+from docx.oxml.ns import qn
 from docx.story import Block, iter_blocks, outline, story_parts
 
 from .harness.paths import fixture_path, sidecar_path
@@ -74,18 +77,22 @@ class DescribeTrackedViews:
         truth = _ground_truth(TRACKED)["revised_paragraph"]
         block = _blocks(TRACKED, "current")[1]
         assert block.text == truth["visible_text_current"]
-        assert block.in_insert and not block.in_delete
+        assert block.in_insert
+        assert not block.in_delete
 
     def it_shows_the_pre_change_text_in_the_original_view(self):
         truth = _ground_truth(TRACKED)["revised_paragraph"]
         block = _blocks(TRACKED, "original")[1]
         assert block.text == truth["visible_text_original"]
-        assert block.in_delete and not block.in_insert
+        assert block.in_delete
+        assert not block.in_insert
 
     def it_shows_everything_in_the_all_view(self):
         block = _blocks(TRACKED, "all")[1]
-        assert "forty-two" in block.text and "forty-seven" in block.text
-        assert block.in_insert and block.in_delete
+        assert "forty-two" in block.text
+        assert "forty-seven" in block.text
+        assert block.in_insert
+        assert block.in_delete
 
     def it_rejects_unknown_views(self):
         with pytest.raises(ValueError, match="view"):
@@ -231,7 +238,60 @@ class DescribeAnchors:
             normalize_text(block.text).encode("utf-8")
         ).hexdigest()[:8]
         assert block.anchor.content_hash == expected
-        assert block.anchor.story == block.story and block.anchor.index == block.index
+        assert block.anchor.story == block.story
+        assert block.anchor.index == block.index
+
+
+class DescribeLiveBlocks:
+    def it_keeps_live_identity_private_and_out_of_serialization(self):
+        document = _doc(MINIMAL)
+        block = next(iter(iter_blocks(document)))
+        assert block._document is document  # noqa: SLF001
+        assert block._element is document.paragraphs[0]._p  # noqa: SLF001
+        assert block._story_root is document.element  # noqa: SLF001
+        payload = json.dumps(block.to_dict())
+        assert "_document" not in payload
+        assert "_element" not in payload
+        assert "memory" not in payload
+
+    def it_exposes_no_portable_locator_surface(self):
+        from docx import story
+
+        block = next(iter(iter_blocks(_doc(MINIMAL))))
+        assert not hasattr(story, "Block" + "Locator")
+        assert not hasattr(block, "locator")
+        assert "locator" not in block.to_dict()
+
+    @pytest.mark.parametrize(
+        ("container_tag", "content_tag", "flag"),
+        [
+            ("w:sdt", "w:sdtContent", "in_content_control"),
+            ("w:r", "w:txbxContent", "in_text_box"),
+        ],
+    )
+    def it_flags_empty_paragraphs_from_their_container_context(
+        self, container_tag: str, content_tag: str, flag: str
+    ):
+        document = docx.Document()
+        host = document.add_paragraph("host")._p
+        container = OxmlElement(container_tag)
+        content = OxmlElement(content_tag)
+        content.append(OxmlElement("w:p"))
+        if content_tag == "w:sdtContent":
+            container.append(content)
+            body = document.element.find(qn("w:body"))
+            assert body is not None
+            body.insert(0, container)
+        else:
+            pict = OxmlElement("w:pict")
+            shape = SubElement(pict, "{urn:schemas-microsoft-com:vml}shape")
+            text_box = SubElement(shape, "{urn:schemas-microsoft-com:vml}textbox")
+            text_box.append(content)
+            container.append(pict)
+            host.append(container)
+
+        empty = next(block for block in iter_blocks(document) if block.text == "")
+        assert getattr(empty, flag)
 
 
 class DescribeInspectionDeterminism:
@@ -250,6 +310,15 @@ class DescribeInspectionDeterminism:
             "outline JSON shape drifted from the golden; if deliberate, update"
             " tests/paper/golden/outline-minimal.json in the same reviewed commit"
         )
+
+    def it_marks_anchor_data_as_inert_without_a_locator(self):
+        payload = outline(_doc(MINIMAL)).to_dict()
+        assert payload["version"] == 3
+        assert payload["blocks"][0]["anchor"]
+        assert payload["blocks"][0]["anchor_role"] == (
+            "legacy_inert_location_evidence"
+        )
+        assert "locator" not in payload["blocks"][0]
 
 
 class DescribeBlindRegionCounts:

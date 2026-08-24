@@ -25,8 +25,15 @@ Traversal rules:
 from __future__ import annotations
 
 import hashlib
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Dict, Iterator, List, Optional, Tuple
+from dataclasses import dataclass, field
+from typing import (
+    TYPE_CHECKING,
+    Dict,
+    Iterator,
+    List,
+    Optional,
+    Tuple,
+)
 
 from docx import _textatoms
 from docx._guard import check_install
@@ -118,18 +125,18 @@ def _story_sort_key(name: str) -> Tuple[int, str]:
 
 @dataclass(frozen=True)
 class Anchor:
-    """Stable block address: story part + index + content hash.
+    """Legacy, inert location evidence: story part + index + content hash.
 
-    The hash (first 8 hex chars of SHA-256 over the block's normalized text)
-    is what detects staleness — a raw index alone is forbidden as a public
-    anchor because it goes stale across edits.
+    ``Anchor`` remains serializable for historical search and revision result
+    data. It is not a mutation-capable block target; reacquire a live |Block|
+    or |Span| instead.
     """
 
     story: str
     index: int
     content_hash: str
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> "Dict[str, object]":
         return {"story": self.story, "index": self.index, "content_hash": self.content_hash}
 
 
@@ -140,7 +147,7 @@ class TableShape:
     has_merges: bool
     has_nested_table: bool
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> "Dict[str, object]":
         return {
             "rows": self.rows,
             "columns": self.columns,
@@ -151,7 +158,7 @@ class TableShape:
 
 @dataclass(frozen=True)
 class Block:
-    """One block-level item (paragraph or table) somewhere in the document."""
+    """One live, owner-bound paragraph or table observed during traversal."""
 
     story: str
     kind: str  # "paragraph" | "table"
@@ -165,13 +172,22 @@ class Block:
     in_text_box: bool
     has_field: bool
     table: Optional[TableShape]
+    _document: "Optional[Document]" = field(default=None, repr=False, compare=False)
+    _element: "Optional[_Element]" = field(default=None, repr=False, compare=False)
+    _story_root: "Optional[_Element]" = field(default=None, repr=False, compare=False)
+    _parent: "Optional[_Element]" = field(default=None, repr=False, compare=False)
+    _container_elements: "Tuple[_Element, ...]" = field(
+        default=(), repr=False, compare=False
+    )
+    _view: str = field(default="current", repr=False, compare=False)
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> "Dict[str, object]":
         return {
             "story": self.story,
             "kind": self.kind,
             "index": self.index,
             "anchor": self.anchor.to_dict(),
+            "anchor_role": "legacy_inert_location_evidence",
             "text": self.text,
             "style_id": self.style_id,
             "in_insert": self.in_insert,
@@ -191,11 +207,10 @@ class Outline:
     blocks: Tuple[Block, ...]
     blind_region_counts: Dict[str, int]
 
-    def to_dict(self) -> dict:
+    def to_dict(self) -> "Dict[str, object]":
         return {
             "schema": "paper_outline",
-            "version": 2,  # v2: moves/format_changes/fields + confession keys,
-            #     per-block has_field
+            "version": 3,  # v3: Anchor is explicitly inert location evidence
             "story_parts": list(self.story_parts),
             "blind_region_counts": dict(sorted(self.blind_region_counts.items())),
             "blocks": [block.to_dict() for block in self.blocks],
@@ -472,17 +487,25 @@ def _count_fldchar_delta(element: "_Element") -> int:
     return delta
 
 
-def _build_block(
-    story: str,
+def _container_elements(element: "_Element", root: "_Element") -> "Tuple[_Element, ...]":
+    elements: "List[_Element]" = []
+    current = element.getparent()
+    while current is not None:
+        elements.append(current)
+        if current is root:
+            return tuple(elements)
+        current = current.getparent()
+    return tuple(elements)
+
+
+def _block_snapshot(
     kind: str,
-    index: int,
     element: "_Element",
     view: str,
     *,
     in_sdt: bool,
     in_txbx: bool,
-    in_open_field: bool = False,
-) -> Block:
+) -> "Tuple[str, Optional[str], Optional[TableShape], _TextVisitor, bool, bool]":
     if kind == "table":
         visitor = _subtree_text(element, view, skip_text_boxes=False,
                                 in_sdt=in_sdt, in_txbx=in_txbx)
@@ -496,22 +519,90 @@ def _build_block(
         style_values = element.xpath(_P_STYLE_XPATH)
         style_id = str(style_values[0]) if style_values else None
         table = None
-    return Block(
-        story=story,
-        kind=kind,
-        index=index,
-        anchor=Anchor(story=story, index=index, content_hash=content_hash(text)),
-        text=text,
-        style_id=style_id,
-        in_insert=visitor.in_insert,
-        in_delete=visitor.in_delete,
-        in_content_control=in_sdt or visitor.in_content_control,
-        in_text_box=in_txbx or visitor.in_text_box,
-        # a block BETWEEN a field's begin and end (TOC entry paragraphs) is
-        # field content even though neither marker lives in it
-        has_field=visitor.has_field or in_open_field,
-        table=table,
+    return (
+        text,
+        style_id,
+        table,
+        visitor,
+        in_sdt or visitor.in_content_control,
+        in_txbx or visitor.in_text_box,
     )
+
+
+@dataclass(frozen=True)
+class _BlockRecord:
+    kind: str
+    index: int
+    element: "_Element"
+    text: str
+    style_id: Optional[str]
+    table: Optional[TableShape]
+    visitor: _TextVisitor
+    in_content_control: bool
+    in_text_box: bool
+    in_open_field: bool
+
+
+def _build_story_blocks(
+    document: "Document", story: str, root: "_Element", view: str
+) -> "Tuple[Block, ...]":
+    """Canonical live-block builder for one story."""
+    records: "List[_BlockRecord]" = []
+    open_field_depth = 0
+    for kind, index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
+        text, style_id, table, visitor, in_content_control, in_text_box = (
+            _block_snapshot(
+                kind, element, view, in_sdt=in_sdt, in_txbx=in_txbx
+            )
+        )
+        records.append(
+            _BlockRecord(
+                kind=kind,
+                index=index,
+                element=element,
+                text=text,
+                style_id=style_id,
+                table=table,
+                visitor=visitor,
+                in_content_control=in_content_control,
+                in_text_box=in_text_box,
+                in_open_field=open_field_depth > 0,
+            )
+        )
+        open_field_depth = max(0, open_field_depth + _count_fldchar_delta(element))
+
+    blocks: "List[Block]" = []
+    for record in records:
+        containers = _container_elements(record.element, root)
+        blocks.append(
+            Block(
+                story=story,
+                kind=record.kind,
+                index=record.index,
+                anchor=Anchor(
+                    story=story,
+                    index=record.index,
+                    content_hash=content_hash(record.text),
+                ),
+                text=record.text,
+                style_id=record.style_id,
+                in_insert=record.visitor.in_insert,
+                in_delete=record.visitor.in_delete,
+                in_content_control=record.in_content_control,
+                in_text_box=record.in_text_box,
+                # a block BETWEEN a field's begin and end (TOC entry paragraphs) is
+                # field content even though neither marker lives in it
+                has_field=record.visitor.has_field or record.in_open_field,
+                table=record.table,
+                _document=document,
+                _element=record.element,
+                _story_root=root,
+                _parent=record.element.getparent(),
+                _container_elements=containers,
+                _view=view,
+            )
+        )
+    return tuple(blocks)
 
 
 def _table_text(table: "_Element", view: str) -> str:
@@ -604,14 +695,7 @@ def iter_blocks(document: "Document", *, view: str = "current") -> Iterator[Bloc
     if view not in VIEWS:
         raise ValueError(f"view must be one of {VIEWS}, got {view!r}")
     for story, root in _story_elements(document):
-        open_field_depth = 0
-        for kind, index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
-            yield _build_block(
-                story, kind, index, element, view,
-                in_sdt=in_sdt, in_txbx=in_txbx,
-                in_open_field=open_field_depth > 0,
-            )
-            open_field_depth = max(0, open_field_depth + _count_fldchar_delta(element))
+        yield from _build_story_blocks(document, story, root, view)
 
 
 def outline(document: "Document", *, view: str = "current") -> Outline:

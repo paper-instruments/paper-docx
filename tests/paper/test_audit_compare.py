@@ -14,6 +14,7 @@ from docx.errors import UnsupportedStructureError
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.package import compare
+from docx.story import iter_blocks
 
 FROZEN = dt.datetime(2026, 7, 10, 12, 0, tzinfo=dt.timezone.utc)
 
@@ -168,6 +169,18 @@ def it_saves_compare_output_with_deterministic_zip_metadata(tmp_path: Path):
         assert {info.date_time for info in package.infolist()} == {
             (1980, 1, 1, 0, 0, 0)
         }
+
+
+def it_keeps_compare_result_blocks_owned_by_the_result_document(tmp_path: Path):
+    a, b = _save_pair(
+        tmp_path,
+        lambda document: document.add_paragraph("Original text"),
+        lambda document: document.add_paragraph("Revised text"),
+    )
+    result = compare(a, b, author="Reviewer", date=FROZEN)
+    blocks = tuple(iter_blocks(result.document))
+    assert blocks
+    assert all(block._document is result.document for block in blocks)  # noqa: SLF001
 
 
 class DescribeCompareAlignmentTrim:

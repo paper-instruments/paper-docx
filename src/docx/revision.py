@@ -28,8 +28,8 @@ from docx.oxml.ns import qn
 from docx.protection import _refuse_if_protected
 from docx.story import (
     Anchor,
+    _build_story_blocks,
     _first_choice_children,
-    _iter_block_elements,
     _story_elements,
     content_hash,
 )
@@ -283,6 +283,7 @@ class Revision:
             "text": self.text,
             "story": self.story,
             "anchor": self.anchor.to_dict(),
+            "anchor_role": "legacy_inert_location_evidence",
             "is_paragraph_mark": self.is_paragraph_mark,
         }
 
@@ -408,7 +409,8 @@ class Revisions(Sequence[Revision]):
             # v2: move/format_change types + census
             # v3: row_insertion/row_deletion + named exotic types; format
             #     changes and row revisions resolvable
-            "version": 3,
+            # v4: Anchor is explicitly inert location evidence
+            "version": 4,
             "revisions": [revision.to_dict() for revision in self._items],
             "remaining_unsupported": self.remaining_unsupported(),
         }
@@ -843,20 +845,12 @@ def _iter_revision_nodes(
 
 
 def _enumerate_revisions(document: "Document") -> Iterator[Revision]:
-    from docx.story import _build_block
-
     for story, root in _story_elements(document):
-        for kind, index, element, in_sdt, in_txbx in _iter_block_elements(story, root):
-            skip_boxes = kind == "paragraph"
-            block_anchor = None
+        for block in _build_story_blocks(document, story, root, "current"):
+            element = block._element  # noqa: SLF001 - canonical story block attachment
+            assert element is not None
+            skip_boxes = block.kind == "paragraph"
             for node in _iter_revision_nodes(element, skip_text_boxes=skip_boxes):
-                if block_anchor is None:
-                    # the anchor is the containing BLOCK's (so it verifies
-                    # against outline blocks and is usable as an AnchorLike)
-                    block_anchor = _build_block(
-                        story, kind, index, element, "current",
-                        in_sdt=in_sdt, in_txbx=in_txbx,
-                    ).anchor
                 revision_type = _revision_type_of(node)
                 text = _node_text(node)
                 if not text and node.tag in (_RPR_CHANGE, _PPR_CHANGE):
@@ -867,7 +861,7 @@ def _enumerate_revisions(document: "Document") -> Iterator[Revision]:
                     date=_parse_date(node.get(_DATE)),
                     text=text,
                     story=story,
-                    anchor=block_anchor,
+                    anchor=block.anchor,
                     is_paragraph_mark=_is_paragraph_mark_revision(node),
                     _element=node,
                     _document=document,

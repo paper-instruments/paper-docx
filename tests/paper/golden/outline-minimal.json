@@ -1,6 +1,6 @@
 {
   "schema": "paper_outline",
-  "version": 2,
+  "version": 3,
   "story_parts": [
     "word/document.xml"
   ],
@@ -27,6 +27,7 @@
         "index": 0,
         "content_hash": "bd6f203d"
       },
+      "anchor_role": "legacy_inert_location_evidence",
       "text": "Minimal Clean Document",
       "style_id": "Heading1",
       "in_insert": false,
@@ -45,6 +46,7 @@
         "index": 1,
         "content_hash": "06f4270a"
       },
+      "anchor_role": "legacy_inert_location_evidence",
       "text": "First body paragraph with perfectly ordinary text.",
       "style_id": null,
       "in_insert": false,
@@ -63,6 +65,7 @@
         "index": 2,
         "content_hash": "c187c6cc"
       },
+      "anchor_role": "legacy_inert_location_evidence",
       "text": "Second body paragraph, equally unremarkable.",
       "style_id": null,
       "in_insert": false,

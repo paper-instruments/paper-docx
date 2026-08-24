@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 import docx
@@ -20,6 +22,9 @@ from docx.errors import BoundaryViolationError, UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
 from docx.search import find_one
+from docx.story import iter_blocks
+
+from .harness.contract import save_and_reopen
 
 _SECT_PR = qn("w:sectPr")
 _SDT = qn("w:sdt")
@@ -209,6 +214,45 @@ def it_composes_top_level_content_controls_as_whole_blocks(mode: str) -> None:
     assert "".join(node.text or "" for node in copied[0].iter(qn("w:t"))) == (
         "Controlled source block"
     )
+
+
+@pytest.mark.parametrize("view", ["original", "all"])
+@pytest.mark.parametrize("target_kind", ["block", "span"])
+def it_keeps_historical_live_composition_sources_view_neutral(
+    view: str, target_kind: str, tmp_path: Path
+) -> None:
+    source = docx.Document()
+    _clear_body(source)
+    source.add_paragraph("First source block")
+    source.add_paragraph("Second source block")
+    if target_kind == "block":
+        blocks = {
+            block.text: block
+            for block in iter_blocks(source, view=view)
+            if block.kind == "paragraph"
+        }
+        start, end = blocks["First source block"], blocks["Second source block"]
+    else:
+        start = find_one(source, "First source block", view=view)
+        end = find_one(source, "Second source block", view=view)
+    destination = docx.Document()
+    destination.add_paragraph("Destination anchor")
+    source_before = _package_state(source)  # pyright: ignore[reportUnknownVariableType]
+
+    report = insert_blocks_from(
+        destination,
+        source,
+        start,
+        end_anchor=end,
+        anchor="Destination anchor",
+    )
+
+    assert _package_state(source) == source_before
+    assert report.inserted_blocks == 2
+    reopened = save_and_reopen(destination, tmp_path / f"{view}-{target_kind}.docx")
+    texts = [paragraph.text for paragraph in reopened.paragraphs]
+    assert "First source block" in texts
+    assert "Second source block" in texts
 
 
 def it_refuses_a_data_bound_control_before_composition_mutates() -> None:

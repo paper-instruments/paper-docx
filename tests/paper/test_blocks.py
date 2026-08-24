@@ -2,25 +2,37 @@
 
 from __future__ import annotations
 
+import copy
 import datetime as dt
 import shutil
+from dataclasses import replace
 from pathlib import Path
+from typing import Callable, Union
 
 import pytest
 
 import docx
 from docx.blocks import (
+    BlockEditResult,
+    BlockTarget,
+    RichParagraph,
+    TextRun,
+    insert_blocks_after,
     insert_section_after,
     tracked_delete_paragraphs,
     tracked_replace_paragraphs,
 )
+from docx.document import Document
 from docx.errors import (
     BoundaryViolationError,
     TargetNotFoundError,
     UnsupportedStructureError,
 )
+from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.story import iter_blocks, outline
+from docx.protection import set_protection
+from docx.search import Span, find_one
+from docx.story import Block, iter_blocks, outline
 
 from .harness.contract import assert_changed_parts, assert_refusal_atomic, save_and_reopen
 from .harness.paths import fixture_path
@@ -40,6 +52,295 @@ def _doc(relpath: str):
 
 def _texts(document, view: str = "current"):
     return [b.text for b in iter_blocks(document, view=view)]
+
+
+def _memory_doc(*texts: str):
+    document = docx.Document()
+    for text in texts:
+        document.add_paragraph(text)
+    return document
+
+
+class DescribeLiveBlockTargets:
+    def it_follows_the_exact_element_across_an_index_shift(self):
+        document = _memory_doc("A", "target", "C")
+        target = tuple(iter_blocks(document))[1]
+        document.paragraphs[0].insert_paragraph_before("new first")
+        insert_section_after(document, target, heading="after target", paragraphs=[])
+        assert _texts(document) == ["new first", "A", "target", "after target", "C"]
+
+    @pytest.mark.parametrize("replacement", ["target", "TARGET", " target ", "t­arget"])
+    def it_refuses_detached_or_replaced_elements_even_with_equivalent_text(
+        self, replacement: str
+    ):
+        document = _memory_doc("A", "target", "C")
+        target = tuple(iter_blocks(document))[1]
+        old = target._element  # noqa: SLF001
+        new = copy.deepcopy(old)
+        for text in new.iter(qn("w:t")):
+            text.text = replacement
+        old.getparent().replace(old, new)
+        before = document.element.xml
+        with pytest.raises(TargetNotFoundError, match="stale"):
+            insert_section_after(document, target, heading="wrong", paragraphs=[])
+        assert document.element.xml == before
+
+    def it_refuses_a_detached_element(self):
+        document = _memory_doc("A", "target", "C")
+        target = tuple(iter_blocks(document))[1]
+        target._element.getparent().remove(target._element)  # noqa: SLF001
+        with pytest.raises(TargetNotFoundError, match="stale"):
+            insert_section_after(document, target, heading="wrong", paragraphs=[])
+
+    def it_refuses_an_element_reparented_into_different_structure(self):
+        document = _memory_doc("A", "target", "C")
+        target = tuple(iter_blocks(document))[1]
+        wrapper = OxmlElement("w:sdt")
+        content = OxmlElement("w:sdtContent")
+        wrapper.append(content)
+        document.element.body.insert(1, wrapper)
+        content.append(target._element)  # noqa: SLF001
+        with pytest.raises(TargetNotFoundError, match="reparented"):
+            insert_section_after(document, target, heading="wrong", paragraphs=[])
+
+    def it_refuses_a_live_block_from_another_document(self):
+        source = _memory_doc("foreign")
+        destination = _memory_doc("local")
+        foreign = next(iter(iter_blocks(source)))
+        before = (source.element.xml, destination.element.xml)
+        with pytest.raises(BoundaryViolationError, match="different document"):
+            insert_section_after(destination, foreign, heading="wrong", paragraphs=[])
+        assert (source.element.xml, destination.element.xml) == before
+
+    def it_refuses_a_manually_detached_snapshot_instead_of_re_resolving_it(self):
+        document = _memory_doc("target")
+        snapshot = replace(
+            next(iter(iter_blocks(document))),
+            _document=None,
+            _element=None,
+            _story_root=None,
+            _parent=None,
+            _container_elements=(),
+        )
+        with pytest.raises(TargetNotFoundError, match="not a live block"):
+            insert_section_after(document, snapshot, heading="wrong", paragraphs=[])
+
+    @pytest.mark.parametrize(
+        "changes",
+        [
+            {"_view": "bogus"},
+            {"kind": "table"},
+            {"story": "word/missing.xml"},
+            {"_story_root": OxmlElement("w:document")},
+            {"_container_elements": ()},
+        ],
+    )
+    def it_refuses_live_blocks_with_contradictory_attachment_state(self, changes):
+        document = _memory_doc("target")
+        target = replace(next(iter(iter_blocks(document))), **changes)
+        with pytest.raises(TargetNotFoundError, match="stale"):
+            insert_section_after(document, target, heading="wrong", paragraphs=[])
+
+    def it_refuses_a_live_table_block_as_a_paragraph_anchor(self):
+        document = _memory_doc("paragraph")
+        document.add_table(rows=1, cols=1).cell(0, 0).text = "cell"
+        table = next(block for block in iter_blocks(document) if block.kind == "table")
+        with pytest.raises(UnsupportedStructureError, match="table block"):
+            insert_section_after(document, table, heading="wrong", paragraphs=[])
+
+
+LiveTarget = Union[Block, Span]
+BlockMutation = Callable[[Document, BlockTarget], BlockEditResult]
+
+
+def _live_paragraph_target(
+    document: Document, kind: str, view: str, text: str
+) -> LiveTarget:
+    if kind == "block":
+        return next(
+            block
+            for block in iter_blocks(document, view=view)
+            if block.kind == "paragraph" and block.text == text
+        )
+    return find_one(document, text, view=view)
+
+
+def _insert_section(document: Document, target: BlockTarget) -> BlockEditResult:
+    return insert_section_after(document, target, heading="new", paragraphs=[])
+
+
+def _insert_blocks(document: Document, target: BlockTarget) -> BlockEditResult:
+    return insert_blocks_after(
+        document,
+        target,
+        blocks=[RichParagraph(runs=[TextRun("new")])],
+    )
+
+
+def _tracked_delete(document: Document, target: BlockTarget) -> BlockEditResult:
+    return tracked_delete_paragraphs(document, target, author="A", date=FROZEN)
+
+
+def _tracked_replace(document: Document, target: BlockTarget) -> BlockEditResult:
+    return tracked_replace_paragraphs(
+        document, target, ["new"], author="A", date=FROZEN
+    )
+
+
+_BLOCK_MUTATIONS: tuple[object, ...] = (
+    pytest.param(_insert_section, id="insert-section"),
+    pytest.param(_insert_blocks, id="insert-blocks"),
+    pytest.param(_tracked_delete, id="tracked-delete"),
+    pytest.param(_tracked_replace, id="tracked-replace"),
+)
+
+
+class DescribeMutationProjectionAuthority:
+    @pytest.mark.parametrize("operation", _BLOCK_MUTATIONS)
+    @pytest.mark.parametrize("target_kind", ["block", "span"])
+    @pytest.mark.parametrize("view", ["original", "all"])
+    def it_refuses_historical_live_mutation_anchors_atomically(
+        self, operation: BlockMutation, target_kind: str, view: str
+    ):
+        document = _memory_doc("before", "target", "after")
+        target = _live_paragraph_target(document, target_kind, view, "target")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda doc: operation(doc, target),
+            UnsupportedStructureError,
+        )
+
+        assert f"view='{view}'" in str(refusal)
+        assert 'view="current"' in str(refusal)
+        if isinstance(target, Span):
+            target._validate_fresh()  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        else:
+            assert target.text == "target"
+
+    @pytest.mark.parametrize("historical_endpoint", ["start", "end"])
+    def it_checks_both_range_projections_before_document_protection(
+        self, historical_endpoint: str
+    ):
+        document = _memory_doc("start", "end")
+        current_start = find_one(document, "start")
+        current_end = find_one(document, "end")
+        historical_start = find_one(document, "start", view="original")
+        historical_end = find_one(document, "end", view="original")
+        start = historical_start if historical_endpoint == "start" else current_start
+        end = historical_end if historical_endpoint == "end" else current_end
+        set_protection(document, edit="readOnly")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda doc: tracked_delete_paragraphs(
+                doc, start, end_anchor=end, author="A", date=FROZEN
+            ),
+            UnsupportedStructureError,
+        )
+
+        assert "view='original'" in str(refusal)
+
+    @pytest.mark.parametrize("operation", _BLOCK_MUTATIONS)
+    @pytest.mark.parametrize("target_kind", ["block", "span"])
+    def it_keeps_current_live_targets_authoritative(
+        self, operation: BlockMutation, target_kind: str
+    ):
+        document = _memory_doc("before", "target", "after")
+        target = _live_paragraph_target(document, target_kind, "current", "target")
+
+        result = operation(document, target)
+
+        assert result.inserted_blocks or result.deleted_blocks
+
+    def it_does_not_resolve_a_historical_only_exact_string_destination(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()._p  # pyright: ignore[reportPrivateUsage]
+        deletion = OxmlElement("w:del")
+        deletion.set(qn("w:id"), "1")
+        run = OxmlElement("w:r")
+        deleted_text = OxmlElement("w:delText")
+        deleted_text.text = "historical only"
+        run.append(deleted_text)
+        deletion.append(run)
+        paragraph.append(deletion)
+        assert find_one(document, "historical only", view="original")
+
+        assert_refusal_atomic(
+            document,
+            lambda doc: insert_section_after(
+                doc, "historical only", heading="new", paragraphs=[]
+            ),
+            TargetNotFoundError,
+        )
+
+    @pytest.mark.parametrize(
+        "operation",
+        [tracked_delete_paragraphs, tracked_replace_paragraphs],
+    )
+    @pytest.mark.parametrize("historical_endpoint", ["start", "end"])
+    @pytest.mark.parametrize("target_kind", ["block", "span"])
+    @pytest.mark.parametrize("view", ["original", "all"])
+    def it_validates_each_tracked_range_endpoint_before_mutation(
+        self,
+        operation: Callable[..., BlockEditResult],
+        historical_endpoint: str,
+        target_kind: str,
+        view: str,
+    ):
+        document = _memory_doc("start", "end", "after")
+        current_start = _live_paragraph_target(document, target_kind, "current", "start")
+        current_end = _live_paragraph_target(document, target_kind, "current", "end")
+        historical_start = _live_paragraph_target(document, target_kind, view, "start")
+        historical_end = _live_paragraph_target(document, target_kind, view, "end")
+        start = historical_start if historical_endpoint == "start" else current_start
+        end = historical_end if historical_endpoint == "end" else current_end
+
+        def mutate(doc: Document) -> BlockEditResult:
+            if operation is tracked_replace_paragraphs:
+                return operation(
+                    doc,
+                    start,
+                    ["replacement"],
+                    end_anchor=end,
+                    author="A",
+                    date=FROZEN,
+                )
+            return operation(doc, start, end_anchor=end, author="A", date=FROZEN)
+
+        refusal = assert_refusal_atomic(
+            document, mutate, UnsupportedStructureError
+        )
+
+        assert f"view='{view}'" in str(refusal)
+        assert 'view="current"' in str(refusal)
+
+
+class DescribeLegacyAnchorRefusal:
+    @pytest.mark.parametrize(
+        "operation",
+        [
+            lambda document, anchor: insert_section_after(
+                document, anchor, heading="wrong", paragraphs=[]
+            ),
+            lambda document, anchor: tracked_delete_paragraphs(
+                document, anchor, author="A"
+            ),
+            lambda document, anchor: tracked_replace_paragraphs(
+                document, anchor, ["wrong"], author="A"
+            ),
+            lambda document, anchor: insert_blocks_after(
+                document, anchor, blocks=[RichParagraph(runs=[TextRun("valid")])]
+            ),
+        ],
+    )
+    def it_refuses_generic_anchor_evidence_for_every_mutation_family(self, operation):
+        document = _memory_doc("target")
+        anchor = next(iter(iter_blocks(document))).anchor
+        before = document.element.xml
+        with pytest.raises(UnsupportedStructureError, match="inert location evidence"):
+            operation(document, anchor)
+        assert document.element.xml == before
 
 
 class DescribeInsertSectionAfter:
@@ -62,22 +363,13 @@ class DescribeInsertSectionAfter:
         ]
         assert blocks[2].style_id == "Heading2"
 
-    def it_accepts_a_block_anchor_object(self):
+    def it_accepts_a_live_block_object(self):
         document = _doc(MINIMAL)
-        anchor = outline(document).blocks[1].anchor
+        anchor = outline(document).blocks[1]
         insert_section_after(
             document, anchor, heading="Anchored Section", paragraphs=["Body."]
         )
         assert "Anchored Section" in _texts(document)
-
-    def it_refuses_a_stale_block_anchor(self):
-        document = _doc(MINIMAL)
-        anchor = outline(document).blocks[1].anchor
-        from docx.search import find_one
-
-        find_one(document, "perfectly ordinary").replace("entirely different")
-        with pytest.raises(TargetNotFoundError, match="stale"):
-            insert_section_after(document, anchor, heading="X", paragraphs=[])
 
     def it_validates_style_ids_before_mutating(self):
         document = _doc(MINIMAL)
@@ -140,7 +432,8 @@ class DescribeTrackedDeleteParagraphs:
         (deletion,) = document.element.body.xpath("//w:p/w:del")
         runs = deletion.findall(qn("w:r"))
         assert len(runs) == 8, "each original run must survive inside w:del"
-        assert deletion.xpath(".//w:delText") and not deletion.xpath(".//w:t")
+        assert deletion.xpath(".//w:delText")
+        assert not deletion.xpath(".//w:t")
         bold_runs = [r for r in runs if r.find(qn("w:rPr")) is not None
                      and r.find(qn("w:rPr")).find(qn("w:b")) is not None]
         assert len(bold_runs) == 3, "bold formatting must survive deletion markup"
@@ -232,11 +525,13 @@ class DescribeTrackedReplaceParagraphs:
             author="Carol QA",
             date=FROZEN,
         )
-        assert result.deleted_blocks == 1 and result.inserted_blocks == 2
+        assert result.deleted_blocks == 1
+        assert result.inserted_blocks == 2
         assert len(result.revision_ids) == 3
         reopened = save_and_reopen(document, tmp_path / "out.docx")
         texts = _texts(reopened)
-        assert "Replacement one." in texts and "Replacement two." in texts
+        assert "Replacement one." in texts
+        assert "Replacement two." in texts
 
     def it_keeps_the_changed_part_budget(self, tmp_path: Path):
         source = fixture_path(MINIMAL)
