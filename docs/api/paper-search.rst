@@ -74,10 +74,10 @@ Choose a replacement policy
 Ordinary replacement is preservation-safe by default. It considers every exact
 prefix/suffix split that preserves the maximal number of characters, then
 changes a residual interval only when all maximal alignments agree on that
-interval and one writable formatting/inline-ancestry destination. One changed
-text node supplies local evidence; multiple changed nodes must have identical
-complete run-property XML and full inline ancestry. A positional marker or
-non-text run node cannot sit inside the changed interval.
+interval. A nonempty residual inherits the complete direct formatting of its
+starting text run. All changed text must remain within one concrete inline
+wrapper chain. A positional marker or non-text run node cannot sit inside the
+changed interval.
 
 .. list-table::
    :header-rows: 1
@@ -89,14 +89,16 @@ non-text run node cannot sit inside the changed interval.
    * - Ordinary untracked edit
      - ``span.replace(text)``
      - Preserves exact unchanged affixes only when maximal alignment identifies
-       one changed interval and one formatting/inline-ancestry destination.
-       Ambiguous, mixed, scope-crossing, or marker-crossing intent refuses.
+       one changed interval. Replacement text takes the starting run's direct
+       formatting. Ambiguous alignment, wrapper-owner crossings, or marker
+       crossings refuse.
    * - Author a new redline
      - ``span.replace(text, tracked=True, author=...)``
      - Uses the same unique maximal affix localization, then emits a minimal
-       ``w:del``/``w:ins`` pair only when inserted text has one complete
-       formatting/inline-ancestry destination. A direct tracked no-op is
-       refused and a successful change consumes the span.
+       ``w:del``/``w:ins`` pair. Inserted text takes the changed interval's
+       starting run properties; deleted pieces retain their source properties.
+       A direct tracked no-op is refused and a successful change consumes the
+       span.
    * - Correct one existing insertion
      - ``span.replace(text, preserve_revision=True)``
      - For a current-view span wholly owned by one ``w:ins``, keeps that
@@ -128,17 +130,19 @@ ancestry agree; otherwise the operation refuses with guidance to re-find and
 replace only the intended exact substring. This private narrowing is an
 optimization, not a text selector or proof of author intent.
 
-A changed interval inside one text node keeps that node's complete formatting.
-When it spans multiple text nodes, their complete canonical ``w:rPr`` and full
-inline ancestry must agree. This comparison includes generic wrappers such as
-hyperlinks, revisions, controls, smart tags, ``customXml``, and directional
-containers; it does not infer equivalence from a partial effective-format model.
-For tracked edits that insert text, this proof determines the one run-property
-and ancestry outcome for the new ``w:ins``. A deletion-only tracked edit needs
-unique localization but may cross differently formatted source runs because
-each ``w:del/w:r`` retains its own complete source properties. When the proof
-is ambiguous, target a smaller uniform substring or construct the intended
-formatting and structure explicitly.
+A nonempty replacement takes the complete direct ``w:rPr`` of the text run
+where the uniquely localized changed interval starts. Later consumed runs may
+have different direct formatting; their changed text intentionally collapses
+into that starting format. Unchanged affixes and untouched boundary fragments
+remain in their original runs. Tracked deletion markup retains each source
+run's own properties, while inserted markup uses the same start-run rule.
+
+Formatting differences alone do not authorize moving text between wrapper
+objects. A changed interval spanning distinct hyperlinks, revisions, controls,
+smart tags, ``customXml`` elements, or other inline wrapper owners refuses even
+when their serialized XML is identical. Pure insertions at a boundary also
+refuse unless both sides prove the same complete formatting and concrete
+wrapper destination.
 
 Exact topology means structural preservation, not preservation of inferred
 formatting intent. Replacement text fills each selected text-node slice from
@@ -152,10 +156,22 @@ no longer describe the same text. A no-op still runs the full preflight and
 reports preservation evidence, but changes nothing and leaves the span
 reusable.
 
-|ReplaceResult| sets ``preserved_formatting_regions`` for a successful ordinary
-untracked replacement. For a no-op, it records that no formatting changed; a
-no-op is not a formatting probe and leaves the span reusable. Tracked edits and
-empty-cell creation report false. The flag is
+For example, if ``Alpha`` consists of bold ``Al`` followed by italic ``pha``,
+replacing the whole word with ``Omega`` produces bold ``Omega`` because the
+changed interval starts in the bold run. Starting the same match in the italic
+run instead produces italic replacement text.
+
+Ordinary replacement never distributes new text according to prior text-node
+lengths. Existing field,
+content-control, hyperlink, revision, protection, bookmark, and paragraph-
+boundary guards still apply. Required ``xml:space`` updates and placeholder
+cleanup are part of a successful ordinary edit.
+
+|ReplaceResult| sets ``preserved_formatting_regions`` only when a successful
+ordinary untracked replacement did not collapse differently formatted changed
+runs into the starting run. For a no-op, it records that no formatting changed;
+a no-op is not a formatting probe and leaves the span reusable. Tracked edits
+and empty-cell creation report false. The flag is
 orthogonal to ``preserved_revision_ids``: an authorized correction inside one
 existing insertion reports both the preserved insertion ID and formatting-
 region evidence. ``preserved_structure`` remains separate, and
@@ -173,10 +189,10 @@ does not return or expose the private spans it uses for each match. Because a
 no-op has no text assignments, it does not apply a hypothetical mutation's
 bookmark-hollowing or changed-region checks.
 
-When a replacement refuses because the changed interval is mixed or crosses a
-marker, target a smaller span wholly inside one formatting/structural region.
-Markers and differently formatted text wholly contained in exact unchanged
-affixes remain in their original elements and order.
+When a replacement refuses because the changed interval crosses wrapper owners
+or a marker, target a smaller span wholly inside one structural region. Markers
+and differently formatted text wholly contained in exact unchanged affixes
+remain in their original elements and order.
 
 The direct and batch ``to_dict()`` payloads use schema version 2 and retain
 their earlier keys while adding ``preserved_formatting_regions``.

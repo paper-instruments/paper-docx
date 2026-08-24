@@ -10,6 +10,7 @@ from __future__ import annotations
 import datetime as dt
 import shutil
 from pathlib import Path
+from typing import Any, cast
 
 import pytest
 from lxml import etree
@@ -363,14 +364,17 @@ class DescribePlainReplace:
         bold_text = "".join(r.text for r in paragraph.runs if r.bold)
         assert bold_text.startswith("$85")
 
-    def it_survives_a_bold_to_italic_formatting_transition(self, tmp_path: Path):
+    def it_inherits_the_start_run_across_a_bold_to_italic_transition(self, tmp_path: Path):
         document = _doc(FRAGMENTED)
         span = find_one(document, "100/hr on a “full-")
-        assert_refusal_atomic(
-            document,
-            lambda _document: span.replace("90/hr on any “full-"),
-            UnsupportedStructureError,
+        result = span.replace("90/hr on any “full-")
+
+        assert not result.preserved_formatting_regions
+        reopened = save_and_reopen(document, tmp_path / "start-run-inheritance.docx")
+        assert any(
+            run.bold and "90/hr on any " in run.text for run in reopened.paragraphs[0].runs
         )
+        assert any(run.italic and "“full-" in run.text for run in reopened.paragraphs[0].runs)
 
     def it_restores_text_and_formatting_when_inverting_a_uniform_span(
         self, tmp_path: Path
@@ -393,14 +397,58 @@ class DescribePlainReplace:
         bold_text = "".join(r.text for r in paragraph.runs if r.bold)
         assert bold_text == "$75–100/hr"
 
-    def it_refuses_mixed_spans_instead_of_adopting_the_start_run(self):
+    def it_replaces_a_mixed_span_using_the_start_run_formatting(self):
         document = _doc(FRAGMENTED)
         span = find_one(document, RATE_TEXT)
-        assert_refusal_atomic(
-            document,
-            lambda _document: span.replace("something else entirely"),
-            UnsupportedStructureError,
+        result = span.replace("something else entirely")
+
+        assert not result.preserved_formatting_regions
+        assert any(
+            run.bold and run.text == "something else entirely"
+            for run in document.paragraphs[0].runs
         )
+
+    def it_inherits_italic_when_the_changed_interval_starts_in_italics(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Al").italic = True
+        paragraph.add_run("pha").bold = True
+
+        result = find_one(document, "Alpha").replace("Omega")
+
+        assert not result.preserved_formatting_regions
+        assert paragraph.text == "Omega"
+        assert any(run.italic and run.text == "Omega" for run in paragraph.runs)
+        assert not any(run.bold and run.text for run in paragraph.runs)
+
+    def it_preserves_an_unchanged_prefix_before_start_run_inheritance(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("PRE").underline = True
+        paragraph.add_run("Al").bold = True
+        paragraph.add_run("pha").italic = True
+
+        result = find_one(document, "PREAlpha").replace("PREOmega")
+
+        assert not result.preserved_formatting_regions
+        assert paragraph.text == "PREOmega"
+        assert any(run.underline and run.text == "PRE" for run in paragraph.runs)
+        assert any(run.bold and run.text == "Omega" for run in paragraph.runs)
+        assert not any(run.italic and run.text for run in paragraph.runs)
+
+    def it_leaves_later_suffix_runs_untouched_when_inheriting_from_the_start_run(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("Al").bold = True
+        paragraph.add_run("pha").italic = True
+        paragraph.add_run(" END").underline = True
+
+        result = find_one(document, "Alpha END").replace("Omega END")
+
+        assert not result.preserved_formatting_regions
+        assert paragraph.text == "Omega END"
+        assert any(run.bold and run.text == "Omega" for run in paragraph.runs)
+        assert any(run.underline and run.text == " END" for run in paragraph.runs)
 
     def it_preserves_exact_affixes_in_their_own_formatting_regions(
         self, tmp_path: Path
@@ -532,25 +580,31 @@ class DescribePlainReplace:
 
         assert "bookmark 'target'" in str(refusal)
 
-    def it_allows_equivalent_distinct_inline_wrappers(self):
+    def it_refuses_replacement_across_equivalent_but_distinct_inline_wrappers(self):
         document = docx.Document()
         paragraph = document.add_paragraph()
         paragraph._p.append(  # pyright: ignore[reportPrivateUsage]
             parse_xml(
                 f'<w:smartTag {W} w:uri="urn:test" w:element="same">'
-                '<w:r><w:t>A</w:t></w:r></w:smartTag>'
+                "<w:r><w:t>A</w:t></w:r></w:smartTag>"
             )
         )
         paragraph._p.append(  # pyright: ignore[reportPrivateUsage]
             parse_xml(
                 f'<w:smartTag {W} w:uri="urn:test" w:element="same">'
-                '<w:r><w:t>B</w:t></w:r></w:smartTag>'
+                "<w:r><w:t>B</w:t></w:r></w:smartTag>"
             )
         )
 
-        find_one(document, "AB").replace("AXB")
+        span = find_one(document, "AB")
 
-        assert find_one(document, "AXB").text == "AXB"
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("XY"),
+            UnsupportedStructureError,
+        )
+
+        assert "separate inline wrapper owners" in str(refusal)
 
     def it_replaces_equivalent_fragmented_runs_and_consumes_the_span(
         self, tmp_path: Path
@@ -601,7 +655,28 @@ class DescribePlainReplace:
         assert element.text == " edged "
         assert element.get(qn("xml:space")) == "preserve"
 
-    def it_refuses_different_complete_run_properties_even_when_values_agree(self):
+    def it_clears_placeholder_state_after_an_ordinary_replacement(self):
+        document = docx.Document()
+        body = cast(Any, document.element).body
+        body.insert(
+            0,
+            parse_xml(
+                f'<w:p {W}><w:sdt><w:sdtPr><w:showingPlcHdr/></w:sdtPr>'
+                '<w:sdtContent><w:r><w:rPr>'
+                '<w:rStyle w:val="PlaceholderText"/></w:rPr>'
+                '<w:t>Click or tap here to enter text.</w:t>'
+                '</w:r></w:sdtContent></w:sdt></w:p>'
+            ),
+        )
+
+        find_one(document, "Click or tap here to enter text.").replace("Filled")
+
+        assert not body.xpath("//w:sdtPr/w:showingPlcHdr")
+        assert not body.xpath('//w:rStyle[@w:val="PlaceholderText"]')
+
+    def it_reports_start_run_inheritance_for_lexically_different_run_properties(
+        self,
+    ):
         document = docx.Document()
         paragraph = document.add_paragraph()
         first = paragraph.add_run("alpha")
@@ -611,11 +686,11 @@ class DescribePlainReplace:
         second._r.get_or_add_rPr().find(qn("w:b")).set(qn("w:val"), "1")
         span = find_one(document, "alphabeta")
 
-        assert_refusal_atomic(
-            document,
-            lambda _document: span.replace("changed"),
-            UnsupportedStructureError,
-        )
+        result = span.replace("changed")
+
+        assert not result.preserved_formatting_regions
+        assert paragraph.text == "changed"
+        assert paragraph.runs[0].bold
 
     def it_accepts_single_node_complete_run_formatting(self, tmp_path: Path):
         document = docx.Document()
@@ -650,26 +725,22 @@ class DescribePlainReplace:
             'w:r/w:rPr/w:shd[@w:fill="FFFF00"]'
         )
 
-    def it_refuses_distinct_effective_character_styles(self):
+    def it_inherits_the_starting_character_style(self):
         document = docx.Document()
-        first_style = document.styles.add_style(
-            "Replacement First", WD_STYLE_TYPE.CHARACTER
-        )
+        first_style = document.styles.add_style("Replacement First", WD_STYLE_TYPE.CHARACTER)
         first_style.font.bold = True
-        second_style = document.styles.add_style(
-            "Replacement Second", WD_STYLE_TYPE.CHARACTER
-        )
+        second_style = document.styles.add_style("Replacement Second", WD_STYLE_TYPE.CHARACTER)
         second_style.font.italic = True
         paragraph = document.add_paragraph()
         paragraph.add_run("alpha", style=first_style)
         paragraph.add_run("beta", style=second_style)
         span = find_one(document, "alphabeta")
 
-        assert_refusal_atomic(
-            document,
-            lambda _document: span.replace("changed"),
-            UnsupportedStructureError,
-        )
+        result = span.replace("changed")
+
+        assert not result.preserved_formatting_regions
+        assert paragraph.text == "changed"
+        assert paragraph.runs[0].style.name == "Replacement First"
 
     def it_refuses_a_positional_marker_inside_the_changed_interval(self):
         document = docx.Document()
@@ -1081,6 +1152,31 @@ class DescribeReplaceRefusals:
 
 
 class DescribeTrackedReplace:
+    def it_rolls_back_a_late_direct_tracked_failure_and_keeps_the_span_reusable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        from docx.oxml.revision import CT_RunTrackChange
+
+        document = docx.Document()
+        paragraph = document.add_paragraph("Alpha")
+        span = find_one(document, "Alpha")
+        before = document.element.xml  # pyright: ignore[reportUnknownMemberType]
+
+        def fail_revision_creation(*_args, **_kwargs):
+            raise RuntimeError("injected revision creation failure")
+
+        monkeypatch.setattr(
+            CT_RunTrackChange,
+            "new",
+            staticmethod(fail_revision_creation),
+        )
+        with pytest.raises(RuntimeError, match="injected revision"):
+            span.replace("Zulu", tracked=True, author="Carol QA", date=FROZEN)
+
+        assert document.element.xml == before  # pyright: ignore[reportUnknownMemberType]
+        assert paragraph.text == "Alpha"
+        assert span.replace("Zulu").inserted_text == "Zulu"
+
     def it_refuses_repeated_affix_ambiguity_atomically(self):
         document = docx.Document()
         paragraph = document.add_paragraph()
@@ -1103,28 +1199,51 @@ class DescribeTrackedReplace:
         )
         assert span.replace("TermTerm!").tracked is False
 
-    def it_refuses_competing_tracked_formatting_atomically(self):
+    def it_tracks_mixed_formatting_with_the_start_run_properties(self):
         document = docx.Document()
         paragraph = document.add_paragraph()
         paragraph.add_run("Al").bold = True
         paragraph.add_run("pha").italic = True
         span = find_one(document, "Alpha")
 
-        refusal = assert_refusal_atomic(
-            document,
-            lambda _document: span.replace(
-                "Omega", tracked=True, author="Carol QA", date=FROZEN
-            ),
-            UnsupportedStructureError,
+        result = span.replace("Omega", tracked=True, author="Carol QA", date=FROZEN)
+
+        assert result.deleted_text == "Alpha"
+        assert result.inserted_text == "Omega"
+        (inserted_rpr,) = paragraph._p.xpath("w:ins/w:r/w:rPr")  # pyright: ignore[reportPrivateUsage]
+        assert inserted_rpr.find(qn("w:b")) is not None
+        assert inserted_rpr.find(qn("w:i")) is None
+        document.revisions.accept_all()
+        assert paragraph.text == "Omega"
+
+    def it_tracks_mixed_formatting_without_collapsing_prefix_or_suffix_runs(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()
+        paragraph.add_run("KEEP").underline = True
+        paragraph.add_run(" PRE").underline = True
+        paragraph.add_run("Al").bold = True
+        paragraph.add_run("pha").italic = True
+        paragraph.add_run(" END").font.small_caps = True
+
+        result = find_one(document, "KEEP PREAlpha END").replace(
+            "KEEP PREOmega END",
+            tracked=True,
+            author="Carol QA",
+            date=FROZEN,
         )
 
-        assert "formatting or structural regions" in str(refusal)
-        assert "smaller span" in str(refusal)
-        assert "explicitly" in str(refusal)
-        assert not paragraph._p.xpath(  # pyright: ignore[reportPrivateUsage]
-            ".//w:ins | .//w:del"
-        )
-        assert span.replace("Alpha!").tracked is False
+        assert result.deleted_text == "Alpha"
+        assert result.inserted_text == "Omega"
+        assert paragraph.runs[0].text == "KEEP"
+        assert paragraph.runs[0].underline
+        assert paragraph.runs[1].text == " PRE"
+        assert paragraph.runs[1].underline
+        assert paragraph.runs[-1].text == " END"
+        assert paragraph.runs[-1].font.small_caps
+        document.revisions.accept_all()
+        assert paragraph.text == "KEEP PREOmega END"
+        assert any(run.bold and run.text == "Omega" for run in paragraph.runs)
+        assert paragraph.runs[-1].font.small_caps
 
     def it_tracks_a_uniform_fragmented_change_and_round_trips(self, tmp_path: Path):
         document = docx.Document()
@@ -1219,6 +1338,52 @@ class DescribeTrackedReplace:
         assert rejected.paragraphs[0].text == "xAlphay"
         assert any(run.bold and "Al" in run.text for run in rejected.paragraphs[0].runs)
         assert any(run.italic and "pha" in run.text for run in rejected.paragraphs[0].runs)
+
+    def it_deletes_mixed_formatting_inside_one_wrapper_without_moving_ownership(
+        self, tmp_path: Path
+    ):
+        document = docx.Document()
+        paragraph = parse_xml(
+            f'<w:p {W}><w:customXml w:uri="urn:paper" w:element="owner">'
+            "<w:r><w:rPr><w:b/></w:rPr><w:t>Al</w:t></w:r>"
+            "<w:r><w:rPr><w:i/></w:rPr><w:t>pha</w:t></w:r>"
+            "</w:customXml></w:p>"
+        )
+        document.element.body.insert(0, paragraph)  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+
+        find_one(document, "Alpha").replace("", tracked=True, author="Carol QA", date=FROZEN)
+        path = tmp_path / "same-wrapper-delete.docx"
+        document.save(path)
+        rejected = docx.Document(path)
+        rejected.revisions.reject_all()
+
+        (wrapper,) = rejected.element.body.xpath("//w:customXml")  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+        assert "".join(element.text or "" for element in wrapper.iter(qn("w:t"))) == "Alpha"
+        assert not rejected.element.body.xpath("//w:customXml[not(@w:element='owner')]//w:t")  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+
+    def it_refuses_a_tracked_deletion_across_separate_identical_wrappers(self):
+        document = docx.Document()
+        paragraph = parse_xml(
+            f"<w:p {W}>"
+            '<w:customXml w:uri="urn:paper" w:element="same">'
+            "<w:r><w:rPr><w:b/></w:rPr><w:t>Al</w:t></w:r>"
+            "</w:customXml>"
+            '<w:customXml w:uri="urn:paper" w:element="same">'
+            "<w:r><w:rPr><w:i/></w:rPr><w:t>pha</w:t></w:r>"
+            "</w:customXml>"
+            "</w:p>"
+        )
+        document.element.body.insert(0, paragraph)  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+        span = find_one(document, "Alpha")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda _document: span.replace("", tracked=True, author="Carol QA", date=FROZEN),
+            UnsupportedStructureError,
+        )
+
+        assert "separate inline wrapper owners" in str(refusal)
+        assert span.replace("Alpha!").inserted_text == "Alpha!"
 
     def it_inserts_only_at_a_proved_tracked_destination(self):
         inside = docx.Document()
@@ -1350,34 +1515,54 @@ class DescribeTrackedReplace:
     def it_proves_complete_tracked_destination_evidence(self):
         compatible = docx.Document()
         compatible_paragraph = parse_xml(
-            f'<w:p {W}>'
+            f"<w:p {W}>"
             '<w:customXml w:uri="urn:paper" w:element="same">'
-            '<w:r><w:rPr><w:smallCaps/></w:rPr><w:t>A</w:t></w:r>'
-            '</w:customXml>'
-            '<w:customXml w:uri="urn:paper" w:element="same">'
-            '<w:r><w:rPr><w:smallCaps/></w:rPr><w:t>B</w:t></w:r>'
-            '</w:customXml>'
-            '</w:p>'
+            "<w:r><w:rPr><w:smallCaps/></w:rPr><w:t>A</w:t></w:r>"
+            "<w:r><w:rPr><w:smallCaps/></w:rPr><w:t>B</w:t></w:r>"
+            "</w:customXml>"
+            "</w:p>"
         )
         compatible.element.body.insert(  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
             0, compatible_paragraph
         )
-        find_one(compatible, "AB").replace(
-            "AXB", tracked=True, author="Carol QA", date=FROZEN
-        )
+        find_one(compatible, "AB").replace("AXB", tracked=True, author="Carol QA", date=FROZEN)
         compatible.revisions.accept_all()
         assert [block.text for block in iter_blocks(compatible)] == ["AXB"]
+
+        identical_separate_ancestry = docx.Document()
+        identical_separate_ancestry.element.body.insert(  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
+            0,
+            parse_xml(
+                f"<w:p {W}>"
+                '<w:customXml w:uri="urn:paper" w:element="same">'
+                "<w:r><w:rPr><w:smallCaps/></w:rPr><w:t>A</w:t></w:r>"
+                "</w:customXml>"
+                '<w:customXml w:uri="urn:paper" w:element="same">'
+                "<w:r><w:rPr><w:smallCaps/></w:rPr><w:t>B</w:t></w:r>"
+                "</w:customXml>"
+                "</w:p>"
+            ),
+        )
+        identical_span = find_one(identical_separate_ancestry, "AB")
+        identical_refusal = assert_refusal_atomic(
+            identical_separate_ancestry,
+            lambda _document: identical_span.replace(
+                "AXB", tracked=True, author="Carol QA", date=FROZEN
+            ),
+            UnsupportedStructureError,
+        )
+        assert "competing formatting or structural destinations" in str(identical_refusal)
 
         different_ancestry = docx.Document()
         different_ancestry.element.body.insert(  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
             0,
             parse_xml(
-                f'<w:p {W}>'
+                f"<w:p {W}>"
                 '<w:customXml w:uri="urn:paper" w:element="left">'
-                '<w:r><w:t>A</w:t></w:r></w:customXml>'
+                "<w:r><w:t>A</w:t></w:r></w:customXml>"
                 '<w:customXml w:uri="urn:paper" w:element="right">'
-                '<w:r><w:t>B</w:t></w:r></w:customXml>'
-                '</w:p>'
+                "<w:r><w:t>B</w:t></w:r></w:customXml>"
+                "</w:p>"
             ),
         )
         ancestry_span = find_one(different_ancestry, "AB")
@@ -1388,26 +1573,22 @@ class DescribeTrackedReplace:
             ),
             UnsupportedStructureError,
         )
-        assert "competing formatting or structural destinations" in str(
-            ancestry_refusal
-        )
+        assert "competing formatting or structural destinations" in str(ancestry_refusal)
 
         lexical_rpr = docx.Document()
         lexical_rpr.element.body.insert(  # pyright: ignore[reportUnknownMemberType, reportAttributeAccessIssue]
             0,
             parse_xml(
-                f'<w:p {W}>'
-                '<w:r><w:rPr><w:b/></w:rPr><w:t>A</w:t></w:r>'
+                f"<w:p {W}>"
+                "<w:r><w:rPr><w:b/></w:rPr><w:t>A</w:t></w:r>"
                 '<w:r><w:rPr><w:b w:val="true"/></w:rPr><w:t>B</w:t></w:r>'
-                '</w:p>'
+                "</w:p>"
             ),
         )
         rpr_span = find_one(lexical_rpr, "AB")
         rpr_refusal = assert_refusal_atomic(
             lexical_rpr,
-            lambda _document: rpr_span.replace(
-                "AXB", tracked=True, author="Carol QA", date=FROZEN
-            ),
+            lambda _document: rpr_span.replace("AXB", tracked=True, author="Carol QA", date=FROZEN),
             UnsupportedStructureError,
         )
         assert "competing formatting or structural destinations" in str(rpr_refusal)

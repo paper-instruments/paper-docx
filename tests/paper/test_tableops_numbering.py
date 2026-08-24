@@ -249,18 +249,18 @@ class DescribeUpdateCell:
         runs = reopened.tables[0].cell(0, 0).paragraphs[0].runs
         assert "".join(run.text for run in runs if run.bold) == "updated"
 
-    def it_refuses_a_mixed_format_cell_atomically(self):
+    def it_updates_a_mixed_format_cell_using_the_start_run(self):
         document, table = _doc_with_simple_table()
         paragraph = table.cell(0, 0).paragraphs[0]
         paragraph.clear()
         paragraph.add_run("Label: ").bold = True
         paragraph.add_run("value")
 
-        assert_refusal_atomic(
-            document,
-            lambda _document: update_cell(table, 0, 0, "updated"),
-            UnsupportedStructureError,
-        )
+        result = update_cell(table, 0, 0, "updated")
+
+        assert not result.preserved_formatting_regions
+        assert paragraph.text == "updated"
+        assert paragraph.runs[0].bold
 
     def it_refuses_a_marker_divided_cell_atomically(self):
         document, table = _doc_with_simple_table()
@@ -308,26 +308,22 @@ class DescribeUpdateCell:
 
         assert "exact affix alignment is ambiguous" in str(refusal)
 
-    def it_refuses_a_character_style_divided_cell_atomically(self):
+    def it_updates_a_character_style_divided_cell_using_the_start_style(self):
         document, table = _doc_with_simple_table()
-        first_style = document.styles.add_style(
-            "Cell First", WD_STYLE_TYPE.CHARACTER
-        )
+        first_style = document.styles.add_style("Cell First", WD_STYLE_TYPE.CHARACTER)
         first_style.font.bold = True
-        second_style = document.styles.add_style(
-            "Cell Second", WD_STYLE_TYPE.CHARACTER
-        )
+        second_style = document.styles.add_style("Cell Second", WD_STYLE_TYPE.CHARACTER)
         second_style.font.italic = True
         paragraph = table.cell(0, 0).paragraphs[0]
         paragraph.clear()
         paragraph.add_run("cell ", style=first_style)
         paragraph.add_run("value", style=second_style)
 
-        assert_refusal_atomic(
-            document,
-            lambda _document: update_cell(table, 0, 0, "updated"),
-            UnsupportedStructureError,
-        )
+        result = update_cell(table, 0, 0, "updated")
+
+        assert not result.preserved_formatting_regions
+        assert paragraph.text == "updated"
+        assert paragraph.runs[0].style.name == "Cell First"
 
     def it_refuses_a_hyperlink_scope_divided_cell_atomically(self):
         document, table = _doc_with_simple_table()

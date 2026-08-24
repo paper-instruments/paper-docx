@@ -271,7 +271,7 @@ class DescribeReplaceAll:
         assert payload["results"][0]["preserved_revision_ids"] == []
         assert payload["results"][0]["preserved_formatting_regions"] is True
 
-    def it_records_mixed_region_refusals_and_continues_safe_matches(self):
+    def it_records_when_a_batch_inherits_start_run_formatting(self):
         document = _doc()
         document.add_paragraph("token")
         mixed = document.add_paragraph()
@@ -280,13 +280,15 @@ class DescribeReplaceAll:
 
         result = replace_all(document, "token", "value")
 
-        assert result.replaced_count == 1
-        assert result.results[0].preserved_formatting_regions
-        assert len(result.refused) == 1
-        assert result.refused[0]["error"] == "UnsupportedStructureError"
+        assert result.replaced_count == 2
+        assert sorted(item.preserved_formatting_regions for item in result.results) == [
+            False,
+            True,
+        ]
+        assert result.refused == ()
         assert [paragraph.text for paragraph in document.paragraphs[-2:]] == [
             "value",
-            "token",
+            "value",
         ]
 
     def it_records_ambiguous_affix_refusals_without_mutation(self):
@@ -304,7 +306,7 @@ class DescribeReplaceAll:
         assert "exact affix alignment is ambiguous" in result.refused[0]["message"]  # pyright: ignore[reportUnknownMemberType]
         assert document.element.xml == before
 
-    def it_records_tracked_formatting_refusals_and_continues_safe_matches(self):
+    def it_tracks_all_mixed_format_matches_with_start_run_inheritance(self):
         document = _doc()
         document.add_paragraph("token")
         mixed = document.add_paragraph()
@@ -320,17 +322,14 @@ class DescribeReplaceAll:
             date=FROZEN,
         )
 
-        assert result.replaced_count == 1
-        assert result.results[0].deleted_text == "token"
-        assert result.results[0].inserted_text == "value"
-        assert len(result.refused) == 1  # pyright: ignore[reportUnknownMemberType, reportUnknownArgumentType]
-        assert result.refused[0]["error"] == "UnsupportedStructureError"  # pyright: ignore[reportUnknownMemberType]
-        assert "formatting or structural regions" in result.refused[0]["message"]  # pyright: ignore[reportUnknownMemberType]
-        assert "token" in mixed.text
+        assert result.replaced_count == 2
+        assert all(item.deleted_text == "token" for item in result.results)
+        assert all(item.inserted_text == "value" for item in result.results)
+        assert result.refused == ()
         document.revisions.accept_all()
         assert [block.text for block in iter_blocks(document)][-2:] == [
             "value",
-            "token",
+            "value",
         ]
 
     def it_preserves_revision_identity_only_where_needed(self):
@@ -363,9 +362,12 @@ class DescribeReplaceAll:
         assert all(item.preserved_structure for item in result.results)
         assert "value value" in [block.text for block in iter_blocks(document)]
 
-    @pytest.mark.parametrize("preserve_structure", [False, True])
+    @pytest.mark.parametrize(
+        ("tracked", "preserve_structure"),
+        [(False, False), (True, False), (False, True)],
+    )
     def it_uses_only_the_outer_batch_transaction(
-        self, monkeypatch, preserve_structure: bool
+        self, monkeypatch, tracked: bool, preserve_structure: bool
     ):
         document = _doc()
         document.add_paragraph("token token")
@@ -379,13 +381,14 @@ class DescribeReplaceAll:
             with original(*args, **kwargs):
                 yield
 
-        monkeypatch.setattr(
-            search_module, "rollback_on_error", counted_transaction
-        )
+        monkeypatch.setattr(search_module, "rollback_on_error", counted_transaction)
         replace_all(
             document,
             "token",
             "value",
+            tracked=tracked,
+            author="Carol QA" if tracked else None,
+            date=FROZEN if tracked else None,
             preserve_structure=preserve_structure,
         )
         assert transaction_count == 1

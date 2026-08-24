@@ -372,9 +372,10 @@ class ReplaceResult:
 
     `deleted_text` and `inserted_text` cover the whole span for an untracked replace but only
     the affix-trimmed middle for a tracked one, so comparing them against `Span.text` is
-    wrong for tracked edits. `preserved_formatting_regions` reports that the ordinary planner
-    preserved formatting; for a no-op, it records that no formatting changed. It is independent
-    of revision and topology evidence.
+    wrong for tracked edits. `preserved_formatting_regions` reports whether an ordinary
+    replacement kept every changed formatting region rather than intentionally inheriting the
+    changed interval's starting run properties; for a no-op, it records that no formatting
+    changed. It is independent of revision and topology evidence.
     """
 
     story: str
@@ -464,42 +465,25 @@ def _refuse_ambiguous_insertion_destination() -> None:
     )
 
 
-def _canonical_inline_shell(element: "_Element", path_child: "_Element") -> bytes:
-    """Canonical wrapper XML with its selected content branch replaced."""
-    import copy
-
-    from lxml import etree
-
-    child_index = next(index for index, child in enumerate(element) if child is path_child)
-    clone = copy.deepcopy(element)
-    clone.remove(clone[child_index])
-    clone.insert(child_index, etree.Element("{urn:paper-docx:selection}path"))
-    return etree.tostring(clone, method="c14n")
-
-
 def _destination_evidence(
     atom: _Atom,
-) -> "Tuple[bytes, Tuple[Tuple[_Element, bytes], ...]]":
+) -> "Tuple[bytes, Tuple[_Element, ...]]":
     """Complete run-property and inline-ancestry evidence for one text atom."""
     from lxml import etree
 
     if atom.run is None or atom.paragraph is None:
         raise UnsupportedStructureError(
-            "the changed interval is not ordinary run text; target a smaller"
-            " plain-text span"
+            "the changed interval is not ordinary run text; target a smaller plain-text span"
         )
     rpr = atom.run.find(_RPR)
-    ancestry: "List[Tuple[_Element, bytes]]" = []
-    path_child = atom.run
+    ancestry: "List[_Element]" = []
     current = atom.run.getparent()
     while current is not None and current is not atom.paragraph:
-        ancestry.append((current, _canonical_inline_shell(current, path_child)))
-        path_child = current
+        ancestry.append(current)
         current = current.getparent()
     if current is not atom.paragraph:
         raise UnsupportedStructureError(
-            "the changed interval is detached from its owning paragraph;"
-            " re-find the text"
+            "the changed interval is detached from its owning paragraph; re-find the text"
         )
     return (
         b"" if rpr is None else etree.tostring(rpr, method="c14n"),
@@ -508,20 +492,32 @@ def _destination_evidence(
 
 
 def _same_destination(
-    left: "Tuple[bytes, Tuple[Tuple[_Element, bytes], ...]]",
-    right: "Tuple[bytes, Tuple[Tuple[_Element, bytes], ...]]",
+    left: "Tuple[bytes, Tuple[_Element, ...]]",
+    right: "Tuple[bytes, Tuple[_Element, ...]]",
 ) -> bool:
     """Whether two atoms have the same complete formatting/ancestry outcome."""
-    left_rpr, left_ancestry = left
-    right_rpr, right_ancestry = right
-    if left_rpr != right_rpr or len(left_ancestry) != len(right_ancestry):
-        return False
-    return all(
-        left_element is right_element or left_shell == right_shell
-        for (left_element, left_shell), (right_element, right_shell) in zip(
-            left_ancestry, right_ancestry
-        )
+    return left[0] == right[0] and _same_inline_ancestry(left, right)
+
+
+def _same_inline_ancestry(
+    left: "Tuple[bytes, Tuple[_Element, ...]]",
+    right: "Tuple[bytes, Tuple[_Element, ...]]",
+) -> bool:
+    """Whether two atoms retain text in the same concrete wrapper chain."""
+    left_ancestry = left[1]
+    right_ancestry = right[1]
+    return len(left_ancestry) == len(right_ancestry) and all(
+        left_element is right_element
+        for left_element, right_element in zip(left_ancestry, right_ancestry)
     )
+
+
+def _has_multiple_direct_rpr(atoms: "Sequence[_Atom]") -> bool:
+    """Whether writable atoms carry differing complete direct run properties."""
+    if any(atom.is_synthetic for atom in atoms):
+        return False
+    starting_rpr = _destination_evidence(atoms[0])[0]
+    return any(_destination_evidence(atom)[0] != starting_rpr for atom in atoms[1:])
 
 
 def _ordinary_outcome(span: "Span", new_text: str) -> _OrdinaryOutcome:
@@ -538,6 +534,30 @@ def _ordinary_outcome(span: "Span", new_text: str) -> _OrdinaryOutcome:
     replacement = new_text[prefix_len : len(new_text) - suffix_len]
     pieces = span._in_span_pieces()
 
+    def writable_segments(start_offset: int, end_offset: int):
+        writable: "List[Tuple[int, int, int]]" = []
+        position = 0
+        for atom_index, piece in pieces:
+            piece_end = position + len(piece)
+            start = max(start_offset, position)
+            end = min(end_offset, piece_end)
+            if end > start:
+                if atom_index is None:
+                    raise BoundaryViolationError(
+                        "the changed interval crosses a paragraph boundary;"
+                        " replace one paragraph at a time"
+                    )
+                base = span._start_offset if atom_index == 0 else 0
+                writable.append((atom_index, base + start - position, base + end - position))
+            position = piece_end
+        segments = tuple(writable)
+        if not segments:
+            raise UnsupportedStructureError(
+                "the changed interval has no writable text region; re-find and"
+                " replace only the exact substring you intend to change"
+            )
+        return segments
+
     if changed_start == changed_end:
         candidates: "List[Tuple[int, int]]" = []
         position = 0
@@ -549,9 +569,7 @@ def _ordinary_outcome(span: "Span", new_text: str) -> _OrdinaryOutcome:
                     atom_index != existing[0] for existing in candidates
                 ):
                     base = span._start_offset if atom_index == 0 else 0
-                    candidates.append(
-                        (atom_index, base + changed_start - position)
-                    )
+                    candidates.append((atom_index, base + changed_start - position))
             position = piece_end
         if not candidates:
             raise UnsupportedStructureError(
@@ -572,29 +590,27 @@ def _ordinary_outcome(span: "Span", new_text: str) -> _OrdinaryOutcome:
         destination_index, destination_offset = candidates[0]
         segments = ((destination_index, destination_offset, destination_offset),)
     else:
-        writable: "List[Tuple[int, int, int]]" = []
-        position = 0
-        for atom_index, piece in pieces:
-            piece_end = position + len(piece)
-            start = max(changed_start, position)
-            end = min(changed_end, piece_end)
-            if end > start:
-                if atom_index is None:
-                    raise BoundaryViolationError(
-                        "the changed interval crosses a paragraph boundary;"
-                        " replace one paragraph at a time"
-                    )
-                base = span._start_offset if atom_index == 0 else 0
-                writable.append(
-                    (atom_index, base + start - position, base + end - position)
-                )
-            position = piece_end
-        segments = tuple(writable)
-        if not segments:
-            raise UnsupportedStructureError(
-                "the changed interval has no writable text region; re-find and"
-                " replace only the exact substring you intend to change"
-            )
+        segments = writable_segments(changed_start, changed_end)
+        changed_atoms = [span._atoms[index] for index, _start, _end in segments]
+        if replacement and _has_multiple_direct_rpr(changed_atoms):
+            # A shared suffix character is not formatting intent. If the
+            # narrowed changed interval already crosses direct run-property
+            # regions, consume the remaining selected fragment of its final
+            # changed run rather than leaving a misleading fragment (for
+            # example bold "Omeg" + italic "a"). Later suffix runs remain
+            # untouched in their original formatting.
+            final_atom_index = segments[-1][0]
+            position = 0
+            for atom_index, piece in pieces:
+                piece_end = position + len(piece)
+                if atom_index == final_atom_index:
+                    changed_end = piece_end
+                    break
+                position = piece_end
+            suffix_to_keep = len(old_text) - changed_end
+            replacement_end = len(new_text) - suffix_to_keep
+            replacement = new_text[prefix_len:replacement_end]
+            segments = writable_segments(changed_start, changed_end)
 
     return _OrdinaryOutcome(
         replacement=replacement,
@@ -606,11 +622,11 @@ def _ordinary_outcome(span: "Span", new_text: str) -> _OrdinaryOutcome:
 
 def _regional_text_assignments(
     span: "Span", new_text: str
-) -> "Tuple[_TextAssignment, ...]":
-    """Preflight one materially uniform ordinary replacement region."""
+) -> "Tuple[Tuple[_TextAssignment, ...], bool]":
+    """Preflight one owner-safe replacement and report formatting preservation."""
     old_text = span.text
     if old_text == new_text:
-        return ()
+        return (), True
     outcome = _ordinary_outcome(span, new_text)
     changed_atoms = [span._atoms[index] for index, _start, _end in outcome.segments]
     if any(atom.is_synthetic for atom in changed_atoms):
@@ -619,7 +635,11 @@ def _regional_text_assignments(
             " hyphen, or other non-text run content; replace the text"
             " segments on either side individually"
         )
-    _validate_one_formatting_region(changed_atoms)
+    _validate_one_inline_ancestry(changed_atoms)
+    evidence = [_destination_evidence(atom) for atom in changed_atoms]
+    preserved_formatting_regions = all(
+        _same_destination(evidence[0], item) for item in evidence[1:]
+    )
 
     assignments: "List[_TextAssignment]" = []
     for segment_index, (atom_index, start, end) in enumerate(outcome.segments):
@@ -644,20 +664,26 @@ def _regional_text_assignments(
         )
     planned = tuple(assignments)
     _refuse_hollowed_bookmarks(
-        _hollowed_bookmarks_after(planned, span._atoms)
+        _hollowed_bookmarks_after(
+            planned,
+            span._atoms,
+            census=(
+                span._freshness_census.bookmarks if span._freshness_census is not None else None
+            ),
+        )
     )
     _refuse_intervening_positional_nodes(changed_atoms)
-    return planned
+    return planned, preserved_formatting_regions
 
 
-def _validate_one_formatting_region(atoms: "Sequence[_Atom]") -> None:
-    """Fragmented edits require complete formatting and ancestry equality."""
+def _validate_one_inline_ancestry(atoms: "Sequence[_Atom]") -> None:
+    """A replacement must not move text between separate wrapper owners."""
     evidence = [_destination_evidence(atom) for atom in atoms]
-    if any(not _same_destination(evidence[0], item) for item in evidence[1:]):
+    if any(not _same_inline_ancestry(evidence[0], item) for item in evidence[1:]):
         raise UnsupportedStructureError(
-            "the changed interval crosses formatting or structural regions;"
-            " target and replace a smaller span within one uniform region,"
-            " or construct the intended formatting and structure explicitly"
+            "the changed interval crosses separate inline wrapper owners;"
+            " target and replace a smaller span within one wrapper, or edit"
+            " each wrapper separately"
         )
 
 
@@ -955,9 +981,7 @@ class Span:
                     atom = self._atoms[atom_index]
                     if not atom.is_synthetic:
                         base = self._start_offset if atom_index == 0 else 0
-                        candidates.append(
-                            (atom_index, base + target_start - position)
-                        )
+                        candidates.append((atom_index, base + target_start - position))
                 position = piece_end
             if not candidates:
                 return None
@@ -981,16 +1005,33 @@ class Span:
                     if atom_index is None and end_idx is None:
                         return None  # change ends on a paragraph separator
                     end_idx = atom_index if atom_index is not None else end_idx
-                    end_off = (
-                        base + (target_end - position)
-                        if atom_index is not None
-                        else end_off
-                    )
+                    end_off = base + (target_end - position) if atom_index is not None else end_off
                     break
                 position += length
             if start_idx is None or end_idx is None:
                 return None
         sub_atoms = self._atoms[start_idx : end_idx + 1]
+        if changed_new and changed_old and _has_multiple_direct_rpr(sub_atoms):
+            # Keep retained prefix atoms outside the tracked edit. Expand only
+            # through the selected fragment of the final changed atom so the
+            # ordinary planner can apply match-start formatting without
+            # collapsing later suffix runs.
+            expanded_end = 0
+            for atom_index, text in self._in_span_pieces():
+                expanded_end += len(text)
+                if atom_index == end_idx:
+                    break
+            suffix_to_keep = len(old) - expanded_end
+            changed_old = old[prefix_len:expanded_end]
+            replacement_end = len(new_text) - suffix_to_keep
+            changed_new = new_text[prefix_len:replacement_end]
+            end_off = (
+                self._end_offset
+                if end_idx == len(self._atoms) - 1
+                else len(self._atoms[end_idx].text)
+            )
+            if prefix_len == 0 and expanded_end == len(old):
+                return None
         sub_span = Span(
             text=changed_old,
             story=self.story,
@@ -1004,9 +1045,7 @@ class Span:
             in_content_control=any(a.sdt is not None for a in sub_atoms),
             in_text_box=any(a.in_text_box for a in sub_atoms),
             in_field=any(a.in_field for a in sub_atoms),
-            crosses_paragraphs=any(
-                a.paragraph is not sub_atoms[0].paragraph for a in sub_atoms
-            ),
+            crosses_paragraphs=any(a.paragraph is not sub_atoms[0].paragraph for a in sub_atoms),
             _document=self._document,
             _atoms=list(sub_atoms),
             _start_offset=start_off,
@@ -1027,9 +1066,7 @@ class Span:
             and sequence_end is not None
             and sequence_start <= sequence_end
         ):
-            sub_span._atom_sequence = self._atom_sequence[
-                sequence_start : sequence_end + 1
-            ]
+            sub_span._atom_sequence = self._atom_sequence[sequence_start : sequence_end + 1]
         return sub_span, changed_new
 
     # -- validation -------------------------------------------------------
@@ -1233,16 +1270,14 @@ class Span:
     ) -> ReplaceResult:
         """Replace this span's text and return machine-readable change evidence.
 
-        The default is an untracked edit over one proved formatting and structural region.
+        The default is an untracked edit over one proved structural-owner region.
         When maximal exact prefix/suffix alignment identifies one changed interval, unchanged
-        affix text stays in its existing atoms. Ambiguous alignments, changed intervals spanning
-        different complete run properties or inline ancestry, semantic-scope crossings, and
-        positional-marker crossings refuse instead of adopting one run's formatting. A changed
-        interval inside one text node uses that node's formatting. `tracked=True` uses the same
-        unique localization and emits a minimal `w:del`/`w:ins` pair only when nonempty inserted
-        text has one complete formatting/inline-ancestry destination. Deletion-only tracked edits
-        retain each source run's properties. Ambiguity tells the caller to target a smaller
-        uniform substring or construct explicit formatting; it is never repaired internally.
+        affix text stays in its existing atoms. A nonempty replacement inherits the complete
+        direct run properties of the changed interval's starting text run; consumed later runs
+        may therefore collapse intentionally. Distinct inline wrapper owners, semantic-scope
+        crossings, positional-marker crossings, and ambiguous affix or pure-insertion boundaries
+        refuse. `tracked=True` uses the same unique localization and formatting inheritance;
+        tracked deletion pieces retain each source run's properties.
         A successful tracked change consumes the span; a direct tracked no-op is refused.
 
         `preserve_revision=True` explicitly permits a current-view span wholly owned by one
@@ -1305,12 +1340,12 @@ class Span:
         _validate_writable_text(new_text, argument="new_text")
         _refuse_if_protected(self._document, "replace text")
         self._validate_fresh()
-        if tracked and tracked_context is None:
-            tracked_context = _tracked_layering_context(self, author)  # type: ignore[arg-type]
-        if tracked and self.text == new_text:
-            raise TargetNotFoundError(
-                "replacement equals the existing text; nothing to change"
-            )
+        if tracked:
+            assert author is not None
+            if tracked_context is None:
+                tracked_context = _tracked_layering_context(self, author)
+            if self.text == new_text:
+                raise TargetNotFoundError("replacement equals the existing text; nothing to change")
         if not preserve_structure and (
             tracked
             or any(atom.is_synthetic for atom in self._atoms)
@@ -1368,9 +1403,7 @@ class Span:
                     self.__dict__.clear()
                     self.__dict__.update(span_state)
                     raise
-        preserved_revision_ids = _preserved_insertion_ids(
-            self, authorize=preserve_revision
-        )
+        preserved_revision_ids = _preserved_insertion_ids(self, authorize=preserve_revision)
         preservation_noop = bool(preserved_revision_ids) and new_text == self.text
         self._validate_replaceable(
             validate_bookmarks=tracked and not preserve_structure
@@ -1459,22 +1492,26 @@ class Span:
             )
         if tracked:
             assert author is not None
-            result = self._tracked_replace(
+            if use_transaction:
+                with rollback_on_error(self._document, self):
+                    return self._tracked_replace(
+                        new_text,
+                        author=author,
+                        date=date,
+                        tracked_context=tracked_context,
+                    )
+            return self._tracked_replace(
                 new_text,
                 author=author,
                 date=date,
                 tracked_context=tracked_context,
             )
-        else:
-            return self._plain_replace(
-                new_text,
-                preserved_revision_ids=preserved_revision_ids,
-                placeholder_sdts=placeholder_sdts,
-                use_transaction=use_transaction,
-            )
-        for sdt in placeholder_sdts:
-            _clear_placeholder_state(sdt)
-        return result
+        return self._plain_replace(
+            new_text,
+            preserved_revision_ids=preserved_revision_ids,
+            placeholder_sdts=placeholder_sdts,
+            use_transaction=use_transaction,
+        )
 
     def _plain_replace(
         self,
@@ -1484,7 +1521,7 @@ class Span:
         placeholder_sdts: "Sequence[_Element]" = (),
         use_transaction: bool,
     ) -> ReplaceResult:
-        assignments = _regional_text_assignments(self, new_text)
+        assignments, preserved_formatting_regions = _regional_text_assignments(self, new_text)
         result = ReplaceResult(
             story=self.story,
             deleted_text=self.text,
@@ -1492,7 +1529,7 @@ class Span:
             tracked=False,
             revision_ids=(),
             preserved_revision_ids=preserved_revision_ids,
-            preserved_formatting_regions=True,
+            preserved_formatting_regions=preserved_formatting_regions,
         )
         if not assignments:
             return result
@@ -1550,12 +1587,9 @@ class Span:
         first, last = self._atoms[0], self._atoms[-1]
         old_mid = self.text[outcome.changed_start : outcome.changed_end]
         new_mid = outcome.replacement
-        changed_atoms = [
-            self._atoms[index] for index, _start, _end in outcome.segments
-        ]
+        changed_atoms = [self._atoms[index] for index, _start, _end in outcome.segments]
         _refuse_intervening_positional_nodes(changed_atoms)
-        if new_mid:
-            _validate_one_formatting_region(changed_atoms)
+        _validate_one_inline_ancestry(changed_atoms)
         stamp = date if date is not None else _clock.now()
         next_id = _next_revision_id(self._document)
         rpr = first.run.find(_RPR) if first.run is not None else None
@@ -1568,15 +1602,12 @@ class Span:
             start = self._start_offset if i == 0 else 0
             end = self._end_offset if i == len(self._atoms) - 1 else len(atom.text)
             span_pieces.append((atom.run, atom.text[start:end]))
-        deleted_pieces = _pieces_in_range(
-            span_pieces, prefix_len, len(self.text) - suffix_len
-        )
-        # Formatting/ancestry equality above proves that any changed source
-        # atom describes the same insertion destination.
+        deleted_pieces = _pieces_in_range(span_pieces, prefix_len, len(self.text) - suffix_len)
+        # The inserted text intentionally takes the direct formatting of the
+        # first consumed source run. Separate wrapper owners were refused
+        # above; later source runs may have different direct formatting.
         ins_source_run = changed_atoms[0].run if changed_atoms else first.run
-        ins_rpr = (
-            ins_source_run.find(_RPR) if ins_source_run is not None else None
-        )
+        ins_rpr = ins_source_run.find(_RPR) if ins_source_run is not None else None
 
         # -- everything validated; mutate ---------------------------------
         before = first.text[: self._start_offset]
