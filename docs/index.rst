@@ -24,21 +24,25 @@ Selection and preservation
 --------------------------
 
 Search is exact by default across ordinary Word run fragmentation; normalized
-matching is an explicit caller choice. A live |Span| identifies selected text
-and a live |Block| identifies one attached document element. A versioned
-``BlockLocator`` carries portable exact evidence but may become stale or
-ambiguous after edits. Generic |Anchor| values remain location evidence rather
-than mutation authority. Authoritative ``near`` selection requires one unique
-nearest candidate and cannot be combined with ``nth``. See
+matching is an explicit caller choice. ``find_text(..., near=...)`` orders the
+complete candidate set for inspection; ``find_one()`` keeps ordinary
+zero/one/many resolution and has no contextual-ranking keyword. A live |Span|
+identifies selected text and a live |Block| identifies one attached document
+element. Serialized |Anchor| values remain inert location evidence; reacquire a
+live target after reload. One-paragraph operations refuse cross-paragraph
+targets. See
 :ref:`docx.search <paper_search_api>`, :ref:`docx.story <paper_story_api>`, and
 :ref:`docx.blocks <paper_blocks_api>`.
 
 Ordinary untracked replacement preserves exact unchanged affixes and edits only
 one proved formatting and structural region; otherwise it refuses before
-mutation. Exact-topology replacement changes only already selected text-node
-values and never allocates new text by previous character counts. Formatting
-inspection follows the selected span, while a block or locator provides only
-paragraph-level evidence. See :ref:`docx.search <paper_search_api>`,
+mutation. Every successful text-changing direct ``Span.replace()`` consumes
+that span; callers re-find before another operation. Direct no-ops and
+atomically refused or rolled-back operations leave the supplied span reusable.
+There is no separate topology-preservation mode or character-capacity
+allocator. Formatting inspection composes explicit search with
+``format_of(span)``, or accepts a run or paragraph directly. See
+:ref:`docx.search <paper_search_api>`,
 :ref:`docx.formatting <paper_formatting_api>`, and
 :ref:`docx.revision <paper_revisions_api>` for the detailed contracts.
 

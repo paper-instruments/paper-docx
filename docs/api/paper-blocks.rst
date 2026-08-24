@@ -11,9 +11,11 @@ that stamps paragraph marks so Word accepts or rejects them exactly.
 ``insert_blocks_after`` takes typed |RichParagraph|/|ListBlock|/|TableBlock|
 blocks.
 
-Targets may be an exact string, a live |Span|, or a live |Block|. Live blocks
-validate document ownership and exact element attachment. Tables remain
-blocks but are not paragraph anchors, so live table blocks raise
+Targets may be an exact string, a live |Span|, or an owner-bound live
+paragraph |Block|. Live blocks validate document ownership and exact element
+attachment, including story and containing-structure checks. They survive
+index shifts, but a detached, replaced, reparented, or foreign element refuses.
+Tables remain blocks but are not paragraph anchors, so live table blocks raise
 |UnsupportedStructureError|.
 
 Live block and span mutation targets must be captured from ``view="current"``.
@@ -30,8 +32,9 @@ pass an explicit live block endpoint.
 
 Legacy |Anchor| values are inert location evidence and are refused with
 migration guidance. Reacquire a live block with ``iter_blocks()``/``outline()``,
-or pass an exact string or live span. Do not use an old index/hash payload as a
-mutation target.
+or pass an exact string or live span after reloading a document. No serialized
+block locator or persistence scheme is part of this API; an old index/hash
+payload cannot authorize mutation.
 
 .. currentmodule:: docx.blocks
 
