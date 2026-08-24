@@ -71,12 +71,13 @@ before the document is searched. To use contextual ranking for inspection:
 Choose a replacement policy
 ---------------------------
 
-Ordinary replacement is preservation-safe by default. It first leaves the
-longest exact unchanged prefix and suffix in their existing text atoms, then
-changes only the residual interval. That interval must be one materially
-uniform formatting and structural region. Complete run-property XML, resolved
-effective values and provenance, and live semantic scopes must agree; a
-positional marker or non-text run node cannot sit inside the changed interval.
+Ordinary replacement is preservation-safe by default. It considers every exact
+prefix/suffix split that preserves the maximal number of characters, then
+changes a residual interval only when all maximal alignments agree on that
+interval and one writable formatting/inline-ancestry destination. One changed
+text node supplies local evidence; multiple changed nodes must have identical
+complete run-property XML and full inline ancestry. A positional marker or
+non-text run node cannot sit inside the changed interval.
 
 .. list-table::
    :header-rows: 1
