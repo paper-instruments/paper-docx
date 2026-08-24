@@ -73,6 +73,18 @@ inspection, but composition raises |BoundaryViolationError| instead of
 inferring its first or last block. Select exact text inside one paragraph, or
 pass an explicit live block for each endpoint.
 
+Source endpoints are read-only evidence and may be live blocks or spans from
+any supported inspection view. A live destination authorizes mutation only
+when it was captured from ``view="current"``; reacquire a historical target
+from the current view rather than relying on matching text or position.
+
+Composition also refuses when insertion after the complete destination block
+would remain inside an open complex-field result. This applies equally to a
+paragraph destination and to the final table or block content control chosen
+by ``append_document()``. Choose a current-view paragraph after the matching
+field end, or deliberately close or unlink the field before retrying. The
+package does not move the insertion point or repair field markers implicitly.
+
 .. currentmodule:: docx.composition
 
 

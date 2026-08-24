@@ -3,10 +3,12 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 import docx
+import docx.composition as composition_module
 from docx.blocks import insert_section_after
 from docx.bookmarks import (
     _NAME_RE,
@@ -21,7 +23,7 @@ from docx.enum.style import WD_STYLE_TYPE
 from docx.errors import BoundaryViolationError, UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.oxml.parser import OxmlElement
-from docx.search import find_one
+from docx.search import Span, find_one
 from docx.story import iter_blocks
 
 from .harness.contract import save_and_reopen
@@ -30,8 +32,8 @@ _SECT_PR = qn("w:sectPr")
 _SDT = qn("w:sdt")
 
 
-def _package_state(document) -> tuple:
-    parts = []
+def _package_state(document: Any) -> tuple[Any, ...]:
+    parts: list[Any] = []
     for part in document.part.package.iter_parts():
         relationships = tuple(
             sorted(
@@ -130,6 +132,45 @@ def _top_level_control(
     return control
 
 
+def _append_field_char(paragraph: Any, kind: str) -> None:
+    run = OxmlElement("w:r")
+    marker = OxmlElement("w:fldChar")
+    marker.set(qn("w:fldCharType"), kind)
+    run.append(marker)
+    paragraph.append(run)
+
+
+def _field_boundary_destination(kind: str, *, closed: bool):
+    document = docx.Document()
+    _clear_body(document)
+    if kind == "paragraph":
+        paragraph = document.add_paragraph()
+        _append_field_char(paragraph._p, "begin")  # pyright: ignore[reportPrivateUsage]
+        paragraph.add_run("Destination anchor")
+        if closed:
+            _append_field_char(paragraph._p, "end")  # pyright: ignore[reportPrivateUsage]
+        return document
+
+    opener = document.add_paragraph()
+    _append_field_char(opener._p, "begin")  # pyright: ignore[reportPrivateUsage]
+    if kind == "table":
+        table = document.add_table(rows=1, cols=1)
+        table.cell(0, 0).text = "Destination table"
+        if closed:
+            _append_field_char(
+                table.cell(0, 0).paragraphs[0]._p,  # pyright: ignore[reportPrivateUsage]
+                "end",
+            )
+        return document
+
+    control = _top_level_control(text="Destination control")
+    if closed:
+        paragraph = next(control.iter(qn("w:p")))
+        _append_field_char(paragraph, "end")
+    _insert_before_sect(document, control)
+    return document
+
+
 def _unsupported_top_level(kind: str):
     if kind == "customXml":
         wrapper = OxmlElement("w:customXml")
@@ -200,6 +241,130 @@ def it_preflights_every_composition_endpoint_before_destination_protection(
 
     assert _package_state(source) == source_before
     assert _package_state(destination) == destination_before
+
+
+@pytest.mark.parametrize("view", ["original", "all"])
+@pytest.mark.parametrize("target_kind", ["block", "span"])
+def it_requires_current_live_composition_destinations(
+    view: str, target_kind: str
+) -> None:
+    source = docx.Document()
+    source.add_paragraph("Source block")
+    destination = docx.Document()
+    destination.add_paragraph("Destination anchor")
+    if target_kind == "block":
+        target = next(
+            block
+            for block in iter_blocks(destination, view=view)
+            if block.kind == "paragraph" and block.text == "Destination anchor"
+        )
+    else:
+        target = find_one(destination, "Destination anchor", view=view)
+    source_before = _package_state(source)
+    destination_before = _package_state(destination)
+
+    with pytest.raises(UnsupportedStructureError) as raised:
+        insert_blocks_from(
+            destination,
+            source,
+            "Source block",
+            anchor=target,
+        )
+
+    assert f"view='{view}'" in str(raised.value)
+    assert 'view="current"' in str(raised.value)
+    assert _package_state(source) == source_before
+    assert _package_state(destination) == destination_before
+    if target_kind == "span":
+        assert isinstance(target, Span)
+        target._validate_fresh()  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+
+
+@pytest.mark.parametrize("target_kind", ["string", "block", "span"])
+def it_keeps_current_composition_destinations_authoritative(
+    target_kind: str,
+) -> None:
+    source = docx.Document()
+    source.add_paragraph("Source block")
+    destination = docx.Document()
+    destination.add_paragraph("Destination anchor")
+    if target_kind == "string":
+        target = "Destination anchor"
+    elif target_kind == "block":
+        target = next(
+            block
+            for block in iter_blocks(destination)
+            if block.kind == "paragraph" and block.text == "Destination anchor"
+        )
+    else:
+        target = find_one(destination, "Destination anchor")
+
+    report = insert_blocks_from(
+        destination,
+        source,
+        "Source block",
+        anchor=target,
+    )
+
+    assert report.inserted_blocks == 1
+    assert [paragraph.text for paragraph in destination.paragraphs] == [
+        "Destination anchor",
+        "Source block",
+    ]
+
+
+@pytest.mark.parametrize("kind", ["paragraph", "table", "control"])
+def it_refuses_composition_at_every_open_top_level_field_boundary_before_imports(
+    kind: str, monkeypatch: Any
+) -> None:
+    source = docx.Document()
+    source.add_paragraph("Source block")
+    destination = _field_boundary_destination(kind, closed=False)
+    source_before = _package_state(source)
+    destination_before = _package_state(destination)
+    entered_imports = False
+    def record_import(*args: Any, **kwargs: Any) -> None:
+        nonlocal entered_imports
+        entered_imports = True
+        raise AssertionError("composition imports began before destination preflight")
+
+    monkeypatch.setattr(composition_module, "_reconcile_styles", record_import)
+
+    def operation():
+        if kind == "paragraph":
+            return insert_blocks_from(
+                destination,
+                source,
+                "Source block",
+                anchor="Destination anchor",
+            )
+        return append_document(destination, source)
+
+    with pytest.raises(UnsupportedStructureError, match="matching field end"):
+        operation()
+
+    assert not entered_imports
+    assert _package_state(source) == source_before
+    assert _package_state(destination) == destination_before
+
+
+def it_composes_after_a_field_closed_inside_the_destination_paragraph() -> None:
+    source = docx.Document()
+    source.add_paragraph("Source block")
+    destination = _field_boundary_destination("paragraph", closed=True)
+
+    report = insert_blocks_from(
+        destination,
+        source,
+        "Source block",
+        anchor="Destination anchor",
+    )
+
+    assert report.inserted_blocks == 1
+    assert [paragraph.text for paragraph in destination.paragraphs] == [
+        "Destination anchor",
+        "Source block",
+    ]
 
 
 def it_refuses_a_foreign_comment_proxy_even_with_a_colliding_id() -> None:
@@ -274,7 +439,7 @@ def it_keeps_historical_live_composition_sources_view_neutral(
         end = find_one(source, "Second source block", view=view)
     destination = docx.Document()
     destination.add_paragraph("Destination anchor")
-    source_before = _package_state(source)  # pyright: ignore[reportUnknownVariableType]
+    source_before = _package_state(source)
 
     report = insert_blocks_from(
         destination,

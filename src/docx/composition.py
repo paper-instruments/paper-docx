@@ -174,14 +174,20 @@ def insert_blocks_from(
     validated but does not limit the range. `include_end=False` without an end anchor raises
     `ValueError`. Refuses an empty adjusted range, a protected destination, an endpoint that is
     missing, ambiguous, or spans multiple paragraphs, and source content this package cannot
-    carry over: revisions, comments, OLE objects, EMF/WMF images.
+    carry over: revisions, comments, OLE objects, EMF/WMF images. Live source
+    endpoints may come from any supported inspection view. A live destination
+    must come from ``view="current"``; reacquire a historical destination before
+    composing.
     """
     _validate_styles_mode(styles)
     if end_anchor is None and not include_end:
         raise ValueError("include_end=False requires end_anchor")
     if count < 1:
         raise ValueError("count must be >= 1")
-    from docx.blocks import _locate_anchor_paragraph
+    from docx.blocks import (
+        _locate_anchor_paragraph,  # pyright: ignore[reportPrivateUsage]
+        _require_current_mutation_view,  # pyright: ignore[reportPrivateUsage]
+    )
 
     start_target = _locate_anchor_paragraph(source, start_anchor)
     end_target = (
@@ -190,6 +196,7 @@ def insert_blocks_from(
         else None
     )
     anchor_story, anchor_p = _locate_anchor_paragraph(document, anchor)
+    _require_current_mutation_view(anchor)  # pyright: ignore[reportUnknownArgumentType]
     _refuse_if_protected(document, "compose content into the document")
     range_elements = _source_range(
         source,
@@ -224,7 +231,8 @@ def append_document(
     `section="new_page"` prefixes a page break, `"continuous"` appends flush.
     `headers="source"` overwrites the destination's last-section header and footer and flips
     the document-wide even/odd setting. Refuses a protected document and an empty body on
-    either side.
+    either side. Also refuses when insertion after the destination's final paragraph,
+    table, or block content control would remain inside an open field result.
     """
     _validate_styles_mode(styles)
     if section not in ("new_page", "continuous"):
@@ -431,15 +439,15 @@ def _compose(
     document: "Document",
     source: "Document",
     range_elements: "List[_Element]",
-    anchor,
+    anchor: "_Element",
     styles_mode: str,
     *,
     anchor_story: str,
 ) -> CompositionReport:
     from docx.blocks import (
-        _insert_after,
-        _refuse_cell_anchor,
-        _refuse_paragraph_in_open_field,
+        _insert_after,  # pyright: ignore[reportPrivateUsage]
+        _refuse_block_in_open_field,  # pyright: ignore[reportPrivateUsage]
+        _refuse_cell_anchor,  # pyright: ignore[reportPrivateUsage]
     )
 
     report = CompositionReport()
@@ -455,8 +463,8 @@ def _compose(
         )
     if anchor_p.tag == _P:
         _refuse_cell_anchor(anchor_p)
-        root = next(r for s, r in _story_elements_of(document) if s == story)
-        _refuse_paragraph_in_open_field(story, root, anchor_p, for_insertion=True)
+    root = next(r for s, r in _story_elements_of(document) if s == story)
+    _refuse_block_in_open_field(story, root, anchor_p, for_insertion=True)
     _refuse_malformed_numeric_ids(document, range_elements)
     _preflight_bookmark_references(source, range_elements)
     _preflight_relationships(source.part, range_elements)

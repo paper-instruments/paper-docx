@@ -226,7 +226,12 @@ pairing.
 :ref:`docx.composition <paper_composition_api>` copies formatted content
 between documents without corruption. It reconciles styles, numbering, media,
 hyperlinks and bookmarks, then returns a |CompositionReport| listing every
-part it touched.
+part it touched. Historical live blocks and spans remain valid read-only source
+range evidence, but a live destination must be reacquired from
+``view="current"``. Composition refuses rather than guessing when insertion
+after the destination paragraph, table, or block content control would remain
+inside an open field result; target a current block after the matching field
+end, or deliberately close or unlink that field first.
 
 
 Refusal handling

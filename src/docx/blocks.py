@@ -330,8 +330,8 @@ def _refuse_cell_anchor(paragraph: "_Element") -> None:
         )
 
 
-def _field_open_flags(story: str, root: "_Element", paragraph: "_Element"):
-    """(open_before, open_after) complex-field state around `paragraph`'s block.
+def _field_open_flags(story: str, root: "_Element", element: "_Element"):
+    """(open_before, open_after) complex-field state around `element`'s block.
 
     A multi-paragraph field (every Word TOC) keeps begin..end open across
     blocks; block operations inside that region would write content Word
@@ -340,13 +340,21 @@ def _field_open_flags(story: str, root: "_Element", paragraph: "_Element"):
     from docx.story import _count_fldchar_delta
 
     depth = 0
-    for _kind, _index, element, _sdt, _txbx in _iter_block_elements(story, root):
-        contains = element is paragraph or any(
-            node is paragraph for node in element.iter(_P)
+    for _kind, _index, block, _sdt, _txbx in _iter_block_elements(story, root):
+        contains = (
+            any(node is block for node in element.iter())
+            if element.tag == qn("w:sdt")
+            else block is element
+            or any(node is element for node in block.iter(_P))
         )
-        delta = _count_fldchar_delta(element)
         if contains:
+            # A top-level content control is traversed through its descendant
+            # blocks. Judge its physical end once rather than choosing one of
+            # those descendants as an implied insertion target.
+            target = element if element.tag == qn("w:sdt") else block
+            delta = _count_fldchar_delta(target)
             return depth > 0, (depth + delta) > 0
+        delta = _count_fldchar_delta(block)
         depth = max(0, depth + delta)
     return False, False
 
@@ -361,6 +369,21 @@ def _refuse_paragraph_in_open_field(
             "target lies inside a field result that spans paragraphs (a TOC or"
             " similar); Word regenerates field results on update, so content"
             " written there would silently vanish"
+        )
+
+
+def _refuse_block_in_open_field(  # pyright: ignore[reportUnusedFunction]
+    story: str, root: "_Element", element: "_Element", *, for_insertion: bool
+) -> None:
+    """Refuse a mutation boundary around a supported physical story block."""
+    open_before, open_after = _field_open_flags(story, root, element)
+    blocked = open_after if for_insertion else (open_before or open_after)
+    if blocked:
+        raise UnsupportedStructureError(
+            "the insertion boundary after the destination block remains inside"
+            " an open field result; Word may regenerate that result and remove"
+            " composed content. Use a current-view destination after the matching"
+            " field end, or deliberately close or unlink the field before retrying"
         )
 
 
@@ -486,10 +509,11 @@ def _select_paragraph_range(
     if end_anchor is not None:
         require_anchor_owner(document, end_anchor, argument="end_anchor")
     story, start_p = _locate_anchor_paragraph(document, start_anchor)
-    _require_current_mutation_view(start_anchor)
     end_location = None
     if end_anchor is not None:
         end_location = _locate_anchor_paragraph(document, end_anchor)
+    _require_current_mutation_view(start_anchor)
+    if end_anchor is not None:
         _require_current_mutation_view(end_anchor)
     _refuse_paragraph_mutation(document)
     root = dict(_story_elements(document))[story]

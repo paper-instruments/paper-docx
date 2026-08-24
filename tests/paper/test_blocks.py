@@ -350,6 +350,38 @@ class DescribeMutationProjectionAuthority:
 
         assert "view='original'" in str(refusal)
 
+    @pytest.mark.parametrize("invalid_end", ["stale", "foreign"])
+    def it_checks_end_identity_before_historical_start_authority(
+        self, invalid_end: str
+    ):
+        document = _memory_doc("start", "end")
+        start = find_one(document, "start", view="original")
+        foreign = None
+        foreign_before = None
+        if invalid_end == "stale":
+            end = find_one(document, "end")
+            document.paragraphs[1].text = "changed end"
+            refusal_type = TargetNotFoundError
+        else:
+            foreign = _memory_doc("end")
+            end = find_one(foreign, "end")
+            foreign_before = foreign.element.xml
+            refusal_type = BoundaryViolationError
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda doc: tracked_delete_paragraphs(
+                doc, start, end_anchor=end, author="A", date=FROZEN
+            ),
+            refusal_type,
+        )
+
+        assert "view='original'" not in str(refusal)
+        if invalid_end == "foreign":
+            assert foreign is not None
+            assert foreign_before is not None
+            assert foreign.element.xml == foreign_before
+
     @pytest.mark.parametrize("operation", _BLOCK_MUTATIONS)
     @pytest.mark.parametrize("target_kind", ["block", "span"])
     def it_keeps_current_live_targets_authoritative(
