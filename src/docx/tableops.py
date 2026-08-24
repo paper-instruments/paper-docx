@@ -197,6 +197,10 @@ def find_table(
     """
     _validate_match_policy(match)
     needle = near_text if match == "exact" else normalize_text(near_text)
+    if not needle or (match == "normalized" and not needle.strip()):
+        raise TargetNotFoundError(
+            "near_text must contain searchable text; an empty target cannot identify a table"
+        )
     matches: "list[Table]" = []
     for table in document.tables:
         seen_cells: "set[CT_Tc]" = set()

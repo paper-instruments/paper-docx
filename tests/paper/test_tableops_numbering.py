@@ -42,6 +42,16 @@ def _doc_with_simple_table():
 
 
 class DescribeFindTable:
+    @pytest.mark.parametrize(
+        ("near_text", "match"),
+        [("", "exact"), ("   \t", "normalized")],
+    )
+    def it_refuses_targets_that_contain_no_searchable_text(self, near_text: str, match: str):
+        document, _ = _doc_with_simple_table()
+
+        with pytest.raises(TargetNotFoundError, match="searchable text"):
+            find_table(document, near_text=near_text, match=match)
+
     def it_finds_the_table_by_exact_cell_text_by_default(self):
         document, table = _doc_with_simple_table()
         found = find_table(document, near_text="cell 10")
