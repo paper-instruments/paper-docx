@@ -305,6 +305,43 @@ class DescribeCompareBehavior:
         assert not any(r.revision_type.startswith("row_") for r in revisions)
         assert not any("Advisory" in r.text for r in revisions)
 
+    def it_uses_coarse_revisions_for_ambiguous_multi_row_changes(
+        self, tmp_path: Path
+    ):
+        original_path = tmp_path / "table-original.docx"
+        revised_path = tmp_path / "table-revised.docx"
+
+        original = docx.Document()
+        table = original.add_table(rows=2, cols=1)
+        table.cell(0, 0).text = "Repeated Alpha"
+        table.cell(1, 0).text = "Repeated Alpha"
+        original.save(original_path)
+
+        revised = docx.Document()
+        revised.add_table(rows=1, cols=1).cell(0, 0).text = "Repeated Beta"
+        revised.save(revised_path)
+
+        result = compare(
+            original_path,
+            revised_path,
+            author="Compare Engine",
+            date=FROZEN,
+        )
+        revisions = result.document.revisions
+
+        assert sum(r.revision_type == "row_deletion" for r in revisions) == 2
+        assert sum(r.revision_type == "row_insertion" for r in revisions) == 1
+        assert not any(r.revision_type == "deletion" and r.text == "Alph" for r in revisions)
+
+        redline_path = tmp_path / "table-redline.docx"
+        result.document.save(redline_path)
+        accepted = docx.Document(redline_path)
+        accepted.revisions.accept_all()
+        assert _visible(accepted) == _visible(docx.Document(revised_path))
+        rejected = docx.Document(redline_path)
+        rejected.revisions.reject_all()
+        assert _visible(rejected) == _visible(docx.Document(original_path))
+
     def it_uses_coarse_revisions_for_a_multi_block_changed_region(self, tmp_path: Path):
         original_path = tmp_path / "multi-original.docx"
         revised_path = tmp_path / "multi-revised.docx"

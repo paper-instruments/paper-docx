@@ -1111,25 +1111,18 @@ def _compare_table(ctx: _Ctx, table_o: "_Element", table_r: "_Element") -> None:
             continue
         old_rows, new_rows = rows_o[i1:i2], rows_r[j1:j2]
         _refuse_merged_rows(ctx, list(old_rows) + list(new_rows))
-        paired = min(len(old_rows), len(new_rows))
-        cursor = None  # last row placed in OUTPUT order
-        for k in range(paired):
-            if _replace_row_cells(ctx, old_rows[k], new_rows[k]):
-                cursor = old_rows[k]
-            else:
-                _mark_row_deleted(ctx, old_rows[k])
-                inserted = _insert_rows(
-                    ctx, rows_o, i1 + k, [new_rows[k]], after=old_rows[k]
-                )
-                cursor = inserted[-1]
-        for row in old_rows[paired:]:
+        if len(old_rows) == 1 and len(new_rows) == 1:
+            if not _replace_row_cells(ctx, old_rows[0], new_rows[0]):
+                _mark_row_deleted(ctx, old_rows[0])
+                _insert_rows(ctx, rows_o, i2, new_rows, after=old_rows[0])
+            continue
+
+        # A larger replacement region does not prove which old row corresponds
+        # to which new row. Preserve the truthful coarse history instead of
+        # inventing positional row edits.
+        for row in old_rows:
             _mark_row_deleted(ctx, row)
-            cursor = row
-        if len(new_rows) > paired:
-            _insert_rows(
-                ctx, rows_o, i2, new_rows[paired:],
-                after=cursor if cursor is not None else old_rows[-1],
-            )
+        _insert_rows(ctx, rows_o, i2, new_rows, after=old_rows[-1])
 
 
 def _visible_paragraph_text(paragraph: "_Element") -> str:

@@ -14,6 +14,8 @@ copies before returning and refuses differences it cannot encode without loss.
 Word-level compare emits fine-grained edits only for one unambiguous old/new
 block pair of the same kind. A changed region containing multiple blocks uses
 coarse block deletions and insertions instead of similarity-based pairing.
+Within one changed table, cell-level edits likewise require exactly one old and
+one new row; larger changed row regions use coarse row deletions and insertions.
 Pure text insertions retain their exact zero-width boundary, so an ambiguous
 formatting or wrapper destination refuses rather than borrowing an anchor
 character.
