@@ -10,34 +10,32 @@ formatting, with correct toggle-property semantics. The operation is read-only.
 Every value in the returned |EffectiveFormat| names its source layer; anything
 the resolver cannot determine is reported as unresolved.
 
-``surrounding_format()`` has two target classes. A string is found with exact
-matching and retains the resulting inline |Span|; a supplied live span retains
-the location the caller already selected. Their result is the effective format
-of every touched run, including ``mixed`` values when properties disagree and
-``agreeing_layers`` when equal values have different provenance. To select with
-normalization, first call ``find_one(..., match="normalized")`` and pass that
-span. This function has no separate matching-policy option.
+``format_of()`` accepts a :class:`~docx.text.run.Run`, a
+:class:`~docx.text.paragraph.Paragraph`, or a live |Span|. Runs resolve their
+supported run properties. Paragraphs resolve paragraph properties plus the run
+defaults implied by their style chain. Spans resolve every run they touch,
+reporting ``mixed`` where values disagree and ``agreeing_layers`` where equal
+values have different provenance.
 
-A live paragraph |Block| or current ``BlockLocator`` identifies no character
-position, so it returns paragraph properties plus the run defaults implied by
-the paragraph style and document defaults. Existing text runs are not sampled;
-this is also the result for an empty paragraph. A table-kind block or locator
-has no implied paragraph and raises |UnsupportedStructureError|. Select exact
-text or a live span inside a particular table-cell paragraph instead.
+Selection is explicit. Use ``find_one()`` with the desired exact or normalized
+matching policy, then pass the resulting span to ``format_of()``:
 
-Every inline target must be wholly inside one paragraph. Multi-paragraph spans
-remain valid search results for inspection, but this lookup raises
-|BoundaryViolationError| rather than choosing the first or last paragraph.
-Foreign targets also raise |BoundaryViolationError|; stale or missing targets
-raise |TargetNotFoundError|, and duplicate exact strings or locator candidates
-raise |AmbiguousTargetError|.
+::
+
+    from docx.formatting import format_of
+    from docx.search import find_one
+
+    span = find_one(doc, "payment terms", match="normalized")
+    effective = format_of(span)
+
+When a caller already holds a paragraph proxy, pass it directly instead. The
+resolver does not search strings or resolve blocks. A stale span refuses during
+freshness validation; unsupported target types raise ``TypeError``.
 
 .. currentmodule:: docx.formatting
 
 
 .. autofunction:: format_of
-
-.. autofunction:: surrounding_format
 
 
 |EffectiveFormat| objects

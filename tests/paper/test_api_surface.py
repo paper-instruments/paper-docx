@@ -224,7 +224,6 @@ APPROVED_SIGNATURES = [
     ("docx.notes", "add_endnote", "(document, span, text)"),
     ("docx.drawing", "Drawing.replace_picture", "(self, image_descriptor)"),
     ("docx.formatting", "format_of", "(target)"),
-    ("docx.formatting", "surrounding_format", "(document, anchor)"),
 ]
 
 _IDS = [f"{module}.{attr}" for module, attr, _ in APPROVED_SIGNATURES]
@@ -243,6 +242,12 @@ class DescribeApprovedApiSurface:
             f"{module_name}.{attr_path}: signature {actual} deviates from approved"
             f" {approved}; update this table in the same commit"
         )
+
+    def it_keeps_the_formatting_wrapper_out_of_the_public_surface(self):
+        from docx import formatting
+
+        removed_name = "surrounding" + "_format"
+        assert not hasattr(formatting, removed_name)
 
     def it_pins_the_refusal_hierarchy(self):
         errors = pytest.importorskip(

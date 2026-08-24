@@ -156,24 +156,6 @@ def format_of(target) -> EffectiveFormat:
     )
 
 
-def surrounding_format(document: "Document", anchor) -> EffectiveFormat:
-    """The effective format at an inline target or paragraph target.
-
-    Strings resolve exactly to live spans, and supplied spans retain their inline
-    position. Live blocks and portable locators identify only a paragraph, so they
-    resolve the paragraph's effective defaults. Refuses a target that is missing,
-    ambiguous, foreign, stale, unsupported, or spans more than one paragraph.
-    """
-    from docx.blocks import _locate_anchor_paragraph
-    from docx.search import Span, find_one
-
-    target = find_one(document, anchor) if isinstance(anchor, str) else anchor
-    _story, paragraph = _locate_anchor_paragraph(document, target)
-    if isinstance(target, Span):
-        return format_of(target)
-    return _resolve_paragraph(document, paragraph)
-
-
 # ---------------------------------------------------------------------------
 # resolution core
 # ---------------------------------------------------------------------------

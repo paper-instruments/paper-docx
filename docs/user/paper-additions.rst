@@ -77,27 +77,25 @@ hold it.
 :ref:`docx.formatting <paper_formatting_api>` answers the complementary
 question: what formatting does this text *actually* carry? It resolves through
 document defaults, the style chain and direct formatting, with every value
-naming the layer it came from. String targets use exact search and report the
-formatting at the matched text, rather than a representative run elsewhere in
-the paragraph. A live span keeps its already-selected location, including one
-obtained through explicit normalized search:
+naming the layer it came from. Select text explicitly, then inspect the returned
+live span so the formatting comes from the matched text rather than a
+representative run elsewhere in the paragraph:
 
 ::
 
-    from docx.formatting import surrounding_format
+    from docx.formatting import format_of
     from docx.search import find_one
 
-    exact = surrounding_format(doc, "Payment terms")
+    exact_span = find_one(doc, "Payment terms")
+    exact = format_of(exact_span)
     normalized_span = find_one(doc, "payment terms", match="normalized")
-    normalized = surrounding_format(doc, normalized_span)
+    normalized = format_of(normalized_span)
 
 A span touching multiple runs reports ``mixed`` for disagreeing properties and
-preserves provenance when equal values come from different layers. A live
-paragraph block or current ``BlockLocator`` carries paragraph identity but no
-inline position, so it reports the paragraph's style/document defaults even
-when the paragraph is empty; it never samples the first existing run. A table
-block has no implied paragraph target and refuses. Select exact text or a live
-span inside the intended cell paragraph instead.
+preserves provenance when equal values come from different layers. If you
+already hold a paragraph proxy, pass it directly to ``format_of(paragraph)`` to
+inspect its paragraph properties and style-derived run defaults. ``format_of``
+does not search strings or resolve blocks.
 
 
 Edit one document
@@ -132,10 +130,10 @@ this explicit preselection workflow when they need normalized targeting.
 
 Search can also return spans that cross paragraph boundaries, representing the
 boundary as a literal ``"\\n"``. Those spans are valid for inspection. APIs
-that need one paragraph—block edits, composition endpoints, TOC insertion,
-and ``surrounding_format()``—raise |BoundaryViolationError| instead of choosing
-the first or last paragraph. Refine the text to one paragraph or pass an
-explicit live block endpoint.
+that need one paragraph—block edits, composition endpoints, and TOC
+insertion—raise |BoundaryViolationError| instead of choosing the first or last
+paragraph. Refine the text to one paragraph or pass an explicit live block
+endpoint.
 
 When repeated text needs context, use ``near`` to rank the complete candidate
 set for inspection:

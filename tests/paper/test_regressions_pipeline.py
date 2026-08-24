@@ -591,9 +591,10 @@ class DescribeFormattingRegressions:
         assert resolved["size_pt"].value == 17
         assert resolved["size_pt"].source == "paragraph_style:LinkyPara"
 
-    def it_uses_hyperlink_runs_for_surrounding_format(self):
+    def it_uses_hyperlink_runs_for_explicit_span_formatting(self):
         from docx.enum.style import WD_STYLE_TYPE
-        from docx.formatting import surrounding_format
+        from docx.formatting import format_of  # pyright: ignore[reportUnknownVariableType]
+        from docx.search import find_one
         from docx.shared import Pt
 
         document = docx.Document(str(fixture_path(MINIMAL)))
@@ -610,7 +611,8 @@ class DescribeFormattingRegressions:
                 "</w:hyperlink>"
             )
         )
-        resolved = surrounding_format(document, "only linked text here")
+        span = find_one(document, "only linked text here")
+        resolved = format_of(span)
         assert resolved["bold"].value is True  # the hyperlink run, not the first run
         assert resolved["size_pt"].value == 19
 
