@@ -42,22 +42,103 @@ def _doc_with_simple_table():
 
 
 class DescribeFindTable:
-    def it_finds_the_table_by_normalized_cell_text(self):
+    def it_finds_the_table_by_exact_cell_text_by_default(self):
         document, table = _doc_with_simple_table()
-        found = find_table(document, near_text="CELL 10")  # casefolded matching
-        assert found._tbl is table._tbl
+        found = find_table(document, near_text="cell 10")
+        assert found.cell(1, 0).text == table.cell(1, 0).text
+
+    def it_keeps_default_exact_matching_case_and_typography_sensitive(self):
+        document, table = _doc_with_simple_table()
+        table.cell(1, 0).text = "Résumé – Total"
+        for near_text in ("RÉSUMÉ – TOTAL", "Résumé - Total"):
+            with pytest.raises(TargetNotFoundError, match="no table"):
+                find_table(document, near_text=near_text)
+
+    def it_supports_explicit_normalized_matching(self):
+        document, table = _doc_with_simple_table()
+        table.cell(1, 0).text = "Résumé – Total"
+        found = find_table(
+            document,
+            near_text="RÉSUMÉ - TOTAL",
+            match="normalized",
+        )
+        assert found.cell(1, 0).text == table.cell(1, 0).text
+
+    def it_does_not_match_an_exact_query_across_adjacent_cells(self):
+        document, _ = _doc_with_simple_table()
+        with pytest.raises(TargetNotFoundError, match="no table"):
+            find_table(document, near_text="cell 00\ncell 01")
+
+    def it_does_not_match_a_normalized_query_across_adjacent_cells(self):
+        document = _doc(MINIMAL)
+        table = document.add_table(rows=1, cols=2)
+        table.cell(0, 0).text = "Account"
+        table.cell(0, 1).text = "Balance"
+        with pytest.raises(TargetNotFoundError, match="no table"):
+            find_table(
+                document,
+                near_text="Account Balance",
+                match="normalized",
+            )
+
+    def it_matches_paragraph_boundaries_within_one_cell(self):
+        document = _doc(MINIMAL)
+        table = document.add_table(rows=1, cols=1)
+        cell = table.cell(0, 0)
+        cell.text = "Account"
+        cell.add_paragraph("Balance")
+
+        exact = find_table(document, near_text="Account\nBalance")
+        normalized = find_table(
+            document,
+            near_text="ACCOUNT   BALANCE",
+            match="normalized",
+        )
+        assert exact.cell(0, 0).text == table.cell(0, 0).text
+        assert normalized.cell(0, 0).text == table.cell(0, 0).text
+
+    def it_counts_a_merged_physical_cell_only_once(self):
+        document = _doc(MINIMAL)
+        table = document.add_table(rows=1, cols=2)
+        cell = table.cell(0, 0).merge(table.cell(0, 1))
+        cell.text = "merged marker"
+
+        found = find_table(document, near_text="merged marker")
+        assert found.cell(0, 0).text == table.cell(0, 0).text
+
+    def it_counts_a_table_only_once_when_several_cells_match(self):
+        document = _doc(MINIMAL)
+        table = document.add_table(rows=1, cols=2)
+        table.cell(0, 0).text = "marker in first cell"
+        table.cell(0, 1).text = "marker in second cell"
+
+        found = find_table(document, near_text="marker", match="exact")
+        assert found.cell(0, 1).text == table.cell(0, 1).text
 
     def it_refuses_when_no_table_matches(self):
         document, _ = _doc_with_simple_table()
         with pytest.raises(TargetNotFoundError, match="no table"):
-            find_table(document, near_text="nothing like this")
+            find_table(
+                document,
+                near_text="NOTHING LIKE THIS",
+                match="normalized",
+            )
 
-    def it_refuses_ambiguity(self):
-        document, _ = _doc_with_simple_table()
+    def it_counts_ambiguity_between_tables(self):
+        document, first = _doc_with_simple_table()
+        first.cell(0, 0).text = "cell 10 in another cell"
         second = document.add_table(rows=1, cols=1)
         second.cell(0, 0).text = "cell 10 duplicate"
-        with pytest.raises(AmbiguousTargetError):
-            find_table(document, near_text="cell 10")
+        with pytest.raises(AmbiguousTargetError, match="2 tables"):
+            find_table(document, near_text="cell 10", match="exact")
+
+    def it_rejects_an_invalid_match_policy(self):
+        document, _ = _doc_with_simple_table()
+        with pytest.raises(
+            ValueError,
+            match=r"match must be one of .* got 'prefix'",
+        ):
+            find_table(document, near_text="cell 10", match="prefix")
 
 
 class DescribeUpdateCell:

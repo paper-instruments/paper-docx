@@ -117,7 +117,11 @@ APPROVED_SIGNATURES = [
     ("docx.revision", "Revisions.accept_all", "(self, *, author=None)"),
     ("docx.revision", "Revisions.reject_all", "(self, *, author=None)"),
     # -- tables + numbering --------------------------------------------------
-    ("docx.tableops", "find_table", "(document, *, near_text)"),
+    (
+        "docx.tableops",
+        "find_table",
+        "(document, *, near_text, match='exact')",
+    ),
     (
         "docx.tableops",
         "update_cell",
