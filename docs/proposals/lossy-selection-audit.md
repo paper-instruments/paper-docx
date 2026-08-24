@@ -8,8 +8,8 @@ replacement, table editing, and comparison behavior
 This is a historical design audit, not an API reference. It records where a
 Paper convenience layer discarded identity, boundary, formatting, or topology
 evidence and what the selection-integrity changes retained or removed. Current
-contracts live in the `docx.search`, `docx.blocks`, and `docx.formatting` API
-documentation.
+contracts live in the `docx.search`, `docx.blocks`, `docx.tableops`,
+`docx.composition`, and `docx.formatting` API documentation.
 
 ## Evidence and provenance
 
@@ -23,8 +23,9 @@ The measured evaluation evidence is narrower than the code audit. A 2026-08-22
 trace review covered 75 focused Harbor trajectories and 60 Knowledge48 DOCX
 trajectories. It distinguished three events: an API was called, the lossy input
 condition was present, and a harmful output or score effect was observed. Only
-LS-05 reached all three. The other entries remain real code-level risks or open
-design questions, but this corpus does not show that they cost points.
+LS-05 reached all three. The other entries were identified through code audit;
+this corpus neither demonstrated score loss nor resolved them. Their dispositions
+below come from follow-up code-audit reproductions and implementation checks.
 
 | ID | Evaluated condition | Observed result | Final disposition |
 | --- | --- | --- | --- |
@@ -35,10 +36,10 @@ design questions, but this corpus does not show that they cost points.
 | LS-05 | Heterogeneous fragmented replacement | **Structure loss and score loss** | Ordinary replacement proves one safe changed region or refuses |
 | LS-06 | Not present in evaluated build | Not executable | Capacity allocator and separate mode removed |
 | LS-07 | No calls | Not exercised | Convenience wrapper removed |
-| LS-08 | Row copy called; template cells were uniform | Lossy choice not activated | Open; outside this stack |
-| LS-09 | Table lookup called; queries stayed within one cell | Lossy choice not activated | Open; outside this stack |
+| LS-08 | Row copy called; template cells were uniform | Lossy choice not activated | Uniform simple templates copy; ambiguous or destructive templates refuse |
+| LS-09 | Table lookup called; queries stayed within one cell | Lossy choice not activated | Match policy is explicit; matches cannot cross physical cells |
 | LS-10 | Comparison pairing called | No observed mispair | Open; outside this stack |
-| LS-11 | Tracked replacement called on simple regions | No observed formatting loss | Open; outside this stack |
+| LS-11 | Tracked replacement called on simple regions | No observed formatting loss | Insertions require one proved formatting/ancestry outcome; otherwise refuse |
 
 ## Closed issues
 
@@ -213,38 +214,75 @@ text and pass the live span to `format_of()`, which resolves every touched run
 and reports mixed values and provenance; callers that already hold a run or
 paragraph pass that object directly.
 
-## Open issues outside this stack
+### LS-08 — copied table cells chose one representative run format
 
-These behaviors were also introduced by Paper bootstrap commit `a55be769`.
-They were not changed by the selection-integrity stack, and this audit does not
-present the absence of an eval loss as proof that they are safe.
-
-### LS-08 — copied table cells choose one representative run format
-
-**Lossy behavior and impact.** Row-copy population finds the first run with
-explicit run properties, clears the cell, and applies that one property set to
-the replacement. A template cell whose first styled run is red and whose later
-run is bold can become entirely red, losing the later region and any semantic
+**Lossy behavior and impact.** Row-copy population found the first run with
+explicit run properties, cleared the cell, and applied that one property set to
+the replacement. A template cell whose first styled run was red and whose later
+run was bold could become entirely red, losing the later region and any semantic
 relationship between text and style.
 
-**Evidence and status.** Row copying ran in three `fm13` trajectories, but each
-template cell had one ordinary unformatted run, so no competing formats were
-discarded. The observed score loss came from row order, not this heuristic.
-The issue remains open and is outside this stack.
+**Evidence.** Row copying ran in three `fm13` trajectories, but each template
+cell had one ordinary unformatted run, so no competing formats were discarded.
+The observed score loss came from row order, not this heuristic.
 
-### LS-09 — table search can synthesize text across cell boundaries
+**Disposition.** Copied-row population now preflights every physical template
+cell before attachment. It accepts one direct paragraph of plain text runs only
+when all text-bearing runs have identical complete explicit run properties;
+ordinary unformatted empty cells are also safe. Conflicting formatting, extra
+paragraphs, fields, controls, revisions, hyperlinks, markers, drawings, nested
+content, and unknown wrappers raise an actionable typed refusal. The operation
+does not choose a representative format, delete unsupported structure, or
+partially attach a row.
 
-**Lossy behavior and impact.** `find_table()` concatenates cell text with
-separators and normalizes the result before substring search. Because
-normalization collapses whitespace, a query can be formed from the end of one
-cell and the start of another even though no cell contains it. In a document
-with repeated tables, `Account` in one cell and `Balance` in the next can make
+### LS-09 — table search could synthesize text across cell boundaries
+
+**Lossy behavior and impact.** `find_table()` concatenated cell text with
+separators and normalized the result before substring search. Because
+normalization collapses whitespace, a query could be formed from the end of one
+cell and the start of another even though no cell contained it. In a document
+with repeated tables, `Account` in one cell and `Balance` in the next could make
 `Account Balance` appear to be a real within-cell marker and select the wrong
 table.
 
-**Evidence and status.** Public table lookup ran in four `fm13` trajectories,
-but every query was a unique marker wholly inside one cell. Cross-cell
-synthesis was not activated. The issue remains open and is outside this stack.
+**Evidence.** Public table lookup ran in four `fm13` trajectories, but every
+query was a unique marker wholly inside one cell. Cross-cell synthesis was not
+activated, so no score effect is attributed to this issue.
+
+**Disposition.** `find_table()` now uses exact matching by default and exposes
+normalized matching only through an explicit policy. It tests each deduplicated
+physical cell independently, preserving paragraph separators within a cell but
+never joining evidence across cells. Existing zero/one/many table resolution
+remains unchanged.
+
+### LS-11 — tracked replacement inferred revision formatting from one run
+
+**Lossy behavior and impact.** Tracked replacement narrowed a common textual
+prefix and suffix, then used run properties from the first changed region for
+inserted redline text. A replacement spanning differently formatted changed
+runs could therefore attribute all inserted text to one run's formatting and
+present a semantically misleading revision even when accept/reject text was
+correct.
+
+**Evidence.** The path ran in `fm06`, `fm02` experiments, and `fm21`, but those
+changed regions did not force a choice among competing run formats. Accept/reject
+algebra was correct and no grader reported this loss.
+
+**Disposition.** Tracked and ordinary replacement now share unique maximal
+exact-affix localization. Any tracked edit inserting text requires one complete
+run-property and inline-ancestry outcome: either one changed text node or
+identical canonical properties and compatible ancestry across all changed
+nodes. A mixed-format `Alpha` to `Omega` edit refuses before mutation rather
+than choosing bold or italic. Deletion-only tracked edits may cross differently
+formatted source runs because each deletion preserves its own source run
+properties. Repeated-affix or insertion-boundary ambiguity also refuses with
+guidance to re-find a smaller exact substring.
+
+## Open issue outside this stack
+
+LS-10 was also introduced by Paper bootstrap commit `a55be769`. It is not
+changed by this stack, and this audit does not present the absence of an eval
+loss as proof that it is safe.
 
 ### LS-10 — comparison pairs blocks above one global text threshold
 
@@ -259,20 +297,6 @@ pairing and produced correct accept/reject projections. Their `.250` scores
 came from an unstated exact author/date grader filter, not an observed mispair.
 That clean fixture does not validate the threshold for repeated or similarly
 worded paragraphs. The issue remains open and is outside this stack.
-
-### LS-11 — tracked replacement infers revision formatting from one run
-
-**Lossy behavior and impact.** Tracked replacement narrows a common textual
-prefix and suffix, then uses run properties from the first changed region for
-inserted redline text. A replacement spanning differently formatted changed
-runs can therefore attribute all inserted text to one run's formatting and
-present a semantically misleading revision even when accept/reject text is
-correct.
-
-**Evidence and status.** The path ran in `fm06`, `fm02` experiments, and
-`fm21`, but those changed regions did not force a choice among competing run
-formats. Accept/reject algebra was correct and no grader reported this loss.
-The issue remains open and is outside this stack.
 
 ## Resulting boundary
 

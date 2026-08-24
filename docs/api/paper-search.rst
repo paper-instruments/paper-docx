@@ -135,6 +135,12 @@ when their serialized XML is identical. Pure insertions at a boundary also
 refuse unless both sides prove the same complete formatting and concrete
 wrapper destination.
 
+For example, if ``Alpha`` consists of bold ``Al`` followed by italic ``pha``,
+replacing the whole word with ``Omega`` has no single evidenced formatting
+outcome and refuses atomically. The package does not choose bold or italic for
+the caller. Re-find a uniform subrange or construct the intended runs
+explicitly.
+
 Ordinary replacement never distributes new text according to prior text-node
 lengths. Existing field,
 content-control, hyperlink, revision, protection, bookmark, and paragraph-
