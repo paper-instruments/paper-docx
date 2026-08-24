@@ -50,6 +50,11 @@ serializes live identity. Outline schema version 3 keeps the historical
 nor an |Anchor| can be used to reconstruct mutation authority. Reacquire a
 fresh live block in a later session.
 
+Captured view and live identity are separate. Blocks from ``"original"`` and
+``"all"`` remain valid inspection values, but block mutation APIs require a
+target reacquired from ``view="current"``. A historical projection is not
+stale merely because it cannot authorize a mutation.
+
 
 |TableShape| objects
 --------------------

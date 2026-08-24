@@ -58,6 +58,13 @@ A live block follows its exact element across harmless index shifts and becomes
 stale if that element is detached, replaced, or structurally moved. Reacquire a
 fresh block from the document in a later session.
 
+The view that produced a live block or span is also part of its editing
+authority. ``"original"`` and ``"all"`` projections remain available for
+inspection, but paragraph and TOC mutations require a target captured from
+``view="current"``. When a historical target is refused, inspect it as needed,
+then deliberately reacquire the intended current target; the package does not
+silently remap it by text or position.
+
 The older ``block.anchor`` and ``revision.anchor`` values remain inert result
 locations for compatibility. They cannot authorize paragraph mutation. Use a
 live block/span or an exact string instead.

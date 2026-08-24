@@ -131,8 +131,27 @@ def _resolve_anchor_paragraph(
     `_locate_anchor_paragraph` directly.
     """
     require_anchor_owner(document, anchor)
+    located = _locate_anchor_paragraph(document, anchor)
+    _require_current_mutation_view(anchor)
     _refuse_if_protected(document, "insert or remove paragraphs")
-    return _locate_anchor_paragraph(document, anchor)
+    return located
+
+
+def _require_current_mutation_view(anchor: object) -> None:
+    """Require live mutation targets to come from the current projection."""
+    if not isinstance(anchor, (Block, Span)):
+        return
+    view = anchor._view  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+    if view not in VIEWS:
+        raise TargetNotFoundError(
+            f"live {type(anchor).__name__} is stale: its captured view is invalid"
+        )
+    if view != "current":
+        raise UnsupportedStructureError(
+            f"live {type(anchor).__name__} was captured from view={view!r};"
+            " historical projections are inspection-only as mutation anchors."
+            " Reacquire the intended target with view=\"current\" and retry"
+        )
 
 
 def _locate_anchor_paragraph(
@@ -444,7 +463,13 @@ def _select_paragraph_range(
     require_anchor_owner(document, start_anchor, argument="start_anchor")
     if end_anchor is not None:
         require_anchor_owner(document, end_anchor, argument="end_anchor")
-    story, start_p = _resolve_anchor_paragraph(document, start_anchor)
+    story, start_p = _locate_anchor_paragraph(document, start_anchor)
+    _require_current_mutation_view(start_anchor)
+    end_location = None
+    if end_anchor is not None:
+        end_location = _locate_anchor_paragraph(document, end_anchor)
+        _require_current_mutation_view(end_anchor)
+    _refuse_if_protected(document, "insert or remove paragraphs")
     root = dict(_story_elements(document))[story]
     _refuse_paragraph_in_open_field(story, root, start_p, for_insertion=False)
     # ranges are counted among the start paragraph's SIBLINGS: nested
@@ -454,7 +479,8 @@ def _select_paragraph_range(
     siblings = [child for child in parent if child.tag == _P]
     start_index = next(i for i, p in enumerate(siblings) if p is start_p)
     if end_anchor is not None:
-        end_story, end_p = _resolve_anchor_paragraph(document, end_anchor)
+        assert end_location is not None
+        end_story, end_p = end_location
         if end_story != story:
             raise BoundaryViolationError(
                 "start and end anchors live in different story parts"

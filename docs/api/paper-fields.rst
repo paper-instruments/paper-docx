@@ -10,6 +10,11 @@ carries placeholder result text and sets the update-fields-on-open flag. This
 package authors the field formulas. Word computes their displayed values when
 it opens and paginates the document.
 
+``insert_toc_after()`` accepts exact strings and live paragraph targets. A
+live |Block| or |Span| destination must be captured from ``view="current"``;
+historical projections remain inspection-only and must be reacquired before
+TOC insertion.
+
 .. currentmodule:: docx.fields
 
 

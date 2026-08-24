@@ -7,11 +7,14 @@ import datetime as dt
 import shutil
 from dataclasses import replace
 from pathlib import Path
+from typing import Callable, Union
 
 import pytest
 
 import docx
 from docx.blocks import (
+    BlockEditResult,
+    BlockTarget,
     RichParagraph,
     TextRun,
     insert_blocks_after,
@@ -19,6 +22,7 @@ from docx.blocks import (
     tracked_delete_paragraphs,
     tracked_replace_paragraphs,
 )
+from docx.document import Document
 from docx.errors import (
     BoundaryViolationError,
     TargetNotFoundError,
@@ -26,7 +30,9 @@ from docx.errors import (
 )
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
-from docx.story import iter_blocks, outline
+from docx.protection import set_protection
+from docx.search import Span, find_one
+from docx.story import Block, iter_blocks, outline
 
 from .harness.contract import assert_changed_parts, assert_refusal_atomic, save_and_reopen
 from .harness.paths import fixture_path
@@ -141,6 +147,173 @@ class DescribeLiveBlockTargets:
         table = next(block for block in iter_blocks(document) if block.kind == "table")
         with pytest.raises(UnsupportedStructureError, match="table block"):
             insert_section_after(document, table, heading="wrong", paragraphs=[])
+
+
+LiveTarget = Union[Block, Span]
+BlockMutation = Callable[[Document, BlockTarget], BlockEditResult]
+
+
+def _live_paragraph_target(
+    document: Document, kind: str, view: str, text: str
+) -> LiveTarget:
+    if kind == "block":
+        return next(
+            block
+            for block in iter_blocks(document, view=view)
+            if block.kind == "paragraph" and block.text == text
+        )
+    return find_one(document, text, view=view)
+
+
+def _insert_section(document: Document, target: BlockTarget) -> BlockEditResult:
+    return insert_section_after(document, target, heading="new", paragraphs=[])
+
+
+def _insert_blocks(document: Document, target: BlockTarget) -> BlockEditResult:
+    return insert_blocks_after(
+        document,
+        target,
+        blocks=[RichParagraph(runs=[TextRun("new")])],
+    )
+
+
+def _tracked_delete(document: Document, target: BlockTarget) -> BlockEditResult:
+    return tracked_delete_paragraphs(document, target, author="A", date=FROZEN)
+
+
+def _tracked_replace(document: Document, target: BlockTarget) -> BlockEditResult:
+    return tracked_replace_paragraphs(
+        document, target, ["new"], author="A", date=FROZEN
+    )
+
+
+_BLOCK_MUTATIONS: tuple[object, ...] = (
+    pytest.param(_insert_section, id="insert-section"),
+    pytest.param(_insert_blocks, id="insert-blocks"),
+    pytest.param(_tracked_delete, id="tracked-delete"),
+    pytest.param(_tracked_replace, id="tracked-replace"),
+)
+
+
+class DescribeMutationProjectionAuthority:
+    @pytest.mark.parametrize("operation", _BLOCK_MUTATIONS)
+    @pytest.mark.parametrize("target_kind", ["block", "span"])
+    @pytest.mark.parametrize("view", ["original", "all"])
+    def it_refuses_historical_live_mutation_anchors_atomically(
+        self, operation: BlockMutation, target_kind: str, view: str
+    ):
+        document = _memory_doc("before", "target", "after")
+        target = _live_paragraph_target(document, target_kind, view, "target")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda doc: operation(doc, target),
+            UnsupportedStructureError,
+        )
+
+        assert f"view='{view}'" in str(refusal)
+        assert 'view="current"' in str(refusal)
+        if isinstance(target, Span):
+            target._validate_fresh()  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
+        else:
+            assert target.text == "target"
+
+    @pytest.mark.parametrize("historical_endpoint", ["start", "end"])
+    def it_checks_both_range_projections_before_document_protection(
+        self, historical_endpoint: str
+    ):
+        document = _memory_doc("start", "end")
+        current_start = find_one(document, "start")
+        current_end = find_one(document, "end")
+        historical_start = find_one(document, "start", view="original")
+        historical_end = find_one(document, "end", view="original")
+        start = historical_start if historical_endpoint == "start" else current_start
+        end = historical_end if historical_endpoint == "end" else current_end
+        set_protection(document, edit="readOnly")
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda doc: tracked_delete_paragraphs(
+                doc, start, end_anchor=end, author="A", date=FROZEN
+            ),
+            UnsupportedStructureError,
+        )
+
+        assert "view='original'" in str(refusal)
+
+    @pytest.mark.parametrize("operation", _BLOCK_MUTATIONS)
+    @pytest.mark.parametrize("target_kind", ["block", "span"])
+    def it_keeps_current_live_targets_authoritative(
+        self, operation: BlockMutation, target_kind: str
+    ):
+        document = _memory_doc("before", "target", "after")
+        target = _live_paragraph_target(document, target_kind, "current", "target")
+
+        result = operation(document, target)
+
+        assert result.inserted_blocks or result.deleted_blocks
+
+    def it_does_not_resolve_a_historical_only_exact_string_destination(self):
+        document = docx.Document()
+        paragraph = document.add_paragraph()._p  # pyright: ignore[reportPrivateUsage]
+        deletion = OxmlElement("w:del")
+        deletion.set(qn("w:id"), "1")
+        run = OxmlElement("w:r")
+        deleted_text = OxmlElement("w:delText")
+        deleted_text.text = "historical only"
+        run.append(deleted_text)
+        deletion.append(run)
+        paragraph.append(deletion)
+        assert find_one(document, "historical only", view="original")
+
+        assert_refusal_atomic(
+            document,
+            lambda doc: insert_section_after(
+                doc, "historical only", heading="new", paragraphs=[]
+            ),
+            TargetNotFoundError,
+        )
+
+    @pytest.mark.parametrize(
+        "operation",
+        [tracked_delete_paragraphs, tracked_replace_paragraphs],
+    )
+    @pytest.mark.parametrize("historical_endpoint", ["start", "end"])
+    @pytest.mark.parametrize("target_kind", ["block", "span"])
+    @pytest.mark.parametrize("view", ["original", "all"])
+    def it_validates_each_tracked_range_endpoint_before_mutation(
+        self,
+        operation: Callable[..., BlockEditResult],
+        historical_endpoint: str,
+        target_kind: str,
+        view: str,
+    ):
+        document = _memory_doc("start", "end", "after")
+        current_start = _live_paragraph_target(document, target_kind, "current", "start")
+        current_end = _live_paragraph_target(document, target_kind, "current", "end")
+        historical_start = _live_paragraph_target(document, target_kind, view, "start")
+        historical_end = _live_paragraph_target(document, target_kind, view, "end")
+        start = historical_start if historical_endpoint == "start" else current_start
+        end = historical_end if historical_endpoint == "end" else current_end
+
+        def mutate(doc: Document) -> BlockEditResult:
+            if operation is tracked_replace_paragraphs:
+                return operation(
+                    doc,
+                    start,
+                    ["replacement"],
+                    end_anchor=end,
+                    author="A",
+                    date=FROZEN,
+                )
+            return operation(doc, start, end_anchor=end, author="A", date=FROZEN)
+
+        refusal = assert_refusal_atomic(
+            document, mutate, UnsupportedStructureError
+        )
+
+        assert f"view='{view}'" in str(refusal)
+        assert 'view="current"' in str(refusal)
 
 
 class DescribeLegacyAnchorRefusal:

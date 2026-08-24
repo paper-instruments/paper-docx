@@ -28,8 +28,9 @@ from docx.fields import (
 from docx.oxml import OxmlElement
 from docx.oxml.ns import qn
 from docx.search import Span, find_one
+from docx.story import iter_blocks
 
-from .harness.contract import save_and_reopen
+from .harness.contract import assert_refusal_atomic, save_and_reopen
 from .harness.paths import fixture_path
 
 MINIMAL = "generated/minimal-clean/minimal.docx"
@@ -308,6 +309,32 @@ class DescribeFieldAuthoring:
         assert 'w:fldCharType="begin"' in xml and 'w:fldCharType="end"' in xml
         assert 'w:dirty="true"' in xml
         assert "w:updateFields" in self._settings_xml(reopened)
+
+    @pytest.mark.parametrize("view", ["original", "all"])
+    @pytest.mark.parametrize("target_kind", ["block", "span"])
+    def it_refuses_historical_live_toc_destinations_atomically(
+        self, view: str, target_kind: str
+    ):
+        document = _doc()
+        if target_kind == "block":
+            target = next(
+                block
+                for block in iter_blocks(document, view=view)
+                if block.text == "Minimal Clean Document"
+            )
+        else:
+            target = find_one(document, "Minimal Clean Document", view=view)
+
+        refusal = assert_refusal_atomic(
+            document,
+            lambda doc: insert_toc_after(doc, target),
+            UnsupportedStructureError,
+        )
+
+        assert f"view='{view}'" in str(refusal)
+        assert 'view="current"' in str(refusal)
+        if isinstance(target, Span):
+            target._validate_fresh()  # noqa: SLF001  # pyright: ignore[reportPrivateUsage]
 
     def it_validates_toc_levels(self):
         with pytest.raises(ValueError, match="levels"):
