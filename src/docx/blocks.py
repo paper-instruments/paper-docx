@@ -339,20 +339,23 @@ def _field_open_flags(story: str, root: "_Element", element: "_Element"):
     """
     from docx.story import _count_fldchar_delta
 
+    body = root.find(qn("w:body"))
+    if (
+        body is not None
+        and element.tag == qn("w:sdt")
+        and element.getparent() is body
+    ):
+        depth = 0
+        for child in body:
+            if child is element:
+                return depth > 0, (depth + _count_fldchar_delta(element)) > 0
+            depth = max(0, depth + _count_fldchar_delta(child))
+
     depth = 0
     for _kind, _index, block, _sdt, _txbx in _iter_block_elements(story, root):
-        contains = (
-            any(node is block for node in element.iter())
-            if element.tag == qn("w:sdt")
-            else block is element
-            or any(node is element for node in block.iter(_P))
-        )
+        contains = block is element or any(node is element for node in block.iter(_P))
         if contains:
-            # A top-level content control is traversed through its descendant
-            # blocks. Judge its physical end once rather than choosing one of
-            # those descendants as an implied insertion target.
-            target = element if element.tag == qn("w:sdt") else block
-            delta = _count_fldchar_delta(target)
+            delta = _count_fldchar_delta(block)
             return depth > 0, (depth + delta) > 0
         delta = _count_fldchar_delta(block)
         depth = max(0, depth + delta)

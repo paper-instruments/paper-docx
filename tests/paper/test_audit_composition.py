@@ -163,6 +163,12 @@ def _field_boundary_destination(kind: str, *, closed: bool):
             )
         return document
 
+    if kind == "empty_control":
+        control = OxmlElement("w:sdt")
+        control.extend((OxmlElement("w:sdtPr"), OxmlElement("w:sdtContent")))
+        _insert_before_sect(document, control)
+        return document
+
     control = _top_level_control(text="Destination control")
     if closed:
         paragraph = next(control.iter(qn("w:p")))
@@ -313,7 +319,9 @@ def it_keeps_current_composition_destinations_authoritative(
     ]
 
 
-@pytest.mark.parametrize("kind", ["paragraph", "table", "control"])
+@pytest.mark.parametrize(
+    "kind", ["paragraph", "table", "control", "empty_control"]
+)
 def it_refuses_composition_at_every_open_top_level_field_boundary_before_imports(
     kind: str, monkeypatch: Any
 ) -> None:
