@@ -86,11 +86,15 @@ cross-paragraph targets. See the
 [block](docs/api/paper-blocks.rst) references for the complete contracts.
 
 Ordinary untracked replacement considers every maximal exact prefix/suffix
-alignment. It preserves unchanged affixes and edits one proved formatting and
-structural region only when those alignments agree on the changed interval and
-writable destination; ambiguous repeated affixes or insertion boundaries refuse
-with guidance to re-find the intended substring. It also refuses rather than
-infer how a mixed region should be restyled or a marker should move. Every
+alignment. It preserves unchanged affixes and edits one proved structural
+region only when those alignments agree on the changed interval and writable
+destination; ambiguous repeated affixes or insertion boundaries refuse with
+guidance to re-find the intended substring. Mixed formatting across the
+consumed text is not itself a refusal: nonempty replacement text takes the
+complete direct `w:rPr` of the run holding the first consumed character, and
+the differently formatted runs it consumes collapse into that format.
+Untouched affixes and boundary fragments keep their own runs. Crossing
+distinct inline wrapper owners, or moving a marker, still refuses. Every
 successful text-changing direct `Span.replace()` consumes that span; re-find
 before another operation. Direct no-ops and atomically refused or rolled-back
 operations leave the supplied span reusable. There is no separate
@@ -101,11 +105,13 @@ the [replacement](docs/api/paper-search.rst),
 [formatting](docs/api/paper-formatting.rst), and
 [revision](docs/api/paper-revisions.rst) references for details.
 
-Tracked replacement uses the same unique localization rule. Inserted revision
-text is authored only when the changed region proves one complete run-property
-and inline-ancestry outcome; deletion-only redlines retain each source run's
-formatting. If a replacement such as mixed bold/italic `Alpha` to `Omega` would
-require choosing a format, it refuses and leaves the document unchanged.
+Tracked replacement uses the same unique localization and the same start-run
+rule: inserted revision text takes the direct formatting of the run holding the
+first consumed character, while deletion markup retains each source run's own
+formatting. Replacing bold/italic `Alpha` with `Omega` authors a bold `Omega`,
+because the changed interval starts in the bold run. A changed interval that
+would cross distinct inline wrapper owners still refuses and leaves the
+document unchanged.
 
 Live blocks and spans captured from historical revision views remain useful for
 inspection, but mutation destinations must be reacquired from the current view.
