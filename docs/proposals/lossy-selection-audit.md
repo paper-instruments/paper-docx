@@ -158,16 +158,16 @@ first node and produced structure-check scores of `.962963`, `.925926`, and
 `.962963` in the skill-05 attempts. A manual topology-aware edit scored
 `1.000`. The trace and grader both identified the lost structure.
 
-**Disposition.** PR #48 first introduced one ordinary planner that could leave
-exact common prefix and suffix text in place and change only a residual interval,
-fixing the observed formatting loss. A follow-up audit found that choosing one
-greedy affix split could still manufacture certainty for repeated affixes or
-insertion boundaries. The planner now considers every maximal exact alignment
-and proceeds only when they agree on both one changed interval and one writable
-formatting/inline-ancestry destination. Otherwise it refuses with guidance to
-re-find the intended substring. It preserves safe markers and required
-`xml:space`/placeholder behavior and refuses mixed, marker-crossing, or unresolved
-intent. Direct, batch, and cell-update paths share the planner. Every successful
+**Disposition.** PR #48 introduced one ordinary planner that can leave an exact
+common prefix and suffix in place and change only a residual interval, fixing
+the observed formatting loss. The planner considers every maximal exact
+alignment and refuses repeated-affix or pure-insertion ambiguity. Once a
+nonempty changed interval is unique, replacement text deterministically takes
+the complete direct `w:rPr` of its starting run; later consumed formatting
+regions may collapse into that run, and the receipt reports that collapse.
+Unchanged affixes and boundary fragments stay in their source runs. Distinct
+inline wrapper objects, markers, and unresolved structural intent still refuse.
+Direct, batch, tracked, and cell-update paths share the planner. Every successful
 non-no-op direct replacement consumes its supplied span so stale live state
 cannot be reconstructed approximately; callers re-find before another operation.
 No-op and atomically refused or rolled-back direct operations leave the supplied
@@ -234,6 +234,9 @@ paragraphs, fields, controls, revisions, hyperlinks, markers, drawings, nested
 content, and unknown wrappers raise an actionable typed refusal. The operation
 does not choose a representative format, delete unsupported structure, or
 partially attach a row.
+Rows with omitted leading/trailing grid columns (`gridBefore`/`gridAfter`) or
+other nonrectangular physical layouts are also refused before mutation because
+their cells are not an unambiguous positional template for supplied values.
 
 ### LS-09 — table search could synthesize text across cell boundaries
 
@@ -253,7 +256,8 @@ activated, so no score effect is attributed to this issue.
 normalized matching only through an explicit policy. It tests each deduplicated
 physical cell independently, preserving paragraph separators within a cell but
 never joining evidence across cells. Existing zero/one/many table resolution
-remains unchanged.
+remains unchanged. Empty and normalization-empty queries refuse rather than
+matching every table.
 
 ### LS-11 — tracked replacement inferred revision formatting from one run
 
@@ -269,20 +273,20 @@ changed regions did not force a choice among competing run formats. Accept/rejec
 algebra was correct and no grader reported this loss.
 
 **Disposition.** Tracked and ordinary replacement now share unique maximal
-exact-affix localization. Any tracked edit inserting text requires one complete
-run-property and inline-ancestry outcome: either one changed text node or
-identical canonical properties and compatible ancestry across all changed
-nodes. A mixed-format `Alpha` to `Omega` edit refuses before mutation rather
-than choosing bold or italic. Deletion-only tracked edits may cross differently
-formatted source runs because each deletion preserves its own source run
-properties. Repeated-affix or insertion-boundary ambiguity also refuses with
-guidance to re-find a smaller exact substring.
+exact-affix localization and deterministic start-run formatting. A mixed-format
+bold `Al` plus italic `pha` replacement from `Alpha` to `Omega` inserts bold
+`Omega`; every tracked deletion piece retains its source run properties.
+Separate inline wrapper objects still refuse even when their XML is identical,
+and repeated-affix or pure-insertion boundary ambiguity refuses with guidance
+to re-find a smaller exact substring. Standalone tracked replacement is wrapped
+in package-and-span rollback; the batch path retains its single outer
+transaction rather than nesting one per private span.
 
-## Open issue outside this stack
+## Resolved comparison follow-up
 
-LS-10 was also introduced by Paper bootstrap commit `a55be769`. It is not
-changed by this stack, and this audit does not present the absence of an eval
-loss as proof that it is safe.
+LS-10 was introduced by Paper bootstrap commit `a55be769`. The evaluated clean
+fixture was not proof that similarity pairing was generally safe, so the stack
+removes that authority conservatively.
 
 ### LS-10 — comparison pairs blocks above one global text threshold
 
@@ -292,11 +296,16 @@ repeated clauses can cross the threshold for the wrong counterpart, producing
 a plausible but misleading redline instead of an explicit deletion and
 insertion.
 
-**Evidence and status.** All five valid `fm21` trajectories exercised block
+**Evidence and disposition.** All five valid `fm21` trajectories exercised block
 pairing and produced correct accept/reject projections. Their `.250` scores
 came from an unstated exact author/date grader filter, not an observed mispair.
-That clean fixture does not validate the threshold for repeated or similarly
-worded paragraphs. The issue remains open and is outside this stack.
+That clean fixture did not validate the threshold for repeated or similarly
+worded paragraphs. Fine-grained compare now runs only for one unambiguous old
+block paired with one new block of the same kind. Larger changed regions emit
+coarse deletions and insertions in document order instead of guessing a pairing.
+Pure insertions retain their exact zero-width boundary so formatting or wrapper
+ambiguity is surfaced by the ordinary insertion guard rather than hidden by a
+borrowed neighboring character.
 
 ## Resulting boundary
 
@@ -305,5 +314,7 @@ position, missing context, a representative run, or old character capacity.
 They retain only evidence the package can validate directly: exact or
 explicitly normalized text policy, complete candidate inspection, live
 owner-bound objects, concrete paragraph boundaries, span-local formatting,
-and one proved uniform replacement region. When those facts do not determine a
-safe mutation, the public contract is refusal rather than a plausible guess.
+and one proved structural owner. Nonempty replacement formatting is the explicit
+start-run policy, not a claim that every consumed formatting region survived.
+When those facts do not determine a safe mutation, the public contract is
+refusal rather than a plausible guess.
