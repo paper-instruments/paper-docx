@@ -519,9 +519,8 @@ class DescribeAppendDocument:
         report = append_document(destination, source, section="continuous")
 
         assert report.inserted_blocks == 1
-        report_payload = report.to_dict()
-        assert report_payload["schema"] == "paper_composition"  # pyright: ignore[reportUnknownMemberType]
-        assert report_payload["version"] == 1  # pyright: ignore[reportUnknownMemberType]
+        assert report.to_dict()["schema"] == "paper_composition"  # pyright: ignore[reportUnknownMemberType]
+        assert report.to_dict()["version"] == 1  # pyright: ignore[reportUnknownMemberType]
         out = _saved(destination, tmp_path / f"closed-field-{kind}.docx")
         assert_changed_parts(original, out, {"word/document.xml"})
         reopened = docx.Document(str(out))
