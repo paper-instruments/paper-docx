@@ -15,13 +15,11 @@
 
 **An import-compatible, agent-safe fork of python-docx designed to prevent silent corruption when editing existing Word documents.**
 
-`paper-docx` is a strict-superset hard fork of [python-docx](https://github.com/python-openxml/python-docx) for safely inspecting, editing, reviewing, and composing existing Microsoft Word (`.docx`) documents. It keeps python-docx's package layer, XML mapping, and object model. It adds typed inspection of what a document actually contains, edits that survive Word's run fragmentation, and refusals in place of guesses.
+`paper-docx` is an import-compatible hard fork of [python-docx](https://github.com/python-openxml/python-docx) for working with existing Microsoft Word (`.docx`) documents. It keeps python-docx's package layer, XML mapping, and object model, and adds guarded inspection and editing APIs that refuse unsupported operations instead of guessing.
 
 ```python
-import docx   # the import name is unchanged — see "Drop-in by design"
+import docx   # the import name is unchanged; see "Import compatibility"
 ```
-
-Every added operation either does exactly what it claims or refuses atomically. Gates such as Restrict-Editing are checked before anything is touched, and compound edits capture the live package first and restore it if they raise. A refusal raises a typed `PaperRefusal` and leaves the document byte-for-byte unchanged in memory and on disk.
 
 ---
 
@@ -56,89 +54,19 @@ result.document.paragraphs[0].text
 # 'Payment is due within thirty business days of the invoice date.'
 ```
 
-`compare` emits markup Word renders as tracked changes. Before returning, it accepts and rejects private copies and verifies both outcomes. If a difference cannot be represented safely as a redline, such as a style or package-part change, it raises a typed refusal instead of returning an incomplete result.
+`compare` emits markup Word renders as tracked changes. Before returning, it accepts and rejects private copies and verifies both outcomes. If it cannot represent a difference as tracked revisions, it raises a typed refusal instead of returning an incomplete redline.
 
 ## What paper-docx adds
 
-### Reading and editing one document
-
-- **`docx.story`** traverses the body, headers, footers, footnotes, endnotes, comments, tracked insertions, content controls, and text boxes. Callers can view the document as it stands, before pending revisions, or all at once.
-- **`docx.search`** finds exact text by default across Word's run fragmentation, with explicit normalized matching when wanted. A returned `Span` can replace the matched text while preserving unaffected runs, emit the replacement as a tracked change, or anchor a comment.
-- **`docx.blocks`** inserts, deletes, or replaces whole paragraphs relative to an exact string, live span, or owner-bound live paragraph block, as plain edits or as a tracked change.
-- **`docx.tableops` / `docx.numbering`** provide explicit exact-or-normalized top-level table lookup plus cell, row, and list edits. Table lookup never synthesizes a match across cells, and copied rows accept only simple uniform templates rather than flattening ambiguous or unsupported structures.
-- **`docx.controls`** fills content controls with the correct value type and clears placeholder state so Word treats them as filled.
-- **`docx.bookmarks` / `docx.fields`** create bookmarks over a span and author page numbers, dates, cross-references, captions, and tables of contents as fields with placeholder results.
-- **`docx.notes` / `docx.links`** anchor real footnotes, endnotes, and hyperlinks to a matched span, so they compose with `docx.search` rather than needing their own targeting.
-- **`Drawing.replace_picture`** swaps the image behind a drawing in place, leaving its size, position, and identity alone.
-- **`docx.formatting`** resolves effective formatting through document defaults, styles, and direct formatting, with provenance for each value.
-
-### Selection and preservation
-
-Search is exact by default across Word's ordinary run fragmentation; normalized
-matching is an explicit policy. `find_text(..., near=...)` orders the complete
-candidate set for inspection; `find_one()` retains ordinary zero/one/many
-resolution and accepts no contextual-ranking keyword. A live `Span` identifies
-selected characters and a live `Block` identifies one attached document element.
-Serialized `Anchor` values are location evidence, not mutation authority; after a
-reload, reacquire a live target. Operations that require one paragraph refuse
-cross-paragraph targets. See the
-[search](docs/api/paper-search.rst), [story](docs/api/paper-story.rst), and
-[block](docs/api/paper-blocks.rst) references for the complete contracts.
-
-Ordinary untracked replacement considers every maximal exact prefix/suffix
-alignment. It preserves unchanged affixes and edits one proved structural
-region only when those alignments agree on the changed interval and writable
-destination; ambiguous repeated affixes or insertion boundaries refuse with
-guidance to re-find the intended substring. Mixed formatting across the
-consumed text is not itself a refusal: nonempty replacement text takes the
-complete direct `w:rPr` of the run holding the first consumed character, and
-the differently formatted runs it consumes collapse into that format.
-Untouched affixes and boundary fragments keep their own runs. Crossing
-distinct inline wrapper owners, or moving a marker, still refuses. Every
-successful text-changing direct `Span.replace()` consumes that span; re-find
-before another operation. Direct no-ops and atomically refused or rolled-back
-operations leave the supplied span reusable. There is no separate
-topology-preservation mode or character-capacity allocator. Formatting inspection
-composes an explicit search with `format_of(span)`, or passes a run or paragraph
-directly. See
-the [replacement](docs/api/paper-search.rst),
-[formatting](docs/api/paper-formatting.rst), and
-[revision](docs/api/paper-revisions.rst) references for details.
-
-Tracked replacement uses the same unique localization and the same start-run
-rule: inserted revision text takes the direct formatting of the run holding the
-first consumed character, while deletion markup retains each source run's own
-formatting. Replacing bold/italic `Alpha` with `Omega` authors a bold `Omega`,
-because the changed interval starts in the bold run. A changed interval that
-would cross distinct inline wrapper owners still refuses and leaves the
-document unchanged.
-
-Live blocks and spans captured from historical revision views remain useful for
-inspection, but mutation destinations must be reacquired from the current view.
-Cross-document composition applies that rule to its destination and refuses
-before importing anything when insertion after a paragraph, table, or block
-content control would remain inside an open complex-field result.
-
-### Reviewing
-
-- **`doc.revisions`** enumerates and resolves tracked changes across every part: insertions, deletions, run and paragraph format changes, table-row revisions, and moves. Lists unresolvable markup by name.
-- **`docx.comments` / `docx.commentops`** read comments and delete one by identity, keeping the modern comment identity parts consistent.
-- **`docx.protection`** reads, sets, and respects Restrict-Editing. Mutating operations refuse on a protected document unless the caller explicitly overrides; the protection setting stays in the document.
-
-### Working across documents
-
-- **`docx.package.compare`** generates a native tracked-change redline from two documents, with the accept/reject round-trip shown above.
-- **`docx.package.patch_save` / `diff_package` / `text_diff`** keeps unchanged parts byte-identical and reports changed parts and text. `diagnose` explains why an unreadable file cannot be opened.
-- **`docx.composition`** copies formatted content between documents, reconciles styles, numbering, media, hyperlinks, and bookmarks, and reports every part touched.
-- **`docx.errors`** exposes typed refusals, distinct from programmer errors.
+`paper-docx` adds guarded APIs for editing existing documents and handling review markup. It also supports document comparison and composition. See [Paper additions](docs/user/paper-additions.rst) for supported operations and refusal conditions.
 
 ## Safety contract
 
-Callers can catch `PaperRefusal` separately from programmer errors, which remain plain `ValueError` or `TypeError`. The subclasses say what went wrong: `DocumentProtectedError`, `MalformedPackageError`, `TargetNotFoundError`, `AmbiguousTargetError`, `UnsupportedStructureError`, `RelationshipPolicyError`, and `BoundaryViolationError`. Comparison and rewrite paths preserve meaningful whitespace, including trailing spaces inside runs.
+Paper mutating APIs validate before changing the document or restore the package if a later step fails. A `PaperRefusal` leaves the document unchanged and identifies the condition that prevented the operation. Invalid arguments and I/O failures use ordinary Python exceptions.
 
-## Drop-in by design
+## Import compatibility
 
-Only the distribution and repository are renamed. The importable package stays `docx`. This is the same distribution/import split as Pillow (`pip install pillow`, `import PIL`), and it preserves existing code, snippets, and model priors.
+The distribution and repository use the name `paper-docx`; Python code continues to import `docx`. Existing import statements do not change. Paper adds package validation and guarded edits, so it can reject some inputs and operations that python-docx accepts.
 
 - GitHub repository / PyPI distribution: **`paper-docx`**
 - Python import: **`docx`**
@@ -167,19 +95,11 @@ In a controlled deployment, a constraint containing `python-docx<0` makes pip re
 
 ## Documentation
 
-The Sphinx docs extend the upstream python-docx documentation to cover the fork's additions: start with `docs/user/paper-additions.rst` and the `docs/api/paper-*.rst` reference pages. Inherited python-docx behavior works as documented at the [python-docx documentation](https://python-docx.readthedocs.io/).
-
-## Testing
-
-- Upstream's pytest and behave suites run on every commit to check compatibility with existing behavior.
-- A frozen, hash-pinned fixture corpus spans generated and LibreOffice-authored documents.
-- The contract harness checks refusal atomicity and validates the fixture corpus with a headless LibreOffice load smoke.
+The Sphinx docs cover Paper-specific behavior and stricter validation: start with `docs/user/paper-additions.rst` and the `docs/api/paper-*.rst` reference pages. For inherited APIs, see the [python-docx documentation](https://python-docx.readthedocs.io/).
 
 ## Contributing
 
-Contributions are welcome — see [CONTRIBUTING.md](https://github.com/paper-instruments/paper-docx/blob/main/CONTRIBUTING.md) for the engineering discipline this fork runs on. The short version: the upstream suite must remain green; persistence changes need saved-and-reopened assertions and exact package-delta checks; guarded refusals must be atomic and leave bytes unchanged; and a refusal message must name what was found, why it is unsafe, and what to do about it.
-
-Useful non-code contributions include real-world fixtures authored by desktop Word under the provenance rules in [CONTRIBUTING.md](https://github.com/paper-instruments/paper-docx/blob/main/CONTRIBUTING.md).
+Contributions are welcome. See [CONTRIBUTING.md](https://github.com/paper-instruments/paper-docx/blob/main/CONTRIBUTING.md) for development setup and change requirements.
 
 ## Community
 
