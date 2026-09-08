@@ -13,9 +13,9 @@
 
 </div>
 
-**An import-compatible, agent-safe fork of python-docx designed to prevent silent corruption when editing existing Word documents.**
+**An import-compatible, agent-safe fork of python-docx for creating and editing Word documents without silent corruption.**
 
-`paper-docx` is an import-compatible hard fork of [python-docx](https://github.com/python-openxml/python-docx) for working with existing Microsoft Word (`.docx`) documents. It keeps python-docx's package layer, XML mapping, and object model, and adds guarded inspection and editing APIs that refuse unsupported operations instead of guessing.
+`paper-docx` is an import-compatible hard fork of [python-docx](https://github.com/python-openxml/python-docx) for creating and working with Microsoft Word (`.docx`) documents. It keeps python-docx's package layer, XML mapping, and object model, and adds guarded inspection and editing APIs that refuse unsupported operations instead of guessing.
 
 ```python
 import docx   # the import name is unchanged; see "Import compatibility"
@@ -58,7 +58,7 @@ result.document.paragraphs[0].text
 
 ## What paper-docx adds
 
-`paper-docx` adds guarded APIs for editing existing documents and handling review markup. It also supports document comparison and composition. See [Paper additions](docs/user/paper-additions.rst) for supported operations and refusal conditions.
+`paper-docx` adds guarded APIs for inspecting and editing documents, handling review markup, and comparing or composing files.
 
 ## Safety contract
 
@@ -95,7 +95,7 @@ In a controlled deployment, a constraint containing `python-docx<0` makes pip re
 
 ## Documentation
 
-The Sphinx docs cover Paper-specific behavior and stricter validation: start with `docs/user/paper-additions.rst` and the `docs/api/paper-*.rst` reference pages. For inherited APIs, see the [python-docx documentation](https://python-docx.readthedocs.io/).
+Read the [paper-docx documentation](https://docs.paperinstruments.com/).
 
 ## Contributing
 
