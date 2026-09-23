@@ -266,7 +266,8 @@ def _atomic_package_write(path: str, relationships, parts) -> None:
         descriptor = -1
         PackageWriter.write(temporary, relationships, parts)
         _validate_serialized_output(temporary)
-        with open(temporary, "rb") as staged:
+        # Windows FlushFileBuffers rejects a read-only handle (EBADF). POSIX allows it.
+        with open(temporary, "r+b") as staged:
             os.fsync(staged.fileno())
         if link_state is not None:
             try:

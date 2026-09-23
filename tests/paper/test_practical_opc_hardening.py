@@ -3,11 +3,18 @@
 from __future__ import annotations
 
 import copy
+import errno
 import io
+import os
 import stat
 import struct
 import zipfile
 from pathlib import Path
+
+try:
+    import fcntl
+except ImportError:  # Windows: os.fsync itself rejects a read-only handle
+    fcntl = None
 
 import pytest
 
@@ -43,6 +50,18 @@ def _rewrite_package(data: bytes, transform) -> bytes:
     return destination.getvalue()
 
 
+def _descriptor_is_readonly(fd: int) -> bool:
+    """Whether ``fd`` was opened ``O_RDONLY``.
+
+    POSIX reports the access mode through ``fcntl``. Windows has no ``fcntl``;
+    ``os.fsync`` is the check there, so this returns false and the caller proceeds.
+    """
+    if fcntl is None:
+        return False
+    access = fcntl.fcntl(fd, fcntl.F_GETFL) & os.O_ACCMODE
+    return access == os.O_RDONLY
+
+
 def it_saves_paths_atomically_preserving_mode_and_following_destination_symlink(
     tmp_path: Path,
 ):
@@ -59,6 +78,42 @@ def it_saves_paths_atomically_preserving_mode_and_following_destination_symlink(
     assert link.is_symlink()
     assert stat.S_IMODE(target.stat().st_mode) == 0o640
     assert docx.Document(target).paragraphs[-1].text == "saved through link"
+    assert not list(tmp_path.glob("*.partial"))
+
+
+def it_saves_a_path_when_readonly_fsync_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """Windows ``os.fsync`` raises ``EBADF`` on a read-only descriptor.
+
+    POSIX accepts that call, which hid the failure. Path save must flush the
+    staged package through a writable handle, including over an existing file
+    whose mode was copied onto the temp file before the flush.
+    """
+    original_fsync = os.fsync
+
+    def fsync(fd: int) -> None:
+        if _descriptor_is_readonly(fd):
+            raise OSError(errno.EBADF, "Bad file descriptor")
+        original_fsync(fd)
+
+    monkeypatch.setattr(os, "fsync", fsync)
+    document = docx.Document()
+    document.add_paragraph("saved on windows")
+
+    fresh = tmp_path / "fresh.docx"
+    document.save(fresh)
+
+    assert docx.Document(fresh).paragraphs[-1].text == "saved on windows"
+    assert not list(tmp_path.glob("*.partial"))
+
+    existing = tmp_path / "existing.docx"
+    existing.write_bytes(b"old")
+    existing.chmod(0o640)
+    document.save(existing)
+
+    assert stat.S_IMODE(existing.stat().st_mode) == 0o640
+    assert docx.Document(existing).paragraphs[-1].text == "saved on windows"
     assert not list(tmp_path.glob("*.partial"))
 
 
