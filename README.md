@@ -19,13 +19,17 @@
 
 ## Installation
 
+Use an [activated virtual environment](https://docs.python.org/3/library/venv.html).
+
 ```bash
 python -m pip uninstall -y python-docx paper-docx
 python -m pip install paper-docx
-paper-docx-doctor
+python -m paper_docx_doctor
 ```
 
 Both distributions provide the `docx` import package. Do not install `python-docx` and `paper-docx` in the same environment.
+
+To return to `python-docx`, run the uninstall line above again, then `python -m pip install python-docx`.
 
 ## Quick start
 
