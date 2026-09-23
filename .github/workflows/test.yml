@@ -73,6 +73,7 @@ jobs:
           python-version: "3.13"
       - name: Install LibreOffice Writer
         run: |
+          sudo apt-get update
           sudo apt-get install --yes --no-install-recommends libreoffice-writer
           command -v soffice
           soffice --version
