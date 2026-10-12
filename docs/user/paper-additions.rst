@@ -174,6 +174,13 @@ Choose the option that matches the edit's preservation contract:
   inserted text follows the same start-run formatting rule. Separate inline
   wrapper owners still refuse; deletion markup retains each source run's own
   properties.
+- Add ``granularity="word"`` when the redline should read word by word, as a
+  legal or contract reviewer expects: the retained prefix and suffix shrink to
+  whole-word boundaries, so ``Two (2) years`` to ``Twelve (12) months`` deletes
+  and inserts the whole phrases instead of keeping ``Tw`` and ``s``. An edit
+  between whole words (``Section 3`` to ``Section 4``) still changes only the
+  word that differs. The default, ``"character"``, keeps every exactly aligned
+  character. Both granularities also apply to untracked edits.
 - Use ``preserve_revision=True`` only to correct current-view text wholly
   inside one existing insertion while retaining that insertion's attribution
   and accept/reject behavior. The correction remains attributed to the

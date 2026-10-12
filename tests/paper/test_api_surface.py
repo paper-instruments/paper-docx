@@ -92,7 +92,7 @@ APPROVED_SIGNATURES = [
         "docx.search",
         "Span.replace",
         "(self, new_text, *, tracked=False, author=None, date=None,"
-        " preserve_revision=False)",
+        " preserve_revision=False, granularity='character')",
     ),
     # -- block operations ----------------------------------------------------
     (

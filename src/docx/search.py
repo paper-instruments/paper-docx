@@ -18,6 +18,8 @@ import datetime as dt
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Callable, Iterator, List, Optional, Sequence, Tuple
 
+from typing_extensions import Literal
+
 from docx import _clock, _textatoms
 from docx._guard import check_install
 from docx._normalize import normalize_text  # noqa: F401 - public re-export
@@ -422,12 +424,55 @@ class _OrdinaryOutcome:
     changed_end: int
 
 
+Granularity = Literal["character", "word"]
+
+
+def _is_word_char(char: str) -> bool:
+    return char.isalnum() or char == "_"
+
+
+def _snap_affixes_to_words(
+    old: str, new: str, prefix_len: int, suffix_len: int
+) -> "Tuple[int, int]":
+    """Shorten a kept prefix and suffix so neither boundary falls inside a word.
+
+    A boundary splits a word when the kept character next to it and the first
+    changed character on either side (old or new) are both word characters.
+    """
+
+    def changed_chars(at_start: bool) -> "Tuple[str, ...]":
+        chars: "List[str]" = []
+        for text in (old, new):
+            start, end = prefix_len, len(text) - suffix_len
+            if start < end:
+                chars.append(text[start] if at_start else text[end - 1])
+        return tuple(chars)
+
+    while (
+        prefix_len > 0
+        and _is_word_char(old[prefix_len - 1])
+        and any(_is_word_char(char) for char in changed_chars(at_start=True))
+    ):
+        prefix_len -= 1
+    while (
+        suffix_len > 0
+        and _is_word_char(old[len(old) - suffix_len])
+        and any(_is_word_char(char) for char in changed_chars(at_start=False))
+    ):
+        suffix_len -= 1
+    return prefix_len, suffix_len
+
+
 def _maximal_affix_decompositions(
     old: str,
     new: str,
     aligned: "Callable[[int, int], bool]",
+    granularity: Granularity = "character",
 ) -> "Tuple[Tuple[int, int], ...]":
-    """All non-overlapping prefix/suffix pairs preserving maximal text."""
+    """All non-overlapping prefix/suffix pairs preserving maximal text.
+
+    With `granularity="word"` each pair is shortened to whole-word boundaries.
+    """
     limit = min(len(old), len(new))
     prefix_limit = 0
     while prefix_limit < limit and aligned(prefix_limit, prefix_limit):
@@ -441,10 +486,13 @@ def _maximal_affix_decompositions(
     preserved = min(prefix_limit + suffix_limit, limit)
     first_prefix = max(0, preserved - suffix_limit)
     last_prefix = min(prefix_limit, preserved)
-    return tuple(
+    pairs = tuple(
         (prefix_len, preserved - prefix_len)
         for prefix_len in range(first_prefix, last_prefix + 1)
     )
+    if granularity == "character":
+        return pairs
+    return tuple(dict.fromkeys(_snap_affixes_to_words(old, new, *pair) for pair in pairs))
 
 
 def _refuse_ambiguous_affix_alignment() -> None:
@@ -518,11 +566,16 @@ def _has_multiple_direct_rpr(atoms: "Sequence[_Atom]") -> bool:
     return any(_destination_evidence(atom)[0] != starting_rpr for atom in atoms[1:])
 
 
-def _ordinary_outcome(span: "Span", new_text: str) -> _OrdinaryOutcome:
+def _ordinary_outcome(
+    span: "Span", new_text: str, granularity: Granularity = "character"
+) -> _OrdinaryOutcome:
     """Resolve the one maximal exact-affix outcome, or refuse ambiguity."""
     old_text = span.text
     decompositions = _maximal_affix_decompositions(
-        old_text, new_text, lambda old_pos, new_pos: old_text[old_pos] == new_text[new_pos]
+        old_text,
+        new_text,
+        lambda old_pos, new_pos: old_text[old_pos] == new_text[new_pos],
+        granularity,
     )
     if len(decompositions) != 1:
         _refuse_ambiguous_affix_alignment()
@@ -590,7 +643,8 @@ def _ordinary_outcome(span: "Span", new_text: str) -> _OrdinaryOutcome:
     else:
         segments = writable_segments(changed_start, changed_end)
         changed_atoms = [span._atoms[index] for index, _start, _end in segments]
-        if replacement and _has_multiple_direct_rpr(changed_atoms):
+        # Word snapping already defines the edit boundary, even within a run.
+        if granularity == "character" and replacement and _has_multiple_direct_rpr(changed_atoms):
             # A shared suffix character is not formatting intent. If the
             # narrowed changed interval already crosses direct run-property
             # regions, consume the remaining selected fragment of its final
@@ -619,13 +673,13 @@ def _ordinary_outcome(span: "Span", new_text: str) -> _OrdinaryOutcome:
 
 
 def _regional_text_assignments(
-    span: "Span", new_text: str
+    span: "Span", new_text: str, granularity: Granularity = "character"
 ) -> "Tuple[Tuple[_TextAssignment, ...], bool]":
     """Preflight one owner-safe replacement and report formatting preservation."""
     old_text = span.text
     if old_text == new_text:
         return (), True
-    outcome = _ordinary_outcome(span, new_text)
+    outcome = _ordinary_outcome(span, new_text, granularity)
     changed_atoms = [span._atoms[index] for index, _start, _end in outcome.segments]
     if any(atom.is_synthetic for atom in changed_atoms):
         raise UnsupportedStructureError(
@@ -934,7 +988,9 @@ class Span:
             cursor += len(text)
         return positions
 
-    def _narrow_to_change(self, new_text: str) -> "Optional[Tuple[Span, str]]":
+    def _narrow_to_change(
+        self, new_text: str, granularity: Granularity = "character"
+    ) -> "Optional[Tuple[Span, str]]":
         """A sub-span covering only the changed region, or None if the trim
         cannot shrink this span (caller falls through to normal validation).
 
@@ -953,7 +1009,7 @@ class Span:
                 old_pos in synthetic and new_text[new_pos].isspace()
             )
 
-        decompositions = _maximal_affix_decompositions(old, new_text, aligned)
+        decompositions = _maximal_affix_decompositions(old, new_text, aligned, granularity)
         if len(decompositions) != 1:
             _refuse_ambiguous_affix_alignment()
         prefix_len, suffix_len = decompositions[0]
@@ -1009,7 +1065,13 @@ class Span:
             if start_idx is None or end_idx is None:
                 return None
         sub_atoms = self._atoms[start_idx : end_idx + 1]
-        if changed_new and changed_old and _has_multiple_direct_rpr(sub_atoms):
+        # Preserve word boundaries when the final changed run also holds suffix text.
+        if (
+            granularity == "character"
+            and changed_new
+            and changed_old
+            and _has_multiple_direct_rpr(sub_atoms)
+        ):
             # Keep retained prefix atoms outside the tracked edit. Expand only
             # through the selected fragment of the final changed atom so the
             # ordinary planner can apply match-start formatting without
@@ -1264,6 +1326,7 @@ class Span:
         author: Optional[str] = None,
         date: Optional[dt.datetime] = None,
         preserve_revision: bool = False,
+        granularity: Granularity = "character",
     ) -> ReplaceResult:
         """Replace this span's text and return machine-readable change evidence.
 
@@ -1276,6 +1339,12 @@ class Span:
         refuse. `tracked=True` uses the same unique localization and formatting inheritance;
         tracked deletion pieces retain each source run's properties.
         A successful tracked change consumes the span; a direct tracked no-op is refused.
+
+        `granularity="word"` shortens the retained prefix and suffix to whole-word boundaries,
+        so a tracked deletion or insertion never starts or ends inside a word: replacing
+        "Two (2) years" with "Twelve (12) months" deletes and inserts the whole phrases instead
+        of keeping "Tw" and "s". The default, `"character"`, keeps every exactly aligned
+        character.
 
         `preserve_revision=True` explicitly permits a current-view span wholly owned by one
         existing `w:ins` to be corrected without changing that insertion's id, author, date,
@@ -1297,6 +1366,7 @@ class Span:
             date=date,
             preserve_revision=preserve_revision,
             use_transaction=self._freshness_census is None,
+            granularity=granularity,
         )
 
     def _replace(
@@ -1309,11 +1379,13 @@ class Span:
         preserve_revision: bool,
         use_transaction: bool,
         tracked_context: "Optional[Tuple[Tuple[Optional[_Element], ...], bool]]" = None,
+        granularity: Granularity = "character",
     ) -> ReplaceResult:
         """Implementation shared with the already-transactional batch path."""
         _validate_replacement_options(
             tracked=tracked,
             preserve_revision=preserve_revision,
+            granularity=granularity,
         )
         if tracked:
             if not author:
@@ -1350,7 +1422,7 @@ class Span:
             # edit safely when the actual change lies within one segment:
             # narrow to the changed region; if the change itself crosses a
             # break or boundary, validation below refuses as before
-            narrowed = self._narrow_to_change(new_text)
+            narrowed = self._narrow_to_change(new_text, granularity)
             if narrowed is not None:
                 sub_span, sub_new = narrowed
 
@@ -1363,6 +1435,7 @@ class Span:
                         preserve_revision=preserve_revision,
                         use_transaction=False,
                         tracked_context=tracked_context,
+                        granularity=granularity,
                     )
                     self._consumed = True
                     return result
@@ -1439,18 +1512,21 @@ class Span:
                         author=author,
                         date=date,
                         tracked_context=tracked_context,
+                        granularity=granularity,
                     )
             return self._tracked_replace(
                 new_text,
                 author=author,
                 date=date,
                 tracked_context=tracked_context,
+                granularity=granularity,
             )
         return self._plain_replace(
             new_text,
             preserved_revision_ids=preserved_revision_ids,
             placeholder_sdts=placeholder_sdts,
             use_transaction=use_transaction,
+            granularity=granularity,
         )
 
     def _plain_replace(
@@ -1460,8 +1536,11 @@ class Span:
         preserved_revision_ids: "Tuple[int, ...]" = (),
         placeholder_sdts: "Sequence[_Element]" = (),
         use_transaction: bool,
+        granularity: Granularity = "character",
     ) -> ReplaceResult:
-        assignments, preserved_formatting_regions = _regional_text_assignments(self, new_text)
+        assignments, preserved_formatting_regions = _regional_text_assignments(
+            self, new_text, granularity
+        )
         result = ReplaceResult(
             story=self.story,
             deleted_text=self.text,
@@ -1498,6 +1577,7 @@ class Span:
         author: str,
         date: Optional[dt.datetime],
         tracked_context: "Optional[Tuple[Tuple[Optional[_Element], ...], bool]]",
+        granularity: Granularity = "character",
     ) -> ReplaceResult:
         from docx.oxml.revision import CT_RunTrackChange
 
@@ -1521,7 +1601,7 @@ class Span:
         if tracked_context is None:
             tracked_context = _tracked_layering_context(self, author)
         enclosing, extends_own_insertion = tracked_context
-        outcome = _ordinary_outcome(self, new_text)
+        outcome = _ordinary_outcome(self, new_text, granularity)
         prefix_len = outcome.changed_start
         suffix_len = len(self.text) - outcome.changed_end
         first, last = self._atoms[0], self._atoms[-1]
@@ -2046,7 +2126,11 @@ def _refuse_hollowed_bookmarks(hollowed: "Sequence[str]") -> None:
         )
 
 
-def _validate_replacement_options(*, tracked: bool, preserve_revision: bool) -> None:
+def _validate_replacement_options(
+    *, tracked: bool, preserve_revision: bool, granularity: str = "character"
+) -> None:
+    if granularity not in ("character", "word"):
+        raise ValueError("granularity must be 'character' or 'word'")
     if tracked and preserve_revision:
         raise ValueError(
             "tracked=True cannot be combined with preserve_revision=True"

@@ -99,6 +99,12 @@ changed interval.
        starting run properties; deleted pieces retain their source properties.
        A direct tracked no-op is refused and a successful change consumes the
        span.
+   * - Redline whole words
+     - ``span.replace(text, tracked=True, author=..., granularity="word")``
+     - Shrinks the retained prefix and suffix to word boundaries before the
+       ``w:del``/``w:ins`` pair is emitted, so no revision starts or ends inside
+       a word. ``granularity`` is ``"character"`` (the default) or ``"word"``;
+       any other value raises ``ValueError``.
    * - Correct one existing insertion
      - ``span.replace(text, preserve_revision=True)``
      - For a current-view span wholly owned by one ``w:ins``, keeps that
