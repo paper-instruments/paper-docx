@@ -56,6 +56,33 @@ class DescribeXmlEquivalent:
         b = f'<w:p {W_DECL}><w:r><w:t w:b="2" w:a="1">x</w:t></w:r></w:p>'
         assert xml_equivalent(a.encode(), b.encode())
 
+    @pytest.mark.parametrize("prefixes", ["b a", "a  b a", "c b"])
+    def it_compares_ignorable_prefixes_as_namespace_sets(self, prefixes: str):
+        template = (
+            '<root xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+            ' xmlns:a="urn:one" xmlns:b="urn:two" xmlns:c="urn:one"'
+            ' mc:Ignorable="{}"/>'
+        )
+        assert xml_equivalent(template.format("a b").encode(), template.format(prefixes).encode())
+
+    def it_detects_rebound_ignorable_prefixes(self):
+        template = (
+            '<root xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+            ' xmlns:a="{}" mc:Ignorable="a"/>'
+        )
+        assert not xml_equivalent(
+            template.format("urn:one").encode(), template.format("urn:two").encode()
+        )
+
+    def it_does_not_equate_undeclared_ignorable_prefixes(self):
+        template = (
+            '<root xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"'
+            ' mc:Ignorable="{}"/>'
+        )
+        assert not xml_equivalent(
+            template.format("a b").encode(), template.format("b a").encode()
+        )
+
     def it_respects_child_order(self):
         a = f'<w:p {W_DECL}><w:r><w:t>one</w:t></w:r><w:r><w:t>two</w:t></w:r></w:p>'
         b = f'<w:p {W_DECL}><w:r><w:t>two</w:t></w:r><w:r><w:t>one</w:t></w:r></w:p>'

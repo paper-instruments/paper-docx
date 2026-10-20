@@ -113,7 +113,7 @@ def _elements_equal(a: etree._Element, b: etree._Element) -> bool:
         b, "target", None
     ):
         return False
-    if dict(a.attrib) != dict(b.attrib):
+    if not _attributes_equal(a, b):
         return False
     if (a.text or "") != (b.text or ""):
         return False
@@ -129,6 +129,22 @@ def _elements_equal(a: etree._Element, b: etree._Element) -> bool:
     return True
 
 
+def _attributes_equal(a: etree._Element, b: etree._Element) -> bool:
+    ignorable = "{http://schemas.openxmlformats.org/markup-compatibility/2006}Ignorable"
+    attrs_a, attrs_b = dict(a.attrib), dict(b.attrib)
+    prefixes_a = attrs_a.pop(ignorable, None)
+    prefixes_b = attrs_b.pop(ignorable, None)
+    if attrs_a != attrs_b:
+        return False
+    if prefixes_a is None or prefixes_b is None:
+        return prefixes_a == prefixes_b
+    # MC lists namespace prefixes, whose order is insignificant. Resolve them
+    # in each element's scope so rebinding a prefix cannot hide a real change.
+    namespaces_a = {a.nsmap.get(prefix) for prefix in prefixes_a.split()}
+    namespaces_b = {b.nsmap.get(prefix) for prefix in prefixes_b.split()}
+    return None not in namespaces_a and None not in namespaces_b and namespaces_a == namespaces_b
+
+
 def xml_equivalent(a: bytes, b: bytes) -> bool:
     """True when `a` and `b` are structurally identical XML documents.
 
@@ -138,12 +154,13 @@ def xml_equivalent(a: bytes, b: bytes) -> bool:
     significant; text and tail content compare verbatim, whitespace included
     (a canonicalizer that trims a meaningful trailing space would corrupt
     documents through `patch_save`). Prolog/epilog comments and
-    processing instructions are compared too.
+    processing instructions are compared too. ``mc:Ignorable`` compares as a
+    set of resolved namespace URIs; undeclared prefixes are not equivalent.
 
     Raises `lxml.etree.XMLSyntaxError` on malformed input and
     ``UnsupportedXmlError`` on DTD-bearing input — this function never guesses.
 
-    Known limit: attribute VALUES holding
+    Known limit: other attribute VALUES holding
     QNames compare textually, so a prefix rebound to a different URI while
     the QName text stays identical is not detected. OOXML producers keep the
     standard prefixes, and the error direction in `diff_package` remains

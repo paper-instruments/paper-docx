@@ -30,6 +30,7 @@ from difflib import SequenceMatcher
 from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from docx import _clock
+from docx._paperpkg import xml_equivalent
 from docx.errors import PaperRefusal, UnsupportedStructureError
 from docx.oxml.ns import qn
 from docx.story import (
@@ -547,8 +548,9 @@ def _assert_packages_match(
             f"compare could not prove its {outcome} contract; story parts differ"
         )
     for name in sorted(stories_actual):
-        if _canonical_story_bytes(stories_actual[name]) != _canonical_story_bytes(
-            stories_expected[name]
+        if not xml_equivalent(
+            _canonical_story_bytes(stories_actual[name]),
+            _canonical_story_bytes(stories_expected[name]),
         ):
             raise UnsupportedStructureError(
                 f"compare could not prove its {outcome} contract;"
@@ -648,8 +650,12 @@ def _mergeable_runs(left: "_Element", right: "_Element") -> bool:
         r_pr = run.find(_RPR)
         return etree.tostring(r_pr) if r_pr is not None else b""
 
-    left_shape = shape(left)
-    return left_shape is not None and left_shape == shape(right)
+    left_shape, right_shape = shape(left), shape(right)
+    if left_shape is None or right_shape is None:
+        return False
+    if not left_shape or not right_shape:
+        return left_shape == right_shape
+    return xml_equivalent(left_shape, right_shape)
 
 
 def _story_text_of(story: str, root) -> Optional[str]:
@@ -800,7 +806,9 @@ def _compare_region(ctx: _Ctx, old_run, new_run) -> None:
 def _report_formatting_difference(ctx: _Ctx, block_o, block_r) -> None:
     _kind, element_o, text = block_o
     _kind_r, element_r, _text_r = block_r
-    if _canonical_story_bytes(element_o) != _canonical_story_bytes(element_r):
+    if not xml_equivalent(
+        _canonical_story_bytes(element_o), _canonical_story_bytes(element_r)
+    ):
         raise UnsupportedStructureError(
             "compare cannot redline a formatting or structural difference"
             f" in {ctx.story}: {text[:80]!r}"
@@ -811,7 +819,7 @@ def _refuse_non_text_paragraph_change(
     ctx: _Ctx, original: "_Element", revised: "_Element"
 ) -> None:
     """Allow text changes only when the surrounding paragraph markup agrees."""
-    if _textless_story_bytes(original) == _textless_story_bytes(revised):
+    if xml_equivalent(_textless_story_bytes(original), _textless_story_bytes(revised)):
         return
     raise UnsupportedStructureError(
         "compare cannot combine a text edit with a formatting or structural"
